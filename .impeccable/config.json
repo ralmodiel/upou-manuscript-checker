@@ -1,0 +1,20 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "instrument serif",
+        "createdAt": "2026-10-11T01:25:29.859Z",
+        "reason": "brief: user asked to pattern styling on upou-networks (UPOU OER POC), whose src/index.css uses the same Instrument Serif/Sans faces; fonts copied from it"
+      },
+      {
+        "rule": "overused-font",
+        "value": "instrument sans",
+        "createdAt": "2026-10-11T01:25:30.083Z",
+        "reason": "brief: user asked to pattern styling on upou-networks (UPOU OER POC), whose src/index.css uses the same Instrument Serif/Sans faces; fonts copied from it"
+      }
+    ]
+  }
+}
