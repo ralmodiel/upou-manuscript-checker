@@ -64,6 +64,9 @@ describe('comments files', () => {
     expect(detailText('p. 5: shows v; it should be iv', labels)).toBe(
       'p. 5: shows v; it should be iv',
     )
+    expect(detailText('p. 2: shows “… Acceptance ii”', labels)).toBe(
+      'p. 2: shows “… Acceptance ii”',
+    )
   })
 
   it('name a page once for its quotes in a row', () => {

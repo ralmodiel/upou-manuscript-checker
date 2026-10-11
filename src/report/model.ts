@@ -67,7 +67,9 @@ export function printedOf(page: number, labels?: Report['pageLabels']) {
 export const detailText = (detail: string, labels?: Report['pageLabels']) =>
   detail.replace(/^p\. (\d+)(?=[:,])/, (lead, n: string) => {
     const printed = printedOf(Number(n) - 1, labels)
-    return printed && !detail.includes(`shows ${printed}`) ? `${lead} (printed ${printed})` : lead
+    // Not when the detail shows it already: "shows vii", or a footer quoted "“… Acceptance i”".
+    const shown = detail.includes(`shows ${printed}`) || detail.includes(` ${printed}”`)
+    return printed && !shown ? `${lead} (printed ${printed})` : lead
   })
 
 export const PAGES_NOTE =

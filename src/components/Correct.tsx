@@ -120,7 +120,7 @@ function ItemRow({
               .map(([w, ...more], k) => (
                 <span
                   key={k}
-                  className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
+                  className="inline-flex max-w-full items-start gap-x-1.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
                 >
                   {w.page !== undefined && (
                     <span className="shrink-0 font-semibold whitespace-nowrap text-ink tabular-nums">
@@ -133,13 +133,18 @@ function ItemRow({
                       )}
                     </span>
                   )}
-                  {[w, ...more].map(
-                    (q, j) =>
-                      q.quote && (
-                        <span key={j} className="line-clamp-2 wrap-anywhere">
-                          “{q.quote}”
-                        </span>
-                      ),
+                  {/* The quotes in a column beside the page, lined up when there are several. */}
+                  {[w, ...more].some((q) => q.quote) && (
+                    <span className="flex min-w-0 flex-col gap-y-0.5">
+                      {[w, ...more].map(
+                        (q, j) =>
+                          q.quote && (
+                            <span key={j} className="line-clamp-2 wrap-anywhere">
+                              “{q.quote}”
+                            </span>
+                          ),
+                      )}
+                    </span>
                   )}
                 </span>
               ))}
