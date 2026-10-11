@@ -394,9 +394,18 @@ interface Margins {
 function marginsOf(lines: Line[], fallback?: Margins): Margins | undefined {
   const long = lines.filter((l) => l.text.length > 40)
   if (long.length < 4) return fallback
+  const left = mode(long.map((l) => l.x0))
+  // Centred lines (a title page) share no left edge: that page keeps the document's margins.
+  if (fallback && long.filter((l) => Math.round(l.x0) === left).length < 3) return fallback
   // Ragged-right lines rarely reach the margin; the longest ones (bar a stray) mark it.
   const xs1 = long.map((l) => l.x1).sort((a, b) => a - b)
-  return { left: mode(long.map((l) => l.x0)), right: xs1[Math.floor(xs1.length * 0.95)] }
+  return { left, right: xs1[Math.floor(xs1.length * 0.95)] }
+}
+
+/** 1 when every word of a line is bold, 0 when none is (a bold title and "Thesis Adviser:"). */
+const boldness = (l: Line) => {
+  const runs = l.runs.filter((r) => r.text.trim())
+  return runs.filter((r) => r.bold).length / (runs.length || 1)
 }
 
 /** Width of a line's first word, from its first span; on the generous side (half an em a letter at
@@ -478,9 +487,13 @@ function toParas(pagesLines: Line[][], pages: Page[]): Para[] {
             gap <= 0 || (gaps.length ? gap > 1.35 * median(gaps) : gap > 2.6 * prev.size)
           const tabular = prev.text.includes('\t') || c.text.includes('\t')
           if (apart || !sameSize || tabular) split = true
-          // Stacked centred or right-aligned lines are one paragraph only when the line above ran wide.
+          // Stacked centred or right-aligned lines are one paragraph only when the next line's first
+          // word would not have fitted on the line above, and both are bold or neither is.
           else if (kind !== 'left')
-            split = kindOf(c, m) !== kind || prev.x1 - prev.x0 < 0.75 * width
+            split =
+              kindOf(c, m) !== kind ||
+              prev.x1 - prev.x0 + 0.25 * c.size + firstWord(c) < width - 1 ||
+              Math.abs(boldness(prev) - boldness(c)) === 1
           // A left or justified paragraph goes on while its lines run full and keep their indent
           // (its last line may happen to look centred).
           else split = ended || OPENER.test(c.text) || offCont || newEntry
