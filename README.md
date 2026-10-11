@@ -1,0 +1,118 @@
+# MDC Format Check
+
+A web app that checks a UP Open University (UPOU) Master of Development Communication (MDC) thesis
+manuscript against every item of the MDC Format Checklist, right in the browser. It lists what to
+correct, with the pages to look at, and writes the comments as a Word or PDF file set out like the
+program's review emails.
+
+- **Nothing leaves the device.** The manuscript is read and checked by the page itself, on the
+  visitor's desktop, laptop or phone. There is no backend, no database and no API; the page's
+  security policy blocks every outgoing request (`connect-src 'none'`).
+- **Every checklist item, every time.** All 38 items in 9 parts, each marked _To correct_,
+  _To review_, _Passed_ or _Not applicable_, plus three things reviewers often point out: template
+  text left in, blank pages and coloured text.
+- **The files students actually have.** Word (.docx, .docm, .dotx, and .doc for text and page
+  numbering), PDF, OpenDocument (.odt, .ott) and Rich Text (.rtf). Google Docs and Apple Pages
+  users are told how to export a file it can read.
+- **Phone friendly.** Responsive from 320px phones to wide screens. The first visit loads about
+  95 KB (gzip) of HTML, CSS and JS; the checking engine loads while the page is idle, and pdf.js
+  only when a PDF is chosen.
+- Light and dark themes, keyboard accessible, respects `prefers-reduced-motion`, prints cleanly.
+
+## Proof of concept
+
+This is an **unofficial proof of concept in its alpha testing stage**. It is not an official UPOU
+site and is not affiliated with or endorsed by UPOU. It was built diligently and meticulously with
+the help of AI, but it can still make mistakes, so every result needs human verification. MDC
+Program Support's review remains the official format check. See [NOTICE.md](NOTICE.md).
+
+## Stack
+
+React 19, TypeScript, Vite 8 and Tailwind CSS 4. Documents are read with
+[pdf.js](https://github.com/mozilla/pdf.js) (PDF), [fflate](https://github.com/101arrowz/fflate)
+(the zip inside .docx and .odt, and the Word report), [cfb](https://github.com/SheetJS/js-cfb)
+(.doc) and the browser's own `DOMParser`; [pdf-lib](https://github.com/Hopding/pdf-lib) writes the
+PDF report. Every library is free and open source (MIT, Apache-2.0, 0BSD or Zlib).
+
+## Getting started
+
+Requires Node 24 (see `.nvmrc`).
+
+```sh
+npm install
+npm run dev       # http://localhost:5290
+```
+
+## Scripts
+
+| Script              | What it does                                               |
+| ------------------- | ---------------------------------------------------------- |
+| `npm run dev`       | Development server                                         |
+| `npm run build`     | Type-check and build to `dist/`                            |
+| `npm run preview`   | Serve the build (with its Content Security Policy) on 5291 |
+| `npm run typecheck` | TypeScript only                                            |
+| `npm run lint`      | ESLint                                                     |
+| `npm run format`    | Prettier (`format:check` to check only)                    |
+| `npm test`          | Vitest (`test:watch` to keep running)                      |
+| `npm run audit`     | `npm audit` at any severity                                |
+| `npm run verify`    | All of the above in order, as the deploy workflow runs it  |
+
+## How it works
+
+`src/engine/` is plain TypeScript with no browser dependency beyond `DOMParser`:
+
+1. `check.ts` identifies the file by its first bytes (not its name) and picks a reader.
+2. The readers (`docx.ts`, `odt.ts`, `rtf.ts`, `doc.ts`, `pdf.ts`) turn the file into one common
+   model: paragraphs with their resolved fonts, spacing, alignment and page, footers per section,
+   pictures and, for a PDF, laid-out pages.
+3. `structure.ts` finds the parts of the manuscript: title page, permission and acceptance pages,
+   preliminary pages, chapters, figures and tables, references and appendices.
+4. `rules/` gives one finding per checklist item (`checklist.ts` holds the items in the
+   checklist's own words), and `src/report/` turns the findings into the Word and PDF comments.
+
+A Word file shows exactly which fonts, spacing and alignment were set; a PDF shows the pages as
+they print. Checking both gives the fullest picture, and the site says so.
+
+### Local tooling (not committed)
+
+`scripts/` (fixture builders, a Word automation script that exports each fixture to PDF, .odt,
+.rtf and .doc, a batch verifier, probes and the license audit), `tmp/` (generated fixtures and
+renders) and `data/` (the program's source material, including reviewers' emails that hold
+personal data) are git-ignored and never published. The committed test (`src/engine/check.test.ts`)
+builds its own small Word file.
+
+## Security and privacy
+
+- Production builds carry a strict Content Security Policy as a `<meta>` tag: scripts, styles,
+  fonts and the pdf.js worker come only from the site, and `connect-src 'none'` means the page
+  cannot send a request anywhere. The theme is applied by `public/theme-boot.js`, so no inline
+  script is needed.
+- Files are read in memory and dropped when the page closes. Nothing is stored except the theme
+  choice (`localStorage`, key `mdc:theme`). No accounts, cookies or analytics.
+- Files over 100 MB are refused, and the .docx and .odt readers skip zip parts over 64 MB. Text
+  from a document is always rendered as text, never as HTML; the Word report escapes it and strips
+  control characters.
+- `npm audit` reports 0 vulnerabilities. `npm run verify` runs it on every deploy.
+
+## Deploying to GitHub Pages
+
+The workflow in `.github/workflows/deploy.yml` builds and deploys on every push to `main`:
+
+1. In the repository settings, under **Pages**, set **Source** to **GitHub Actions**.
+2. Push to `main` (or run the workflow manually). It runs `npm run verify` and publishes `dist/`.
+
+The workflow passes `BASE_PATH=/<repo>/`, which Vite uses for every asset and download URL (local
+builds keep `/`), and `VITE_REPO_URL`, which adds a "View source" link to the footer. The build
+also writes `404.html` as a copy of `index.html`. Pages cannot send custom headers, so the CSP
+ships as a `<meta>` tag, which cannot set `frame-ancestors`; hosts that support headers should
+add one.
+
+## License
+
+- **Code:** [MIT](LICENSE).
+- **Template and checklist** (`public/downloads/`): materials of the UPOU MDC program, offered for
+  convenience. They are not covered by the MIT License.
+- **Bundled libraries and fonts:** see `public/THIRD_PARTY_LICENSES.txt` (also linked from the
+  site's footer).
+
+See [NOTICE.md](NOTICE.md) for the full notices.

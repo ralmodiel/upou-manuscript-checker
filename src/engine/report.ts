@@ -1,0 +1,68 @@
+// What a check produces: one finding per checklist item.
+import type { Doc, Kind, Pixels } from './model.ts'
+import type { Structure } from './structure.ts'
+
+/** fix: needs correcting · review: look at it yourself · ok: passed · na: not applicable. */
+export type Status = 'fix' | 'review' | 'ok' | 'na'
+
+export interface Where {
+  /** 0-based physical page (PDF). */
+  page?: number
+  /** Short quote of the paragraph or footer, to find it in the file. */
+  quote?: string
+}
+
+export interface Finding {
+  id: string
+  status: Status
+  /** One sentence: the correction to make, or what was found right. */
+  message: string
+  details?: string[]
+  where?: Where[]
+}
+
+export interface Report {
+  fileName: string
+  kind: Kind
+  pages?: number
+  /** The title as the title page gives it, when found. */
+  title?: string
+  findings: Finding[]
+  notes: string[]
+  /** Milliseconds spent reading and checking. */
+  ms: number
+}
+
+/** What the browser (or a test) lends the engine. */
+export interface Env {
+  /** Decodes PNG/JPEG/GIF/BMP/WebP bytes; absent where there is no decoder (tests). */
+  decodeImage?: (bytes: Uint8Array) => Promise<Pixels | undefined>
+}
+
+export interface Ctx {
+  doc: Doc
+  s: Structure
+  env: Env
+}
+
+const make =
+  (status: Status) =>
+  (
+    id: string,
+    message: string,
+    extra: Omit<Finding, 'id' | 'status' | 'message'> = {},
+  ): Finding => ({
+    id,
+    status,
+    message,
+    ...extra,
+  })
+export const fix = make('fix')
+export const review = make('review')
+export const ok = make('ok')
+export const na = make('na')
+
+const RANK: Record<Status, number> = { fix: 3, review: 2, ok: 1, na: 0 }
+/** The more serious of several statuses. */
+export const worst = (xs: Status[]): Status =>
+  xs.reduce<Status>((a, b) => (RANK[b] > RANK[a] ? b : a), 'na')

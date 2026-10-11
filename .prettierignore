@@ -1,0 +1,6 @@
+dist
+coverage
+package-lock.json
+tmp
+public/THIRD_PARTY_LICENSES.txt
+.impeccable

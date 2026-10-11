@@ -1,0 +1,28 @@
+node_modules
+dist
+coverage
+*.local
+*.log
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Local tooling (fixture builders, sample analysis, batch checks) is not published
+scripts/
+
+# Local working data (generated fixtures, renders, reports) is never committed
+tmp/
+
+# Source material from the MDC program: student emails hold personal data. The template and the
+# checklist the site offers are copies in public/downloads/.
+data/
+
+# Claude Code session state (locks, local settings) stays on this machine
+.claude/
+
+# Playwright MCP session logs
+.playwright-mcp/
+
+# Impeccable design hook cache (the design briefs in .impeccable/ are kept)
+.impeccable/hook.cache.json

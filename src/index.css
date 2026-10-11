@@ -1,0 +1,331 @@
+@import 'tailwindcss';
+
+/* Self-hosted type: OFL latin subsets (licenses in public/THIRD_PARTY_LICENSES.txt). */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/instrument-serif-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/instrument-serif-italic-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/instrument-sans-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Design tokens, from the UPOU OER proof of concept (its docs/design.md): paper and ink, UP maroon,
+   forest and gold. Light values here; the dark set is in @layer base below. Status colours mark the
+   checklist: passed (forest), to correct (maroon red), to review (amber), not applicable (grey). */
+@theme static {
+  --color-paper: #faf8f6;
+  --color-surface: #ffffff;
+  --color-surface-2: #f2eeeb;
+  --color-ink: #373637;
+  --color-ink-2: #5c5a5c;
+  --color-ink-3: #6b686a;
+  --color-line: #e6e1dd;
+  --color-maroon: #8d0c34;
+  --color-maroon-2: #7f001f;
+  --color-maroon-soft: #f4e9e4;
+  --color-forest: #00563f;
+  --color-forest-soft: #e2efe9;
+  --color-gold: #fcb51b;
+  --color-overlay: rgb(55 54 55 / 0.6);
+  --color-band-maroon: #7b1113;
+  --color-band-forest: #014421;
+  --color-band-gold: #fcb51b;
+  --color-on-band: #faf8f6;
+  --color-action: #7b1113;
+  --color-action-2: #640d0f;
+  --color-on-action: #ffffff;
+  --color-focus: #8d0c34;
+  --color-glass: rgb(250 248 246 / 0.86);
+  --color-glass-border: rgb(55 54 55 / 0.1);
+  --color-frost: rgb(255 255 255 / 0.78);
+  --color-frost-2: rgb(255 255 255 / 0.96);
+  --color-rim: rgb(255 255 255 / 0.7);
+  --color-selection: rgb(141 12 52 / 0.16);
+
+  --color-ok: #00563f;
+  --color-ok-soft: #e2efe9;
+  --color-fix: #9b1c31;
+  --color-fix-soft: #fbeaec;
+  --color-review: #7a4d00;
+  --color-review-soft: #fdf1d8;
+
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+
+  --text-title: clamp(2.25rem, 1.4rem + 3.4vw, 4rem);
+  --text-title--line-height: 1.02;
+  --text-title--letter-spacing: -0.015em;
+
+  --radius-card: 18px;
+  --radius-pill: 999px;
+  --shadow-elev-1: 0 1px 2px rgb(27 26 23 / 0.06), 0 2px 8px -3px rgb(27 26 23 / 0.1);
+  --shadow-elev-2: 0 1px 3px rgb(27 26 23 / 0.06), 0 10px 24px -12px rgb(27 26 23 / 0.24);
+  --shadow-elev-3: 0 2px 6px rgb(27 26 23 / 0.06), 0 24px 48px -18px rgb(27 26 23 / 0.34);
+  --shadow-action: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 10px 26px -12px rgb(27 26 23 / 0.55);
+  --shadow-glow: 0 0 14px 2px rgb(27 26 23 / 0.18), 0 0 40px 8px rgb(27 26 23 / 0.08);
+  --gradient-band:
+    radial-gradient(120% 160% at 0% 0%, rgb(255 255 255 / 0.1), transparent 55%),
+    linear-gradient(180deg, transparent 55%, rgb(0 0 0 / 0.14));
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --default-transition-duration: 200ms;
+  --default-transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-rise: rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  @keyframes rise {
+    from {
+      opacity: 0;
+      translate: 0 10px;
+    }
+  }
+  --animate-sweep: sweep 1.4s ease-in-out infinite;
+  @keyframes sweep {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 250% 0;
+    }
+  }
+}
+
+/* `dark:` follows the applied theme, not the OS setting. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --inset-x: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+    --gutter: max(clamp(1rem, 4vw, 3rem), var(--inset-x) + 1rem);
+    --gradient-action: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--color-action), white 14%),
+      var(--color-action) 60%,
+      color-mix(in oklab, var(--color-action), black 12%)
+    );
+  }
+
+  [data-theme='dark'] {
+    color-scheme: dark;
+    --color-paper: #141112;
+    --color-surface: #1e1b1c;
+    --color-surface-2: #2a2627;
+    --color-ink: #f4f1ef;
+    --color-ink-2: #c9c5c7;
+    --color-ink-3: #9b9699;
+    --color-line: #3a3536;
+    --color-maroon: #fcc75a;
+    --color-maroon-2: #ffd98a;
+    --color-maroon-soft: #3f1a2a;
+    --color-forest: #5fc59c;
+    --color-forest-soft: #173328;
+    --color-gold: #fcc75a;
+    --color-overlay: rgb(0 0 0 / 0.7);
+    --color-band-maroon: #6e0f26;
+    --color-band-forest: #0f4a35;
+    --color-band-gold: #e3a91a;
+    --color-action: #6e0f26;
+    --color-action-2: #86172f;
+    --color-on-action: #faf8f6;
+    --color-focus: #fcc75a;
+    --color-glass: rgb(20 17 18 / 0.8);
+    --color-glass-border: rgb(255 255 255 / 0.08);
+    --color-frost: rgb(48 44 45 / 0.72);
+    --color-frost-2: rgb(66 61 62 / 0.85);
+    --color-rim: rgb(255 255 255 / 0.18);
+    --color-selection: rgb(252 199 90 / 0.3);
+    --color-ok: #5fc59c;
+    --color-ok-soft: #173328;
+    --color-fix: #ff8fa3;
+    --color-fix-soft: #3d1720;
+    --color-review: #f7c46a;
+    --color-review-soft: #3a2c10;
+    --shadow-elev-1: 0 1px 2px rgb(0 0 0 / 0.45), 0 4px 12px -4px rgb(0 0 0 / 0.55);
+    --shadow-elev-2:
+      0 1px 3px rgb(0 0 0 / 0.45), 0 6px 14px -6px rgb(0 0 0 / 0.5),
+      0 18px 36px -14px rgb(0 0 0 / 0.8);
+    --shadow-elev-3:
+      0 2px 6px rgb(0 0 0 / 0.5), 0 12px 24px -10px rgb(0 0 0 / 0.55),
+      0 36px 72px -20px rgb(0 0 0 / 0.9);
+    --shadow-action: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 12px 30px -12px rgb(0 0 0 / 0.9);
+    --shadow-glow: 0 0 14px 2px rgb(255 255 255 / 0.16), 0 0 40px 8px rgb(255 255 255 / 0.06);
+  }
+  /* Mirror of the block above: right first paint for system-dark users before the theme boot runs. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      color-scheme: dark;
+      --color-paper: #141112;
+      --color-surface: #1e1b1c;
+      --color-surface-2: #2a2627;
+      --color-ink: #f4f1ef;
+      --color-ink-2: #c9c5c7;
+      --color-ink-3: #9b9699;
+      --color-line: #3a3536;
+      --color-maroon: #fcc75a;
+      --color-maroon-2: #ffd98a;
+      --color-maroon-soft: #3f1a2a;
+      --color-forest: #5fc59c;
+      --color-forest-soft: #173328;
+      --color-gold: #fcc75a;
+      --color-overlay: rgb(0 0 0 / 0.7);
+      --color-band-maroon: #6e0f26;
+      --color-band-forest: #0f4a35;
+      --color-band-gold: #e3a91a;
+      --color-action: #6e0f26;
+      --color-action-2: #86172f;
+      --color-on-action: #faf8f6;
+      --color-focus: #fcc75a;
+      --color-glass: rgb(20 17 18 / 0.8);
+      --color-glass-border: rgb(255 255 255 / 0.08);
+      --color-frost: rgb(48 44 45 / 0.72);
+      --color-frost-2: rgb(66 61 62 / 0.85);
+      --color-rim: rgb(255 255 255 / 0.18);
+      --color-selection: rgb(252 199 90 / 0.3);
+      --color-ok: #5fc59c;
+      --color-ok-soft: #173328;
+      --color-fix: #ff8fa3;
+      --color-fix-soft: #3d1720;
+      --color-review: #f7c46a;
+      --color-review-soft: #3a2c10;
+    }
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+    scroll-padding-top: 6rem;
+    scrollbar-color: color-mix(in oklab, var(--color-ink-3) 55%, transparent) transparent;
+    scrollbar-gutter: stable;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+  body {
+    @apply min-h-dvh bg-paper font-sans text-ink antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background-color: var(--color-selection);
+  }
+}
+
+/* Unlayered so it beats transition utilities: the focus ring appears at once, no colour fade. */
+:focus-visible {
+  transition: none;
+}
+
+/* The UP tri-colour: maroon, gold and forest stripes (header top edge). */
+@utility brand-stripe {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-band-maroon) 0 33.4%,
+    var(--color-band-gold) 33.4% 66.7%,
+    var(--color-band-forest) 66.7%
+  );
+}
+
+/* On a maroon band the maroon focus ring would vanish: gold instead. */
+@utility band-focus {
+  & :focus-visible {
+    outline-color: var(--color-band-gold);
+  }
+}
+
+/* Small-caps label above headings. */
+@utility eyebrow {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-forest);
+}
+
+/* Theme switch (lib/theme.ts): the page cross-fades, motion-safe only. */
+html[data-theme-fade]::view-transition-old(root),
+html[data-theme-fade]::view-transition-new(root) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease-out-soft);
+}
+
+/* Touch: standalone controls get a 44x44px hit area drawn outside their box. */
+@layer components {
+  @media (pointer: coarse) {
+    :where(a[href], button, summary):not([class*='after:'], :where(p, label, li) *) {
+      position: relative;
+      &::after {
+        content: '';
+        position: absolute;
+        inset: min(0px, calc((100% - 44px) / 2));
+      }
+    }
+  }
+}
+
+/* Windows High Contrast: status pills keep a visible border. */
+@media (forced-colors: active) {
+  [data-status] {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* Printing the results (or saving them as PDF): just the report, on white. */
+@media print {
+  [data-print='hide'] {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  [data-theme='dark'] {
+    --color-paper: #fff;
+    --color-surface: #fff;
+    --color-surface-2: #f2eeeb;
+    --color-ink: #222;
+    --color-ink-2: #444;
+    --color-ink-3: #555;
+    --color-line: #ccc;
+  }
+  * {
+    box-shadow: none !important;
+  }
+  [data-print='avoid-break'] {
+    break-inside: avoid;
+  }
+}

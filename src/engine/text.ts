@@ -1,0 +1,111 @@
+// Text helpers shared by the rules: normalising, case, Roman numerals, dates, short quotes.
+import type { Para } from './model.ts'
+
+/** Curly quotes and dashes made plain, spaces collapsed. */
+export const norm = (s: string) =>
+  s
+    .normalize('NFKC')
+    .replace(/[‘’‛′]/g, "'")
+    .replace(/[“”‟″]/g, '"')
+    .replace(/[‐-―−]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+/** The paragraph as it shows: all-caps runs in upper case. */
+export const shown = (p: Para) =>
+  p.runs.map((r) => (r.caps ? r.text.toUpperCase() : r.text)).join('')
+
+export const hasLetters = (s: string) => /\p{L}/u.test(s)
+
+/** Every letter in upper case (digits and punctuation aside). */
+export const isUpper = (s: string) => hasLetters(s) && s === s.toUpperCase()
+
+/** Words with lowercase letters (for "not in upper case" details). */
+export const lowerWords = (s: string) => s.split(/\s+/).filter((w) => /\p{Ll}/u.test(w))
+
+const ROMAN: [number, string][] = [
+  [1000, 'm'],
+  [900, 'cm'],
+  [500, 'd'],
+  [400, 'cd'],
+  [100, 'c'],
+  [90, 'xc'],
+  [50, 'l'],
+  [40, 'xl'],
+  [10, 'x'],
+  [9, 'ix'],
+  [5, 'v'],
+  [4, 'iv'],
+  [1, 'i'],
+]
+
+export function roman(n: number): string {
+  let out = ''
+  for (const [v, s] of ROMAN)
+    while (n >= v) {
+      out += s
+      n -= v
+    }
+  return out
+}
+
+/** The number a well-formed Roman numeral stands for (either case), else undefined. */
+export function fromRoman(s: string): number | undefined {
+  const t = s.toLowerCase()
+  if (!/^[ivxlcdm]+$/.test(t)) return undefined
+  let n = 0
+  let rest = t
+  for (const [v, sym] of ROMAN)
+    while (rest.startsWith(sym)) {
+      n += v
+      rest = rest.slice(sym.length)
+    }
+  return rest === '' && roman(n) === t ? n : undefined
+}
+
+const MONTH =
+  '(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\\.?'
+/** A written date: 15 October 2026, October 15, 2026, 15/10/2026, 2026-10-15. */
+export const DATE = new RegExp(
+  `\\b(\\d{1,2}\\s+${MONTH}\\s*,?\\s+\\d{4}|${MONTH}\\s+\\d{1,2}\\s*,?\\s+\\d{4}|${MONTH}\\s+\\d{4}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})\\b`,
+  'i',
+)
+
+/** First words of a paragraph, for "find it in your file" locations. */
+export function quote(s: string, max = 70): string {
+  const t = norm(s.replace(/\{PAGE\}/g, '#'))
+  if (t.length <= max) return t
+  const cut = t.slice(0, max)
+  return cut.slice(0, Math.max(cut.lastIndexOf(' '), max - 15)) + '…'
+}
+
+/** Levenshtein distance, for "nearly the same" names and titles. */
+export function distance(a: string, b: string): number {
+  if (a === b) return 0
+  const row = Array.from({ length: b.length + 1 }, (_, k) => k)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = tmp
+    }
+  }
+  return row[b.length]
+}
+
+/** Words that differ between two versions of a title (case aside). */
+export function wordDiff(a: string, b: string): { onlyA: string[]; onlyB: string[] } {
+  const wa = norm(a).toLowerCase().split(' ')
+  const wb = norm(b).toLowerCase().split(' ')
+  return {
+    onlyA: wa.filter((w) => !wb.includes(w)),
+    onlyB: wb.filter((w) => !wa.includes(w)),
+  }
+}
+
+export const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`
+
+export const list = (xs: string[]) =>
+  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`
