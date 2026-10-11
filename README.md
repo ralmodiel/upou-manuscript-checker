@@ -18,6 +18,9 @@ program's review emails.
   95 KB (gzip) of HTML, CSS and JS; the checking engine loads while the page is idle, and pdf.js
   only when a PDF is chosen.
 - Light and dark themes, keyboard accessible, respects `prefers-reduced-motion`, prints cleanly.
+- **Current browsers.** Chrome and Edge 111, Firefox 114 and Safari 16.4 or later (the build target).
+  An older browser gets a plain notice that it needs an update (`public/browser-check.js`), not a
+  broken page.
 
 ## Proof of concept
 
@@ -84,8 +87,8 @@ builds its own small Word file.
 
 - Production builds carry a strict Content Security Policy as a `<meta>` tag: scripts, styles,
   fonts and the pdf.js worker come only from the site, and `connect-src 'none'` stops scripts from
-  making network requests (fetch, XHR, WebSocket, beacons). The theme is applied by `public/theme-boot.js`, so no inline
-  script is needed.
+  making network requests (fetch, XHR, WebSocket, beacons). The theme and the browser check run from `public/theme-boot.js`
+  and `public/browser-check.js`, so no inline script is needed.
 - Files are read in memory and dropped when the page closes. Nothing is stored except the theme
   choice (`localStorage`, key `mdc:theme`). No accounts, cookies or analytics.
 - Files over 100 MB are refused, and the .docx and .odt readers skip zip parts over 64 MB. Text
