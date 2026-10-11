@@ -58,7 +58,7 @@ npm run dev       # http://localhost:5290
 | `npm run lint`      | ESLint                                                     |
 | `npm run format`    | Prettier (`format:check` to check only)                    |
 | `npm test`          | Vitest (`test:watch` to keep running)                      |
-| `npm run audit`     | `npm audit` at any severity                                |
+| `npm run audit`     | `npm audit` at any severity, then registry signatures      |
 | `npm run verify`    | All of the above in order, as the deploy workflow runs it  |
 
 ## How it works
@@ -97,7 +97,10 @@ builds its own small Word file.
 - Files over 100 MB are refused, and the .docx and .odt readers skip zip parts over 64 MB. Text
   from a document is always rendered as text, never as HTML; the Word report escapes it and strips
   control characters.
-- `npm audit` reports 0 vulnerabilities. `npm run verify` runs it on every deploy.
+- Dependencies: `npm audit` reports 0 vulnerabilities in the whole tree (direct and transitive,
+  development tools included, at any severity), OSV.dev knows of none either, and every package's
+  npm registry signature verifies. `npm run verify` repeats the audit and the signature check on
+  every deploy, after `npm ci` installs exactly the versions in `package-lock.json`.
 
 ## Deploying to GitHub Pages
 
