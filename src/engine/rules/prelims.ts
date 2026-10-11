@@ -3,6 +3,7 @@ import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts
 import { PRELIM_NAMES, titlePage, type PrelimKey } from '../structure.ts'
 import { list, norm, quote, roman } from '../text.ts'
 import { bodyParas, doubleSpaced, justified } from './body.ts'
+import { thesisTitle } from './front.ts'
 import type { Caption } from './figures.ts'
 import {
   auditPdf,
@@ -110,7 +111,12 @@ function numbers(ctx: Ctx): Finding {
     const pages = Array.from({ length: last - first + 1 }, (_, k) => first + k)
     // Page i is the title page (a cover page before it is not counted).
     const base = titlePage(doc, s)
-    const problems = auditPdf(doc, pages, (p) => ({ kind: 'roman', value: p - base + 1 }))
+    const problems = auditPdf(
+      doc,
+      pages,
+      (p) => ({ kind: 'roman', value: p - base + 1 }),
+      thesisTitle(ctx),
+    )
     if (!problems.length)
       return ok(
         id,

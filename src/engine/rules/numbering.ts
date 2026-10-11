@@ -185,7 +185,7 @@ export const titleKey = (t: string) =>
 
 /** The footer titles on `pages` by key, the most common first (a tie: the earliest). Only pages
  *  whose number was read: a number run into the title leaves the title unknown. */
-function titleGroups(doc: Doc, pages: number[]) {
+function titleGroups(doc: Doc, pages: number[], thesis = '') {
   const groups = new Map<string, { shown: string; pages: number[] }>()
   for (const p of pages) {
     const f = pdfFolio(doc, p)
@@ -195,10 +195,26 @@ function titleGroups(doc: Doc, pages: number[]) {
     g.pages.push(p)
     groups.set(key, g)
   }
+  // A title drawn from the thesis title (its words found there) leads, then the most common.
+  const words = new Set(titleWords(thesis))
+  const drawn = (t: string) => {
+    const w = titleWords(t)
+    return w.length > 0 && w.filter((x) => words.has(x)).length >= 0.8 * w.length ? 1 : 0
+  }
   return [...groups]
     .map(([key, g]) => ({ key, ...g }))
-    .sort((a, b) => b.pages.length - a.pages.length || a.pages[0] - b.pages[0])
+    .sort(
+      (a, b) =>
+        drawn(b.shown) - drawn(a.shown) ||
+        b.pages.length - a.pages.length ||
+        a.pages[0] - b.pages[0],
+    )
 }
+
+const titleWords = (t: string) =>
+  norm(t)
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu) ?? []
 
 /** The title most footers on `pages` carry, as first written; none without a majority. */
 export function mainTitle(doc: Doc, pages: number[]) {
@@ -209,8 +225,8 @@ export function mainTitle(doc: Doc, pages: number[]) {
 
 /** Footers with another title than most of `pages` carry, each title once with its pages: one
  *  thesis, one title (one odd page is one change, not two). */
-function titleChanges(doc: Doc, pages: number[]): Problem[] {
-  const [main, ...others] = titleGroups(doc, pages)
+function titleChanges(doc: Doc, pages: number[], thesis?: string): Problem[] {
+  const [main, ...others] = titleGroups(doc, pages, thesis)
   return others.map((g) => ({
     type: 'changed',
     page: g.pages[0],
@@ -228,8 +244,16 @@ export function pdfFolio(doc: Doc, page: number): Folio | undefined {
 }
 
 /** Checks a run of PDF pages; `want` gives what each page should show. */
-export function auditPdf(doc: Doc, pages: number[], want: (p: number) => Want): Problem[] {
-  return [...pages.flatMap((p) => judge(pdfFolio(doc, p), want(p), p)), ...titleChanges(doc, pages)]
+export function auditPdf(
+  doc: Doc,
+  pages: number[],
+  want: (p: number) => Want,
+  thesis?: string,
+): Problem[] {
+  return [
+    ...pages.flatMap((p) => judge(pdfFolio(doc, p), want(p), p)),
+    ...titleChanges(doc, pages, thesis),
+  ]
 }
 
 // ---- Word ----

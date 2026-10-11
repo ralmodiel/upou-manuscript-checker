@@ -137,6 +137,15 @@ export function readTitlePage(ctx: Ctx): TitlePage {
 
 export const titleOf = (tp: TitlePage) => norm(tp.title.map((p) => shown(p)).join(' '))
 
+/** The thesis title on the title page, or '' when it cannot be read. */
+export function thesisTitle(ctx: Ctx): string {
+  try {
+    return titleOf(readTitlePage(ctx))
+  } catch {
+    return ''
+  }
+}
+
 /** A name line without its date column: the last line is cut at its first tab or "(date)". */
 function cleanName(s: string) {
   const line = Math.max(...['\n', '\r', '\u2028', '\u2029'].map((c) => s.lastIndexOf(c))) + 1

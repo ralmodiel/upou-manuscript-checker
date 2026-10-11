@@ -4,6 +4,7 @@ import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, isList, justified } from './body.ts'
+import { thesisTitle } from './front.ts'
 import {
   auditPdf,
   clip,
@@ -480,10 +481,12 @@ export function bodyNumbers(
     )
     if (!pages.length) return na(id, `No ${name} after a chapter's first page.`)
     const base = ch1?.page
-    const problems = auditPdf(doc, pages, (p) => ({
-      kind: 'arabic',
-      value: base === undefined ? undefined : p - base + 1,
-    }))
+    const problems = auditPdf(
+      doc,
+      pages,
+      (p) => ({ kind: 'arabic', value: base === undefined ? undefined : p - base + 1 }),
+      thesisTitle(ctx),
+    )
     if (!problems.length)
       return ok(
         id,
