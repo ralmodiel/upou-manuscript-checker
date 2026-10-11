@@ -1,0 +1,29 @@
+name: Weekly dependency audit
+
+# New advisories are published all the time, and the deploy only audits on a push: this checks the
+# locked dependencies every week (and on demand), so a newly found vulnerability or a bad registry
+# signature shows up as a failed run even when nothing was pushed.
+on:
+  schedule:
+    - cron: '17 1 * * 1' # Mondays 01:17 UTC (09:17 in Manila)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Exactly the locked versions; no package's install script runs, as the audit needs none.
+      - run: npm ci --ignore-scripts
+
+      # Vulnerabilities at any severity, direct and transitive, then registry signatures.
+      - run: npm run audit

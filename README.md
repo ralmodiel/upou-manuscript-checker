@@ -100,7 +100,9 @@ builds its own small Word file.
 - Dependencies: `npm audit` reports 0 vulnerabilities in the whole tree (direct and transitive,
   development tools included, at any severity), OSV.dev knows of none either, and every package's
   npm registry signature verifies. `npm run verify` repeats the audit and the signature check on
-  every deploy, after `npm ci` installs exactly the versions in `package-lock.json`.
+  every deploy, after `npm ci` installs exactly the versions in `package-lock.json`, and
+  `.github/workflows/audit.yml` repeats them every Monday, so a newly published advisory shows up as
+  a failed run even when nothing is pushed.
 
 ## Deploying to GitHub Pages
 
