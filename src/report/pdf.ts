@@ -15,7 +15,8 @@ const safe = (s: string) =>
   [
     ...s
       .replace(/\r\n?|[\p{Zl}\p{Zp}]/gu, '\n')
-      .replace(/[\t\p{Zs}]/gu, ' ')
+      // A no-break space stays one: it keeps "p. 12" together on a line.
+      .replace(/[\t\p{Zs}]/gu, (c) => (c === '\u00a0' ? c : ' '))
       .normalize('NFC'),
   ]
     .map((c) => {
@@ -26,6 +27,9 @@ const safe = (s: string) =>
       // Arrows (tables often use them) and symbol-font bullets have plain stand-ins.
       if (/[←-⇿➔-➿]/u.test(c)) return c === '←' ? '<-' : '->'
       if (/[\p{Co}■-◿]/u.test(c)) return '•'
+      // Box-drawing bars (a footer's "│" in place of the ellipsis): upright ones read as "|".
+      if (/[│┃┆┇┊┋║╎╏∣❘]/u.test(c)) return '|'
+      if (/[─-╿]/u.test(c)) return '-'
       if (c === '≥' || c === '≤') return c === '≥' ? '>=' : '<='
       if (c === '✓' || c === '✔') return 'v'
       const plain = c.normalize('NFKD').replace(/\p{M}/gu, '')

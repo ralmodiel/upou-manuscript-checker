@@ -38,6 +38,9 @@ describe('comments files', () => {
     expect(ls[0]).toBe('Peña')
     expect(ls.length).toBeGreaterThan(3)
     for (const l of ls) expect(font.widthOfTextAtSize(l, 10)).toBeLessThanOrEqual(300)
+    // A footer's bar prints as "|", and a no-break space keeps "p. 12" on one line.
+    expect(lines('TITLE │ii', font, 10, 300)).toEqual(['TITLE |ii'])
+    expect(lines('see p.\u00a012 now', font, 10, 30)).toContain('p.\u00a012')
   })
 
   it('list the five places the results page shows', () => {

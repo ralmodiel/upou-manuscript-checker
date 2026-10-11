@@ -8,7 +8,7 @@ import type { ReportModel } from './model'
 // (U+2060, keeping page ranges on one line on screen) go too: Arial has no glyph for them.
 const esc = (s: string) =>
   stripControls(s)
-    .replace(/\p{Noncharacter_Code_Point}|⁠/gu, '')
+    .replace(/\p{Noncharacter_Code_Point}|\u2060/gu, '')
     .replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
 interface RunOpts {

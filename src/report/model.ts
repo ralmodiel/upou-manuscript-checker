@@ -65,7 +65,7 @@ export function printedOf(page: number, labels?: Report['pageLabels']) {
 /** A detail's leading page ("p. 14: …") with its printed number too, unless the detail gives it
  *  ("p. 8: shows vii; it should be viii"). */
 export const detailText = (detail: string, labels?: Report['pageLabels']) =>
-  detail.replace(/^p\. (\d+)(?=[:,])/, (lead, n: string) => {
+  detail.replace(/^p\.\s(\d+)(?=[:,])/, (lead, n: string) => {
     const printed = printedOf(Number(n) - 1, labels)
     // Not when the detail shows it already: "shows vii", or a footer quoted "“… Acceptance i”".
     const shown = detail.includes(`shows ${printed}`) || detail.includes(` ${printed}”`)
@@ -123,7 +123,8 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
             ...(f.details ?? []).map((d) => detailText(d, r.pageLabels)),
             ...(i.links ?? []).map((l) => `${l.label}: ${l.href}`),
           ],
-          where: f.message.includes(where) ? '' : where,
+          // The engine writes "p. N" with a no-break space; places are written with a plain one.
+          where: f.message.replace(/ /g, ' ').includes(where) ? '' : where,
         }
       })
     if (items.length) parts.push({ n: parts.length + 1, name: part.name, items })
