@@ -95,6 +95,8 @@ export interface Page {
   glyphs: (Box & { text: string })[]
   /** Text painted in a colour other than black ('#rrggbb'). */
   colored: { text: string; color: string }[]
+  /** Where the lines of running text start and end, as read from the page. */
+  margins?: { left: number; right: number }
 }
 
 /** A Word/OpenDocument header or footer: its text with `{PAGE}` where the page number shows. */
@@ -127,6 +129,8 @@ export interface Picture {
   bytes?: () => Uint8Array | undefined
   /** PDF: decoded pixels of the image as painted. */
   pixels?: () => Promise<Pixels | undefined>
+  /** PDF: the 0-based page it is painted on. */
+  page?: number
 }
 
 export interface Pixels {

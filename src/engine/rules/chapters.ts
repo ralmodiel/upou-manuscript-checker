@@ -3,10 +3,12 @@ import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
-import { bodyParas, doubleSpaced, justified } from './body.ts'
+import { bodyParas, CAPTION, doubleSpaced, justified } from './body.ts'
 import {
   auditPdf,
+  clip,
   judge,
+  more,
   pagesText,
   pdfFolio,
   sectionStarts,
@@ -183,7 +185,7 @@ function noPageNumber(ctx: Ctx): Finding {
       details: shown
         .map(
           (c) =>
-            `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${folio(c)!.raw}”`,
+            `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${clip(folio(c)!.raw)}”`,
         )
         .slice(0, 6),
       where: shown.slice(0, 5).map((c) => ({ page: doc.paras[c.heading].page })),
@@ -212,6 +214,8 @@ const headingLike = (p: Para) => {
   const t = norm(p.text)
   return (
     isHeadingish(p) &&
+    // Words, not a lone arrow or number from a diagram.
+    /\p{L}.*\p{L}/u.test(t) &&
     t.length <= 100 &&
     !/[.:;,]$/.test(t) &&
     (p.lines?.length ?? 1) <= 2 &&
@@ -261,25 +265,71 @@ function hanging(ctx: Ctx): Finding {
   }
   const details: string[] = []
   const where: { page?: number; quote?: string }[] = []
-  const paras = doc.paras.filter((p) => p.i >= from)
+  // The entries of the contents and the lists of tables and figures are lists, not running text.
+  const lists = s.prelims.filter(
+    (x) => x.key === 'toc' || x.key === 'tables' || x.key === 'figures',
+  )
+  const paras = doc.paras.filter(
+    (p) => p.i >= from && !lists.some((x) => p.i > x.heading && p.i < x.end),
+  )
+  // Past the chapters, the part a place is in: "p. 88, References".
+  const place = (page: number, p: Para) => {
+    const ref = s.references && p.i > s.references.heading && p.i < s.references.end
+    const ap = s.appendices.find((a) => p.i > a.heading && p.i < a.end)
+    const part = ref ? 'References' : ap ? quote(ap.label, 30) : ''
+    return `${pagesText([page])}${part ? `, ${part}` : ''}`
+  }
   // A page of headings only (a divider such as "Appendices") leaves nothing hanging.
-  const hasText = (page: number | undefined) =>
-    (doc.pages?.[page ?? -1]?.paras ?? []).some((i) => !headingLike(doc.paras[i]))
+  const texted = new Set(
+    doc.paras.filter((q) => !headingLike(q)).flatMap((q) => (q.lines ?? []).map((l) => l.page)),
+  )
+  const row = (q?: Para) => !!q && (!!q.inTable || q.text.includes('\t'))
   for (const p of paras) {
     const lines = p.lines ?? []
     const next = doc.paras[p.i + 1]
+    const pg = doc.pages?.[p.page ?? -1]
+    const end = lines.at(-1)
+    if (!pg || !end) continue
+    const caption = CAPTION.test(norm(p.text))
+    // Pictures in the text area (not a logo in the header or footer), above or below the heading.
+    const pics = pg.images.filter((b) => b.y1 > 0.12 * pg.height && b.y0 < 0.88 * pg.height)
+    const above = pics.some((b) => b.y1 <= lines[0].y)
+    // The last thing on its page (no picture below it either), after text or a picture, and with
+    // something to come on the pages after; not a caption under its picture, closing the figure.
     if (
       headingLike(p) &&
-      next &&
-      next.page !== p.page &&
-      lines.at(-1)?.page === p.page &&
-      hasText(p.page)
+      end.page === p.page &&
+      (!next || next.page !== p.page) &&
+      !pics.some((b) => b.y0 >= end.y - 2) &&
+      (texted.has(pg.n) || above) &&
+      (next || (doc.pages?.[pg.n + 1]?.images.length ?? 0) > 0) &&
+      !(caption && above)
     ) {
       details.push(
-        `${pagesText([p.page!])}: the heading “${quote(p.text, 40)}” is the last line of the page`,
+        `${place(pg.n, p)}: the heading “${quote(p.text, 40)}” is the last line of the page`,
       )
-      where.push({ page: p.page, quote: quote(p.text, 40) })
+      where.push({ page: pg.n, quote: quote(p.text, 40) })
       continue
+    }
+    // A table's title with no more than an inch of its table under it at the foot of the page,
+    // the table going on at the next page.
+    if (caption && end.page === p.page) {
+      let k = p.i + 1
+      while (doc.paras[k]?.page === p.page && row(doc.paras[k])) k++
+      const rows = doc.paras.slice(p.i + 1, k).flatMap((q) => q.lines ?? [])
+      const rest = doc.paras[k]
+      if (
+        rows.length &&
+        rest?.page === pg.n + 1 &&
+        row(rest) &&
+        rows.filter((l) => l.page === pg.n).at(-1)!.y - rows[0].y <= 72
+      ) {
+        details.push(
+          `${place(pg.n, p)}: the title “${quote(p.text, 40)}” is at the bottom of the page, with most of its table on the next page`,
+        )
+        where.push({ page: pg.n, quote: quote(p.text, 40) })
+        continue
+      }
     }
     const pages = [...new Set(lines.map((l) => l.page))]
     if (pages.length === 2 && !p.inTable && p.align !== 'center') {
@@ -295,7 +345,7 @@ function hanging(ctx: Ctx): Finding {
         headingLike(next)
       if (onFirst === 1 || (onNext === 1 && closes)) {
         details.push(
-          `${pagesText([pages[onFirst === 1 ? 0 : 1]])}: one line of the paragraph “${quote(p.text, 35)}” ${onFirst === 1 ? 'is left at the bottom of the page' : 'runs over to the next page'}`,
+          `${place(pages[onFirst === 1 ? 0 : 1], p)}: one line of the paragraph “${quote(p.text, 35)}” ${onFirst === 1 ? 'is left at the bottom of the page' : 'runs over to the next page'}`,
         )
         where.push({ page: pages[onFirst === 1 ? 0 : 1], quote: quote(p.text, 40) })
       }
@@ -304,9 +354,16 @@ function hanging(ctx: Ctx): Finding {
   if (!details.length)
     return ok(id, 'No hanging headings or single lines at the top or bottom of a page.')
   return fix(id, msg, {
-    details: details
-      .slice(0, 8)
-      .concat(details.length > 8 ? [`…and ${details.length - 8} more`] : []),
+    details: details.slice(0, 8).concat(
+      details.length > 8
+        ? [
+            more(
+              details.length - 8,
+              where.slice(8).map((w) => w.page),
+            ),
+          ]
+        : [],
+    ),
     where: where.slice(0, 6),
   })
 }

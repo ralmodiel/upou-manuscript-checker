@@ -1,6 +1,6 @@
 // Other preliminary pages: all there, justified, double-spaced, numbered in Roman numerals.
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
-import { PRELIM_NAMES, type PrelimKey } from '../structure.ts'
+import { PRELIM_NAMES, titlePage, type PrelimKey } from '../structure.ts'
 import { list, norm, quote, roman } from '../text.ts'
 import { bodyParas, doubleSpaced, justified } from './body.ts'
 import type { Caption } from './figures.ts'
@@ -108,11 +108,13 @@ function numbers(ctx: Ctx): Finding {
     const last = (doc.paras[s.chapters[0].heading].page ?? doc.pages!.length) - 1
     if (last < first) return na(id, 'No preliminary pages found after the Acceptance Page.')
     const pages = Array.from({ length: last - first + 1 }, (_, k) => first + k)
-    const problems = auditPdf(doc, pages, (p) => ({ kind: 'roman', value: p + 1 }))
+    // Page i is the title page (a cover page before it is not counted).
+    const base = titlePage(doc, s)
+    const problems = auditPdf(doc, pages, (p) => ({ kind: 'roman', value: p - base + 1 }))
     if (!problems.length)
       return ok(
         id,
-        `${pagesText(pages)} are numbered ${roman(first + 1)}–${roman(last + 1)}, with the shortened title and an ellipsis.`,
+        `${pagesText(pages)} are numbered ${roman(first - base + 1)}–${roman(last - base + 1)}, with the shortened title and an ellipsis.`,
       )
     return fix(id, msg, { details: summarize(problems), where: [{ page: problems[0].page }] })
   }

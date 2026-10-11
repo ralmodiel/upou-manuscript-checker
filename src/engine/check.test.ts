@@ -2,6 +2,7 @@
 // guards around it: files it cannot read are turned away with a reason, and the comments it writes
 // stay valid whatever the file name holds.
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { reportDocx } from '../report/docx.ts'
 import { reportModel } from '../report/model.ts'
@@ -79,6 +80,24 @@ describe('check', () => {
     expect(finding(r, 'figures.number').status).toBe('review')
   })
 
+  it('reads undated references and orders one author’s works by year', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('REFERENCES', '<w:jc w:val="center"/>'),
+        para('Community Radio Network. (n.d.). An undated page.', double),
+        para('Smith, J. (2020). A later work.', double),
+        para('Smith, J. (2018). An earlier work.', double),
+      ),
+      opts,
+    )
+    expect(finding(r, 'references.order').details?.join(' ')).toMatch(/earliest year/)
+    // Three entries, the undated one included; what is not read is for a second look.
+    expect(finding(r, 'references.apa').status).toBe('review')
+    expect(finding(r, 'references.apa').message).toMatch(/^3 references/)
+  })
+
   it('stays fast on long runs of spaces and tabs', async () => {
     // These once made two patterns backtrack for minutes, freezing the page.
     const t0 = performance.now()
@@ -95,6 +114,40 @@ describe('check', () => {
     expect(() => sniff('thesis.gdoc', strToU8('{"url":""}'))).toThrow(/link to Google Docs/)
     expect(() => sniff('a.zip', zipSync({ 'a.txt': strToU8('a') }))).toThrow(/not a Word/)
     await expect(check('empty.docx', new Uint8Array(), opts)).rejects.toThrow('empty')
+  })
+})
+
+describe('PDF reader', () => {
+  // Four pages of body text with a small running title above the page number, set higher than
+  // the bottom inch, and a ruled table on the last page.
+  async function pdf(): Promise<Uint8Array> {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const text =
+      'Body text of the chapter, set in twelve point type, with its words across the page.'
+    for (let n = 0; n < 4; n++) {
+      const page = doc.addPage([612, 792])
+      for (let y = 720; y > 200; y -= 27.6)
+        if (n < 3 || y < 540 || y > 620) page.drawText(text, { x: 72, y, size: 12, font })
+      page.drawText('A Running Title Set Above The Page Number', { x: 72, y: 84, size: 8, font })
+      page.drawText(String(n + 1), { x: 530, y: 51, size: 11, font })
+    }
+    const last = doc.getPage(3)
+    for (const y of [610, 550])
+      last.drawLine({ start: { x: 72, y }, end: { x: 540, y }, thickness: 0.75 })
+    last.drawText('Cell one', { x: 80, y: 575, size: 12, font })
+    last.drawText('Cell two', { x: 320, y: 575, size: 12, font })
+    return doc.save()
+  }
+
+  it('reads a running title above the bottom inch as the footer, and a ruled table as one', async () => {
+    const { readPdf } = await import('./pdf.ts')
+    const doc = await readPdf(await pdf(), await import('pdfjs-dist/legacy/build/pdf.mjs'))
+    expect(doc.pages!.map((p) => p.footer)).toEqual(
+      [1, 2, 3, 4].map((n) => `A Running Title Set Above The Page Number\n${n}`),
+    )
+    expect(doc.paras.filter((p) => /Running Title/.test(p.text))).toEqual([])
+    expect(doc.paras.filter((p) => p.inTable).map((p) => p.text)).toEqual(['Cell one\tCell two'])
   })
 })
 

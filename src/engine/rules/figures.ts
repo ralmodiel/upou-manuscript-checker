@@ -1,5 +1,5 @@
 // Figures and tables: the number in bold above, the title in italics right below, APA style.
-import type { Para } from '../model.ts'
+import type { Box, Para } from '../model.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
 import { bolded, isTocLine } from '../structure.ts'
 import { list, norm, quote } from '../text.ts'
@@ -15,7 +15,7 @@ export interface Caption {
   object: 'after' | 'before' | 'unknown'
 }
 
-const LABEL = /^(figure|table)\s+(\d+(?:[.-]\d+)*|[A-Z]-?\d+)\s*[.:–—-]?\s*(.*)$/i
+const LABEL = /^(fig(?:ure)?\.?|table)\s*(\d+(?:[.-]\d+)*|[A-Z]-?\d+)\s*[.:–—-]?\s*(.*)$/i
 /** "Table 1 (continued)": a long table carried over to the next page, not a caption of its own. */
 const CONTINUED = /^(figure|table)\s+\S+\s*\(?cont(inued|['’]d|\.)?\)?\.?$/i
 const italic = (p: Para) => {
@@ -66,15 +66,39 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
       if (doc.paras.slice(Math.max(0, p.i - 3), p.i).some((q) => q.page === p.page && row(q)))
         return 'before'
     }
-    const page = doc.pages?.[p.page ?? -1]
+    const n = p.page ?? -1
+    const page = doc.pages?.[n]
     const line = p.lines?.[0]
     if (!page || !line) return 'unknown'
-    const below = page.images.some((b) => b.y0 >= line.y - 2 && b.x1 - b.x0 > 40)
-    const above = page.images.some((b) => b.y1 <= line.y - line.size && b.x1 - b.x0 > 40)
-    // A caption closing a page: the figure may open the next one.
-    const last = page.paras.at(-1) === (title ?? p).i
-    const nextTop = last && (doc.pages?.[(p.page ?? 0) + 1]?.images.length ?? 0) > 0
-    return below || nextTop ? 'after' : above ? 'before' : 'unknown'
+    const end = (title ?? p).lines?.findLast((l) => l.page === n) ?? line
+    const wide = (b: Box) => b.x1 - b.x0 > 40
+    // How far each picture on the page stands below the caption, or above it.
+    const below = page.images.filter((b) => wide(b) && b.y0 >= line.y - 2).map((b) => b.y0 - end.y)
+    const above = page.images
+      .filter((b) => wide(b) && b.y1 <= line.y - line.size)
+      .map((b) => line.y - line.size - b.y1)
+    // A picture right by the caption is its figure, whatever else the pages hold.
+    const near = (gaps: number[]) => gaps.some((g) => g < 5 * line.size)
+    if (near(below)) return 'after'
+    if (near(above)) return 'before'
+    // A caption closing its page, and a picture opening the next one.
+    const next = doc.pages?.[n + 1]
+    const nextText = next && doc.paras[next.paras[0]]?.lines?.[0]
+    if (
+      page.paras.at(-1) === (title ?? p).i &&
+      next?.images.some((b) => wide(b) && (!nextText || b.y1 <= nextText.y))
+    )
+      return 'after'
+    // A caption opening its page, and a picture closing the page before.
+    const prevPage = doc.pages?.[n - 1]
+    const prevText = doc.paras[p.i - 1]?.lines?.findLast((l) => l.page === n - 1)
+    if (
+      page.paras[0] === p.i &&
+      doc.paras[p.i - 1]?.lines?.at(-1)?.page !== n &&
+      prevPage?.images.some((b) => wide(b) && (!prevText || b.y0 >= prevText.y - 2))
+    )
+      return 'before'
+    return below.length ? 'after' : above.length ? 'before' : 'unknown'
   }
   for (let k = from; k < Math.min(doc.paras.length, from + 4); k++) {
     if (is(doc.paras[k])) return 'after'
@@ -95,11 +119,13 @@ export function findCaptions(ctx: Ctx): Caption[] {
     const p = doc.paras[k]
     const t = norm(p.text)
     const m = LABEL.exec(t)
-    if (!m || p.inTable || isTocLine(p.text) || t.length > 250) continue
+    if (!m || p.inTable || isTocLine(p.text) || t.length > (labelBold(p) ? 400 : 250)) continue
     const rest = m[3]
-    // "Table 1 shows that…" is a sentence about the table, not its caption; nor is a continued table's.
-    if ((rest && /^\p{Ll}/u.test(rest) && !bolded(p)) || CONTINUED.test(t)) continue
-    const kind = m[1].toLowerCase() as Caption['kind']
+    // "Table 1 shows that…" and "Table 1, the…" are sentences about the table, not its caption;
+    // nor is a continued table's.
+    if ((rest && /^\p{Ll}/u.test(rest) && !bolded(p)) || /^[,;)]/.test(rest) || CONTINUED.test(t))
+      continue
+    const kind: Caption['kind'] = /^fig/i.test(m[1]) ? 'figure' : 'table'
     let title: Para | undefined
     if (!rest) {
       for (let j = k + 1; j < Math.min(end, k + 4); j++) {
@@ -124,6 +150,14 @@ export function findCaptions(ctx: Ctx): Caption[] {
 }
 
 const name = (c: Caption) => `${c.kind === 'table' ? 'Table' : 'Figure'} ${c.number}`
+/** "Table 1, Table 2 and 5 more": up to six names, then how many more. */
+const names = (cs: Caption[]) =>
+  list(
+    cs
+      .slice(0, 6)
+      .map(name)
+      .concat(cs.length > 6 ? [`${cs.length - 6} more`] : []),
+  )
 const at = (c: Caption) => ({ page: c.para.page, quote: quote(c.para.text, 50) })
 
 /** Tables and pictures in the body that no caption sits beside (Word). */
@@ -173,9 +207,9 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
   const numberIssues: string[] = []
   if (below.length)
     numberIssues.push(
-      `Below the ${below.length === 1 ? 'figure/table' : 'figures/tables'}: ${list(below.slice(0, 6).map(name))}.`,
+      `Below the ${below.length === 1 ? 'figure/table' : 'figures/tables'}: ${names(below)}.`,
     )
-  if (notBold.length) numberIssues.push(`Not in bold: ${list(notBold.slice(0, 6).map(name))}.`)
+  if (notBold.length) numberIssues.push(`Not in bold: ${names(notBold)}.`)
   if (lonely.length) numberIssues.push(`No number at all: ${list(lonely.slice(0, 3))}.`)
   // An old .doc is read for its text only: bold and italics are for the student to check.
   const plain = ctx.doc.kind === 'doc'
@@ -193,7 +227,7 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     : unsure.length
       ? review(
           'figures.number',
-          `Check that ${list(unsure.slice(0, 6).map(name))} ${unsure.length === 1 ? 'has its' : 'have their'} number above the figure/table: this file does not show where ${unsure.length === 1 ? 'it stands' : 'they stand'}.`,
+          `Check that ${names(unsure)} ${unsure.length === 1 ? 'has its' : 'have their'} number above the figure/table: this file does not show where ${unsure.length === 1 ? 'it stands' : 'they stand'}.`,
           { where: unsure.slice(0, 5).map(at) },
         )
       : plain
@@ -210,14 +244,9 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
   const noTitle = caps.filter((c) => !c.inline && !c.title)
   const notItalic = caps.filter((c) => c.title && !italic(c.title))
   const titleIssues: string[] = []
-  if (sameLine.length)
-    titleIssues.push(
-      `Title on the same line as the number: ${list(sameLine.slice(0, 6).map(name))}.`,
-    )
-  if (notItalic.length)
-    titleIssues.push(`Title not in italics: ${list(notItalic.slice(0, 6).map(name))}.`)
-  if (noTitle.length)
-    titleIssues.push(`No title below the number: ${list(noTitle.slice(0, 6).map(name))}.`)
+  if (sameLine.length) titleIssues.push(`Title on the same line as the number: ${names(sameLine)}.`)
+  if (notItalic.length) titleIssues.push(`Title not in italics: ${names(notItalic)}.`)
+  if (noTitle.length) titleIssues.push(`No title below the number: ${names(noTitle)}.`)
   const title = titleIssues.length
     ? fix(
         'figures.title',

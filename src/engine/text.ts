@@ -65,9 +65,9 @@ export function fromRoman(s: string): number | undefined {
 
 const MONTH =
   '(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\\.?'
-/** A written date: 15 October 2026, October 15, 2026, 15/10/2026, 2026-10-15. */
+/** A written date: 15 October 2026, October 15, 2026 (or 15,2026), 15/10/2026, 2026-10-15. */
 export const DATE = new RegExp(
-  `\\b(\\d{1,2}\\s+${MONTH}\\s*,?\\s+\\d{4}|${MONTH}\\s+\\d{1,2}\\s*,?\\s+\\d{4}|${MONTH}\\s+\\d{4}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})\\b`,
+  `\\b(\\d{1,2}\\s+${MONTH}(\\s*,\\s*|\\s+)\\d{4}|${MONTH}\\s+\\d{1,2}(\\s*,\\s*|\\s+)\\d{4}|${MONTH}\\s+\\d{4}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})\\b`,
   'i',
 )
 

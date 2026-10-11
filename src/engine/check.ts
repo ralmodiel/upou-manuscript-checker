@@ -11,6 +11,7 @@ import { chapterRules } from './rules/chapters.ts'
 import { extraRules } from './rules/extra.ts'
 import { figureRules, findCaptions } from './rules/figures.ts'
 import { frontRules, readTitlePage, titleOf } from './rules/front.ts'
+import { pdfFolio } from './rules/numbering.ts'
 import { prelimRules } from './rules/prelims.ts'
 import { FileProblem } from './problem.ts'
 import { findStructure } from './structure.ts'
@@ -156,6 +157,8 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
     kind,
     pages: doc.pages?.length,
     title,
+    pageLabels:
+      doc.kind === 'pdf' ? doc.pages?.map((pg) => pdfFolio(doc, pg.n)?.number) : undefined,
     findings: ITEMS.map((item) =>
       doc.unreadable
         ? review(

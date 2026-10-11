@@ -111,6 +111,10 @@ export function nextText(paras: Para[], i: number, end = paras.length): number |
   return undefined
 }
 
+/** The title page's 0-based page (PDF): the first page, unless a cover page comes before it. */
+export const titlePage = (doc: Doc, s: Structure) =>
+  s.title.start > 0 ? (doc.paras[s.title.start].page ?? 0) : 0
+
 /** Where the page holding paragraph `i` starts. */
 function pageStart(doc: Doc, i: number) {
   for (let k = i; k > 0; k--) if (doc.paras[k].newPage) return k
@@ -225,6 +229,11 @@ export function findStructure(doc: Doc): Structure {
     const next = paras.findIndex((p) => p.i > 0 && p.newPage)
     s.title.end = next > 0 ? next : paras.length
   }
+  // A cover page before the title page is not part of it: the title page opens with the university.
+  const up = paras.findIndex(
+    (p) => p.i < s.title.end && /university of the philippines/i.test(norm(p.text)),
+  )
+  if (up > 0) s.title.start = pageStart(doc, up)
 
   for (const ch of s.chapters) {
     if (ch.inlineTitle) continue

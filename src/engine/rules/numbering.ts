@@ -2,7 +2,7 @@
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
 import type { Doc, HeaderFooter, NumberFormat, Section } from '../model.ts'
-import { fromRoman, norm, roman } from '../text.ts'
+import { fromRoman, norm, quote, roman } from '../text.ts'
 
 export interface Folio {
   raw: string
@@ -79,20 +79,42 @@ export function pagesText(pages: number[]): string {
   return `${ps.length === 1 ? 'p.' : 'pp.'} ${out.join(', ')}`
 }
 
+/** The line closing a cut list: "…and 5 more, on pp. 7, 9–11". */
+export const more = (n: number, pages: (number | undefined)[]) => {
+  const known = pages.filter((p) => p !== undefined)
+  return `…and ${n} more${known.length ? `, on ${pagesText(known)}` : ''}`
+}
+
 export type Want = { kind: 'roman' | 'arabic'; value?: number } | 'none'
 
 export interface Problem {
   /** Kind of problem, for grouping. */
-  type: 'missing' | 'present' | 'kind' | 'value' | 'title' | 'placeholder' | 'ellipsis'
+  type:
+    | 'missing'
+    | 'present'
+    | 'kind'
+    | 'value'
+    | 'title'
+    | 'placeholder'
+    | 'ellipsis'
+    | 'long'
+    | 'changed'
   page?: number
   text: string
+}
+
+/** A footer as quoted in a message: a long one by its end, where the page number is. */
+export const clip = (raw: string) => {
+  if (raw.length <= 50) return raw
+  const tail = raw.slice(-45)
+  return '…' + tail.slice(tail.indexOf(' ') + 1)
 }
 
 /** Checks one footer against what the page should show. */
 export function judge(folio: Folio | undefined, want: Want, page?: number): Problem[] {
   const at = page === undefined ? '' : `${pagesText([page])}: `
   if (want === 'none')
-    return folio ? [{ type: 'present', page, text: `${at}shows “${folio.raw}”` }] : []
+    return folio ? [{ type: 'present', page, text: `${at}shows “${clip(folio.raw)}”` }] : []
   const expected =
     want.value === undefined
       ? undefined
@@ -124,12 +146,45 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
     })
   else if (expected !== undefined && folio.value !== undefined && folio.value !== want.value)
     out.push({ type: 'value', page, text: `${at}shows ${folio.number}; it should be ${expected}` })
+  const words = folio.title.split(/\s+/).filter(Boolean).length
   if (PLACEHOLDER.test(folio.title))
     out.push({ type: 'placeholder', page, text: `${at}still says “Shortened thesis title here”` })
   else if (!folio.title)
     out.push({ type: 'title', page, text: `${at}has no shortened thesis title before the number` })
-  else if (!folio.ellipsis)
-    out.push({ type: 'ellipsis', page, text: `${at}has no ellipsis (…) after the shortened title` })
+  else {
+    // A shortened title is a few words; the whole title runs longer.
+    if (words > 12)
+      out.push({
+        type: 'long',
+        page,
+        text: `${at}has a ${words}-word title before the number; shorten it`,
+      })
+    if (!folio.ellipsis)
+      out.push({
+        type: 'ellipsis',
+        page,
+        text: `${at}has no ellipsis (…) after the shortened title`,
+      })
+  }
+  return out
+}
+
+/** Pages whose footer has another title than the page before with one: one thesis, one title. */
+function titleChanges(doc: Doc, pages: number[]): Problem[] {
+  const title = (p: number) => pdfFolio(doc, p)?.title || undefined
+  const out: Problem[] = []
+  for (const p of pages) {
+    const now = title(p)
+    let q = p - 1
+    while (q >= 0 && !title(q)) q--
+    const before = q >= 0 ? title(q) : undefined
+    if (now && before && norm(now).toLowerCase() !== norm(before).toLowerCase())
+      out.push({
+        type: 'changed',
+        page: p,
+        text: `${pagesText([p])}: the title in the footer changes to “${quote(now, 40)}” (before: “${quote(before, 40)}”); keep one shortened title`,
+      })
+  }
   return out
 }
 
@@ -144,7 +199,7 @@ export function pdfFolio(doc: Doc, page: number): Folio | undefined {
 
 /** Checks a run of PDF pages; `want` gives what each page should show. */
 export function auditPdf(doc: Doc, pages: number[], want: (p: number) => Want): Problem[] {
-  return pages.flatMap((p) => judge(pdfFolio(doc, p), want(p), p))
+  return [...pages.flatMap((p) => judge(pdfFolio(doc, p), want(p), p)), ...titleChanges(doc, pages)]
 }
 
 // ---- Word ----
@@ -225,6 +280,8 @@ const LABEL: Record<Problem['type'], string> = {
   title: 'No shortened thesis title on',
   placeholder: '“Shortened thesis title here” is still on',
   ellipsis: 'No ellipsis (…) after the shortened title on',
+  long: 'A long title, not a shortened one, on',
+  changed: 'The title in the footer changes on',
 }
 
 /** Problems grouped by kind, one line each ("No page number on pp. 4–6, e.g. …"). */
@@ -233,9 +290,22 @@ export function summarize(problems: Problem[]): string[] {
   return types.flatMap((type) => {
     const ps = problems.filter((p) => p.type === type)
     const pages = ps.flatMap((p) => (p.page === undefined ? [] : [p.page]))
-    if (type === 'value' || pages.length < 3) {
-      const shown = ps.slice(0, 3).map((p) => p.text.charAt(0).toUpperCase() + p.text.slice(1))
-      return ps.length > 3 ? [...shown, `…and ${ps.length - 3} more`] : shown
+    if (type === 'value' || type === 'changed' || pages.length < 3) {
+      // "p. 5: …" keeps its small p; a sentence starts with a capital.
+      const shown = ps
+        .slice(0, 3)
+        .map((p) =>
+          p.page === undefined ? p.text.charAt(0).toUpperCase() + p.text.slice(1) : p.text,
+        )
+      return ps.length > 3
+        ? [
+            ...shown,
+            more(
+              ps.length - 3,
+              ps.slice(3).map((p) => p.page),
+            ),
+          ]
+        : shown
     }
     return [`${LABEL[type]} ${pagesText(pages)} (for example ${ps[0].text})`]
   })

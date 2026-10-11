@@ -27,6 +27,9 @@ export interface Report {
   pages?: number
   /** The title as the title page gives it, when found. */
   title?: string
+  /** PDF: the page number printed on each page ("vii", "48"; undefined where none shows), by
+   *  0-based physical page, as `Where.page` counts them. */
+  pageLabels?: (string | undefined)[]
   findings: Finding[]
   notes: string[]
   /** Milliseconds spent reading and checking. */

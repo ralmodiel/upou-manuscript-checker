@@ -3,7 +3,19 @@ import type { Box, Para } from '../model.ts'
 import { CHECKLIST } from '../checklist.ts'
 import { colourfulness, dHash, hamming, shrink } from '../images.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding, type Where } from '../report.ts'
-import { DATE, distance, isUpper, list, lowerWords, norm, quote, shown, wordDiff } from '../text.ts'
+import { titlePage } from '../structure.ts'
+import {
+  DATE,
+  distance,
+  isUpper,
+  list,
+  lowerWords,
+  norm,
+  quote,
+  roman,
+  shown,
+  wordDiff,
+} from '../text.ts'
 import { judge, pdfFolio, wordFolioAt, type Want } from './numbering.ts'
 
 // The seal in the MDC template: its file's SHA-256 and its difference hash (scripts/probe/seal-hash.mjs).
@@ -26,6 +38,10 @@ const stop = (s: string) => (s.endsWith('.') ? s : s + '.')
 
 export interface TitlePage {
   paras: Para[]
+  /** 0-based page of the title page (PDF; 0 for other files). */
+  page: number
+  /** The first text before the title page (a cover page). */
+  cover?: Para
   program?: Para
   author?: Para
   title: Para[]
@@ -56,10 +72,13 @@ function scannedFront(ctx: Ctx): number[] {
 }
 
 export function readTitlePage(ctx: Ctx): TitlePage {
+  const { start, end } = ctx.s.title
+  const page = titlePage(ctx.doc, ctx.s)
   // A scanned title page has no text: what comes after it is not the title page.
-  const paras = scannedFront(ctx).includes(0) ? [] : textIn(ctx, ctx.s.title.start, ctx.s.title.end)
+  const paras = scannedFront(ctx).includes(page) ? [] : textIn(ctx, start, end)
   const idx = (p?: Para) => (p ? paras.indexOf(p) : -1)
-  const program = find(paras, /master of development communication|master of|program/i)
+  const program =
+    find(paras, /master of development communication/i) ?? find(paras, /master of|program/i)
   const adviserLabel = find(paras, ADVISER_LABEL)
   const faculty = paras.find(
     (p, k) =>
@@ -83,6 +102,8 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     afterFaculty[0]
   return {
     paras,
+    page,
+    cover: textIn(ctx, 0, start)[0],
     program,
     author,
     title: title.filter((p) => p !== adviser),
@@ -131,7 +152,9 @@ function pdfMarkNear(ctx: Ctx, label: Para): boolean {
     y1: line.y + 2.5 * line.size,
   }
   const inside = (b: Box) => b.x1 > zone.x0 && b.x0 < zone.x1 && b.y1 > zone.y0 && b.y0 < zone.y1
-  if (page.images.some(inside)) return true
+  // A signature is wider than a letter and taller than a rule: tick boxes drawn as pictures are not.
+  const big = (b: Box) => b.x1 - b.x0 >= 2 * line.size && b.y1 - b.y0 >= 0.5 * line.size
+  if (page.images.some((b) => inside(b) && big(b))) return true
   return page.marks.some(
     (m) =>
       inside(m) && (m.kind !== 'path' ? !/Widget:(Tx|Btn)/.test(m.kind) : (m.count ?? 0) > 120),
@@ -144,12 +167,12 @@ const wordPictureNear = (ctx: Ctx, label: Para) =>
 
 // ---- Title Page ----
 
-async function seal(ctx: Ctx): Promise<Finding> {
+async function seal(ctx: Ctx, tp: TitlePage): Promise<Finding> {
   const id = 'title.seal'
   const { doc, s } = ctx
   const pic =
     doc.kind === 'pdf'
-      ? doc.pictures.find((p) => p.para === -1)
+      ? doc.pictures.find((p) => p.para === -1 && (p.page ?? 0) === tp.page)
       : doc.pictures.find((p) => p.para >= s.title.start && p.para < s.title.end)
   if (!pic) return fix(id, 'Add the official UP seal at the top of the title page.')
   let pixels = await pic.pixels?.()
@@ -179,7 +202,7 @@ async function seal(ctx: Ctx): Promise<Finding> {
     id,
     'Use the official UP seal: the picture on the title page does not look like it. Copy the seal from the MDC template.',
     {
-      where: [{ page: 0 }],
+      where: [{ page: tp.page }],
     },
   )
 }
@@ -207,6 +230,10 @@ function sequence(tp: TitlePage): Finding {
   }))
   const missing = found.filter((a) => a.k < 0).map((a) => a.name)
   const issues: string[] = []
+  if (tp.cover)
+    issues.push(
+      `Remove the page before the title page (“${quote(tp.cover.text, 40)}”): the title page comes first`,
+    )
   if (missing.length) issues.push(`Missing: ${list(missing.map((m) => `“${m}”`))}`)
   const present = found.filter((a) => a.k >= 0)
   for (let k = 1; k < present.length; k++)
@@ -231,7 +258,7 @@ function sequence(tp: TitlePage): Finding {
   if (!issues.length) return ok(id, 'The title page follows the order of the template.')
   return fix(id, 'Follow the sequence of information in the MDC template.', {
     details: issues,
-    where: [{ page: 0 }],
+    where: [...at(tp.cover), { page: tp.page }],
   })
 }
 
@@ -240,7 +267,7 @@ function titleUpper(tp: TitlePage): Finding {
   const t = titleOf(tp)
   if (!t)
     return fix(id, 'Indicate the final thesis title between your name and “Thesis Adviser:”.', {
-      where: [{ page: 0 }],
+      where: [{ page: tp.page }],
     })
   if (/^title$/i.test(t))
     return fix(id, 'Replace “TITLE” with your final thesis title, in upper case.', {
@@ -270,7 +297,7 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
   )
   if (!name)
     return fix(id, "Write your thesis adviser's name under “Thesis Adviser:”.", {
-      where: [{ page: 0 }],
+      where: [{ page: tp.page }],
     })
   if (/^name$/i.test(name))
     return fix(id, "Replace “NAME” with your thesis adviser's name.", { where: at(tp.adviser) })
@@ -363,7 +390,7 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
       id,
       'Add the permission classification table from the MDC template (Invention, Publication, Confidential, Free).',
       {
-        where: [{ page: 0 }],
+        where: [{ page: tp.page }],
       },
     )
   const rows = tp.rows.slice(0, 4).map((r) => ({
@@ -441,7 +468,7 @@ function folioCheck(
 const wantMessage = (want: Want, name: string) =>
   want === 'none'
     ? `Remove the page number on the ${name}.`
-    : `Add the shortened thesis title + ellipsis + page number (${want.kind === 'roman' && want.value ? ['', 'i', 'ii', 'iii'][want.value] : 'Roman numerals'}) on the ${name}.`
+    : `Add the shortened thesis title + ellipsis + page number (${want.kind === 'roman' && want.value ? roman(want.value) : 'Roman numerals'}) on the ${name}.`
 
 // ---- University Permission Page ----
 
@@ -514,11 +541,14 @@ function permissionSignature(ctx: Ctx): Finding {
   const lead = label ? norm(label.text).split(/signature over/i)[0] : ''
   const issues: string[] = []
   const statuses: Finding['status'][] = []
-  const placeholder =
-    above.some((p) => /^name and date$/i.test(norm(p.text))) || /name and date\s*$/i.test(lead)
-  if (placeholder || !(above.some((p) => DATE.test(p.text)) || DATE.test(lead))) {
+  const typed = [...above.map((p) => norm(p.text)), lead.trim()]
+  const placeholder = typed.some((t) => /\bname and date$/i.test(t))
+  if (placeholder || !typed.some((t) => DATE.test(t))) {
     issues.push(
-      'Write your name and the date of submission above “Signature over Student Name and Date”.',
+      // The template's "and Date" kept after the student's own name.
+      !placeholder && typed.some((t) => /\band date$/i.test(t))
+        ? 'Replace “and Date” after your name with the date of submission.'
+        : 'Write your name and the date of submission above “Signature over Student Name and Date”.',
     )
     statuses.push('fix')
   }
@@ -532,8 +562,8 @@ function permissionSignature(ctx: Ctx): Finding {
   return {
     id,
     status: worst(statuses),
-    message: 'Add your signature and the date of submission.',
-    details: issues,
+    message: issues.length === 1 ? issues[0] : 'Add your signature and the date of submission.',
+    details: issues.length === 1 ? undefined : issues,
     where: at(label),
   }
 }
@@ -625,10 +655,9 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       `Check the Dean's name: “${names.dean.name}”. The MDC template has “${DEAN}, Ph.D.”.`,
       { where: at(names.dean.para) },
     )
-  return review(
-    id,
-    `Names: ${stop(list(all.map((n) => n.name)))} Check each spelling: spelling cannot be checked here.`,
-  )
+  return review(id, 'Check the spelling of each name below: spelling cannot be checked here.', {
+    details: all.map((n) => n.name),
+  })
 }
 
 const PREFIX = /^(dr|asst\.?\s*prof|assoc\.?\s*prof|prof|engr|atty)\b\.?/i
@@ -671,7 +700,6 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
   const names = readNames(ctx)
   const permHead = ctx.s.permission ? ctx.doc.paras[ctx.s.permission.heading] : undefined
   const accHead = ctx.s.acceptance ? ctx.doc.paras[ctx.s.acceptance.heading] : undefined
-  const pageOf = (p?: Para) => (p?.page ?? 0) + 1
   // Scanned pages cannot be read: their items are for the student to check, not to add.
   const scans = scannedFront(ctx)
   const unread = (part: string, why: string) =>
@@ -685,7 +713,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
           'The title page is a scanned picture, so it could not be read here. Check this item yourself.',
         )
       : [
-          await seal(ctx),
+          await seal(ctx, tp),
           sequence(tp),
           titleUpper(tp),
           adviser(
@@ -713,7 +741,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
             ctx,
             'permission.pageNumber',
             permHead,
-            { kind: 'roman', value: ctx.doc.kind === 'pdf' ? pageOf(permHead) : 2 },
+            { kind: 'roman', value: 2 },
             'University Permission Page',
           ),
         ]),
@@ -727,7 +755,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
             ctx,
             'acceptance.pageNumber',
             accHead,
-            { kind: 'roman', value: ctx.doc.kind === 'pdf' ? pageOf(accHead) : 3 },
+            { kind: 'roman', value: 3 },
             'Acceptance Page',
           ),
         ]),

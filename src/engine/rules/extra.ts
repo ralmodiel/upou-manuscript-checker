@@ -45,8 +45,10 @@ function blankPages(ctx: Ctx): Finding {
   const id = 'extra.blankPages'
   const { doc } = ctx
   if (doc.kind === 'pdf') {
+    // A page holding only the end of a paragraph begun on the page before is not blank.
+    const inked = new Set(doc.paras.flatMap((p) => (p.lines ?? []).map((l) => l.page)))
     const blank = (doc.pages ?? [])
-      .filter((pg) => !pg.paras.length && !pg.images.length)
+      .filter((pg) => !inked.has(pg.n) && !pg.images.length)
       .map((pg) => pg.n)
     if (!blank.length) return ok(id, 'No blank pages.')
     return fix(

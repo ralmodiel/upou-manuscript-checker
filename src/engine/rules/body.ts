@@ -1,15 +1,27 @@
 // Body text: which paragraphs count, and whether they are justified and double-spaced.
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
-import { isHeadingish, isTocLine } from '../structure.ts'
+import { bolded, isHeadingish, isTocLine } from '../structure.ts'
 import { norm, plural, quote } from '../text.ts'
+import { pagesText } from './numbering.ts'
 
 // Double spacing is 2 lines; 24 pt on 12 pt type (1.74) still reads as double, 1.5 lines does not.
 export const DOUBLE = 1.7
 const LIST = /^(\(?\d{1,2}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·-])\s/i
-const CAPTION = /^(table|figure)\s+\d/i
+export const CAPTION = /^(table|fig(ure)?\.?)\s*\d/i
 
-/** Running text in paragraphs [start, end): no headings, captions, tables, boxes or blanks. */
+/** A PDF paragraph that is not running text: wholly bold (a long caption or heading run on), or
+ *  a narrow column of lines (a table's cell). */
+const apart = (ctx: Ctx, p: Para) => {
+  if (!p.lines) return false
+  const page = ctx.doc.pages?.[p.page ?? 0]
+  const width = page?.margins ? page.margins.right - page.margins.left : (page?.width ?? 612) - 144
+  return (
+    bolded(p) || (p.lines.length >= 2 && Math.max(...p.lines.map((l) => l.x1 - l.x0)) < 0.5 * width)
+  )
+}
+
+/** Running text in paragraphs [start, end): no headings, captions, notes, tables, boxes or blanks. */
 export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<number>()): Para[] {
   return ctx.doc.paras.slice(start, end).filter((p) => {
     const t = norm(p.text)
@@ -19,9 +31,12 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !p.inTable &&
       !p.inBox &&
       !CAPTION.test(t) &&
+      // A table's or figure's note belongs to its setup (APA), not to the body text.
+      !/^note[.:]/i.test(t) &&
       !isTocLine(p.text) &&
       !(isHeadingish(p) && t.length <= 120) &&
-      !/^key\s?words?\s*:/i.test(t)
+      !/^key\s?words?\s*:/i.test(t) &&
+      !apart(ctx, p)
     )
   })
 }
@@ -51,10 +66,14 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
       `All ${plural(checked.length, 'paragraph')} of body text in ${name} are justified.`,
     )
   const details = [
-    `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} not justified.`,
+    `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} not justified${bad[0].page === undefined ? '' : ` (${pagesText(bad.map((p) => p.page!))})`}.`,
   ]
   const share = bad.length / checked.length
-  return (bad.length >= 2 || share >= 0.1 ? fix : review)(
+  // Three lines or more and not one reaching the margin: left-aligned, whatever the line breaks.
+  const ragged = (p: Para) =>
+    (p.lines?.length ?? 0) >= 3 &&
+    p.lines!.every((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 2.5)
+  return (bad.length >= 2 || share >= 0.1 || bad.some(ragged) ? fix : review)(
     id,
     `Justify the body text of ${name} (Home > Justify, or Ctrl+J).`,
     { details, where: where(bad) },
