@@ -37,6 +37,7 @@ export function reportDocx(m: ReportModel): Uint8Array {
   body.push(para(run(m.meta, { size: 10, color: '5C5A5C' }), { after: 2 }))
   body.push(para(run(m.summary, { size: 10, color: '5C5A5C' }), { after: 10 }))
   body.push(para(run(m.notices[0], { italic: true, size: 9.5 }), { after: 12, shade: 'F4E9E4' }))
+  if (m.pagesNote) body.push(para(run(m.pagesNote, { size: 9.5, color: '5C5A5C' }), { after: 8 }))
   body.push(para(run(m.intro), { after: 10 }))
   for (const part of m.parts) {
     body.push(

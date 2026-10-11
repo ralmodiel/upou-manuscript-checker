@@ -50,18 +50,33 @@ describe('comments files', () => {
   })
 
   it('give the number printed on a page beside its count', () => {
-    const labels = [undefined, 'ii', '3', '1']
+    const labels = [undefined, 'ii', '3', '1', 'v', 'v']
     expect(whereText([{ page: 0 }, { page: 1 }, { page: 2 }, { page: 3 }], labels)).toBe(
-      'p. 1; p. 2 (printed ii); p. 3; p. 4 (printed 1)',
+      'p. 1; p. 2 · printed ii; p. 3; p. 4 · printed 1',
     )
     expect(detailText('p. 4: one line…', labels)).toBe('p. 4 (printed 1): one line…')
     expect(detailText('p. 3, References: …', labels)).toBe('p. 3, References: …')
     expect(detailText('A long title on pp. 4–9', labels)).toBe('A long title on pp. 4–9')
+    // Not where the detail says it, nor where other pages print the same number.
+    expect(detailText('p. 2: shows ii; it should be iii', labels)).toBe(
+      'p. 2: shows ii; it should be iii',
+    )
+    expect(detailText('p. 5: shows v; it should be iv', labels)).toBe(
+      'p. 5: shows v; it should be iv',
+    )
+  })
+
+  it('keep a place whose quote the details leave out', () => {
+    const where = [{ page: 54, quote: 'The variables for…' }, { page: 60 }]
+    expect(whereText(placesOf({ where, details: ['1 of 217 is not justified (p. 55).'] }))).toBe(
+      'p. 55 “The variables for…”; p. 61',
+    )
   })
 
   it('get file names any file system takes', () => {
     expect(reportName('thesis.docx', 'pdf')).toBe('thesis – formatting comments.pdf')
     expect(reportName('.docx', 'docx')).toBe('manuscript – formatting comments.docx')
+    expect(reportName('thesis.docx.pdf', 'docx')).toBe('thesis – formatting comments.docx')
     const long = reportName(`${'论文'.repeat(42)}.docx`, 'docx')
     expect(new TextEncoder().encode(long).length).toBeLessThanOrEqual(255)
     // A right-to-left override could make "…cod.exe" read as "…exe.doc"; separators make paths.

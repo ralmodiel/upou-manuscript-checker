@@ -26,6 +26,8 @@ const safe = (s: string) =>
       // Arrows (tables often use them) and symbol-font bullets have plain stand-ins.
       if (/[←-⇿➔-➿]/u.test(c)) return c === '←' ? '<-' : '->'
       if (/[\p{Co}■-◿]/u.test(c)) return '•'
+      if (c === '≥' || c === '≤') return c === '≥' ? '>=' : '<='
+      if (c === '✓' || c === '✔') return 'v'
       const plain = c.normalize('NFKD').replace(/\p{M}/gu, '')
       return plain && [...plain].every(encodable) ? plain : '?'
     })
@@ -123,6 +125,7 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   write(m.meta, { size: 9.5, color: MUTED, after: 1 })
   write(m.summary, { size: 9.5, color: MUTED, after: 10 })
   write(m.notices[0], { font: italic, size: 9.5, color: MAROON, after: 12 })
+  if (m.pagesNote) write(m.pagesNote, { size: 9.5, after: 6 })
   write(m.intro, { after: 8 })
   for (const part of m.parts) {
     write(`${part.n}. ${part.name}`, { font: bold, size: 12, before: 6, after: 3, keep: 3 })

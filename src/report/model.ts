@@ -18,6 +18,8 @@ export interface ReportModel {
   meta: string
   summary: string
   intro: string
+  /** How pages are counted, when printed page numbers are given too. */
+  pagesNote?: string
   parts: { n: number; name: string; items: ReportItem[] }[]
   passed: { name: string; items: string[] }[]
   closing: string[]
@@ -32,33 +34,41 @@ const KIND: Record<Report['kind'], string> = {
   rtf: 'Rich Text document',
 }
 
+const pagesIn = (details: string[]) =>
+  new Set(details.flatMap((d) => [...d.matchAll(/\bpp?\.\s*(\d+)/gi)].map((m) => Number(m[1]))))
+
 /** The places shown for a finding, on the results page and in the comments: the first five with a
- *  page or a quote, leaving out pages its details already name ("p. 7: …"), so no list is given twice. */
+ *  page or a quote, leaving out pages its details already name ("p. 7: …"), so no list is given
+ *  twice; a place's quote stays when the detail naming its page quotes nothing. */
 export function placesOf(f: Pick<Finding, 'where' | 'details'>): Where[] {
-  const named = new Set(
-    (f.details ?? []).flatMap((d) => [...d.matchAll(/\bpp?\.\s*(\d+)/gi)].map((m) => Number(m[1]))),
-  )
+  const named = pagesIn(f.details ?? [])
+  const quoted = pagesIn((f.details ?? []).filter((d) => d.includes('“')))
   return (f.where ?? [])
     .filter((w) => w.page !== undefined || w.quote)
-    .filter((w) => w.page === undefined || !named.has(w.page + 1))
+    .filter(
+      (w) => w.page === undefined || !named.has(w.page + 1) || (w.quote && !quoted.has(w.page + 1)),
+    )
     .slice(0, 5)
 }
 
-/** The number printed on a PDF page when it is not the page's own count: "48" on p. 60. */
+/** The number printed on a PDF page when it is not the page's own count and no other page prints
+ *  it ("i" on every preliminary page points to no one page): "48" on p. 60. */
 export function printedOf(page: number, labels?: Report['pageLabels']) {
   const label = labels?.[page]
-  return label && label !== String(page + 1) ? label : undefined
+  return label &&
+    label !== String(page + 1) &&
+    labels!.indexOf(label) === labels!.lastIndexOf(label)
+    ? label
+    : undefined
 }
 
-/** "p. 60", or "p. 60 (printed 48)". */
-export function pageText(page: number, labels?: Report['pageLabels']) {
-  const printed = printedOf(page, labels)
-  return `p. ${page + 1}${printed ? ` (printed ${printed})` : ''}`
-}
-
-/** A detail's leading page ("p. 14: …") with its printed number too. */
+/** A detail's leading page ("p. 14: …") with its printed number too, unless the detail gives it
+ *  ("p. 8: shows vii; it should be viii"). */
 export const detailText = (detail: string, labels?: Report['pageLabels']) =>
-  detail.replace(/^p\. (\d+)(?=[:,])/, (_, n: string) => pageText(Number(n) - 1, labels))
+  detail.replace(/^p\. (\d+)(?=[:,])/, (lead, n: string) => {
+    const printed = printedOf(Number(n) - 1, labels)
+    return printed && !detail.includes(`shows ${printed}`) ? `${lead} (printed ${printed})` : lead
+  })
 
 export const PAGES_NOTE =
   'Pages (p.) are counted from the first page of the PDF, as a PDF viewer counts them; “printed” is the number shown on the page itself.'
@@ -67,14 +77,15 @@ export const PAGES_NOTE =
 export const hasPrinted = (r: Report) =>
   !!r.pageLabels?.some((_, page) => printedOf(page, r.pageLabels))
 
-/** Places as text: “p. 7 “…”; p. 9 (printed ii)”. */
+/** Places as text, as the results page shows them: “p. 7 “…”; p. 9 · printed ii”. */
 export const whereText = (where: Where[], labels?: Report['pageLabels']) =>
   where
-    .map((w) =>
-      [w.page !== undefined ? pageText(w.page, labels) : '', w.quote ? `“${w.quote}”` : '']
-        .filter(Boolean)
-        .join(' '),
-    )
+    .map((w) => {
+      const printed = w.page !== undefined ? printedOf(w.page, labels) : undefined
+      const page =
+        w.page !== undefined ? `p. ${w.page + 1}${printed ? ` · printed ${printed}` : ''}` : ''
+      return [page, w.quote ? `“${w.quote}”` : ''].filter(Boolean).join(' ')
+    })
     .join('; ')
 
 export function reportModel(r: Report, today = new Date()): ReportModel {
@@ -123,6 +134,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     intro: parts.length
       ? 'Please revise the manuscript to reflect the following:'
       : 'No corrections were found. Please still look over the manuscript before sending it, since an automated check can miss things.',
+    pagesNote: parts.length && hasPrinted(r) ? PAGES_NOTE : undefined,
     parts,
     passed,
     closing: [
@@ -132,7 +144,6 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
             'Items marked “Check:” could not be confirmed from the file; please look at them yourself.',
           ]
         : []),
-      ...(parts.length && hasPrinted(r) ? [PAGES_NOTE] : []),
       ...r.notes,
     ],
     notices: [
@@ -146,10 +157,10 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
 export function reportName(fileName: string, ext: string) {
   // The manuscript's own name, minus what could mislead in a saved file's name: control and
   // text-direction characters, and path separators.
-  let stem = stripControls(fileName.replace(/\.[^.]+$/, ''), '').replace(
-    /[\\/\u202a-\u202e\u2066-\u2069]/g,
-    '',
-  )
+  // "thesis.docx.pdf" (a Word file saved as PDF) loses both extensions.
+  const known = /(\.(pdf|docx?|docm|dotx|odt|ott|rtf))+$/i
+  const bare = known.test(fileName) ? fileName.replace(known, '') : fileName.replace(/\.[^.]+$/, '')
+  let stem = stripControls(bare, '').replace(/[\\/\u202a-\u202e\u2066-\u2069]/g, '')
   while (new TextEncoder().encode(stem).length > 200) stem = [...stem].slice(0, -1).join('')
   return `${stem.trim() || 'manuscript'} – formatting comments.${ext}`
 }
