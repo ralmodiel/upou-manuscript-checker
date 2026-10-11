@@ -80,13 +80,20 @@ export const hasPrinted = (r: Report) =>
 /** Places as text, as the results page shows them: “p. 7 “…”; p. 9 · printed ii”. */
 export const whereText = (where: Where[], labels?: Report['pageLabels']) =>
   where
-    .map((w) => {
+    .map((w, k) => {
       const printed = w.page !== undefined ? printedOf(w.page, labels) : undefined
+      // Places on the page just named go by their quotes alone.
       const page =
-        w.page !== undefined ? `p. ${w.page + 1}${printed ? ` · printed ${printed}` : ''}` : ''
+        w.page !== undefined && !samePage(where, k)
+          ? `p. ${w.page + 1}${printed ? ` · printed ${printed}` : ''}`
+          : ''
       return [page, w.quote ? `“${w.quote}”` : ''].filter(Boolean).join(' ')
     })
     .join('; ')
+
+/** Whether a place has a quote and the same page as the place before it. */
+export const samePage = (where: Where[], k: number) =>
+  k > 0 && !!where[k].quote && where[k].page !== undefined && where[k].page === where[k - 1].page
 
 export function reportModel(r: Report, today = new Date()): ReportModel {
   const date = today.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })

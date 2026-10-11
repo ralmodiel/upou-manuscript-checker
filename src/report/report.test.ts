@@ -66,6 +66,16 @@ describe('comments files', () => {
     )
   })
 
+  it('name a page once for its quotes in a row', () => {
+    const where = [
+      { page: 25, quote: '1. Social…' },
+      { page: 25, quote: '2. Theory…' },
+      { page: 26 },
+      { page: 26, quote: 'Table 1' },
+    ]
+    expect(whereText(where)).toBe('p. 26 “1. Social…”; “2. Theory…”; p. 27; “Table 1”')
+  })
+
   it('keep a place whose quote the details leave out', () => {
     const where = [{ page: 54, quote: 'The variables for…' }, { page: 60 }]
     expect(whereText(placesOf({ where, details: ['1 of 217 is not justified (p. 55).'] }))).toBe(

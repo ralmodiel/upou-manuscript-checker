@@ -2,7 +2,7 @@
 // lead; then one manuscript part at a time (or all of them) beside an overview of every part.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CHECKLIST, type Item } from '../engine/checklist'
-import type { Finding, Report, Status } from '../engine/report'
+import type { Finding, Report, Status, Where } from '../engine/report'
 import { saveFile } from '../lib/browser'
 import { PRIVATE_SHORT, VERIFY } from '../notice'
 import {
@@ -13,6 +13,7 @@ import {
   printedOf,
   reportModel,
   reportName,
+  samePage,
 } from '../report/model'
 import {
   CheckIcon,
@@ -109,25 +110,39 @@ function ItemRow({
         {open && where.length > 0 && (
           <p className="mt-3 flex flex-wrap gap-1.5">
             <span className="sr-only">Where to look: </span>
-            {where.map((w, k) => (
-              <span
-                key={k}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
-              >
-                {w.page !== undefined && (
-                  <span className="shrink-0 font-semibold whitespace-nowrap text-ink tabular-nums">
-                    p. {w.page + 1}
-                    {printedOf(w.page, labels) && (
-                      <span className="font-normal text-ink-3">
-                        {' '}
-                        · printed {printedOf(w.page, labels)}
-                      </span>
-                    )}
-                  </span>
-                )}
-                {w.quote && <span className="line-clamp-2 wrap-anywhere">“{w.quote}”</span>}
-              </span>
-            ))}
+            {/* Places on one page share a chip: the page once, then each quote. */}
+            {where
+              .reduce<Where[][]>((chips, w, k) => {
+                if (samePage(where, k)) chips[chips.length - 1].push(w)
+                else chips.push([w])
+                return chips
+              }, [])
+              .map(([w, ...more], k) => (
+                <span
+                  key={k}
+                  className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
+                >
+                  {w.page !== undefined && (
+                    <span className="shrink-0 font-semibold whitespace-nowrap text-ink tabular-nums">
+                      p. {w.page + 1}
+                      {printedOf(w.page, labels) && (
+                        <span className="font-normal text-ink-3">
+                          {' '}
+                          · printed {printedOf(w.page, labels)}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {[w, ...more].map(
+                    (q, j) =>
+                      q.quote && (
+                        <span key={j} className="line-clamp-2 wrap-anywhere">
+                          “{q.quote}”
+                        </span>
+                      ),
+                  )}
+                </span>
+              ))}
           </p>
         )}
         {item.links && (
