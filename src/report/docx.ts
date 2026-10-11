@@ -72,7 +72,7 @@ export function reportDocx(m: ReportModel): Uint8Array {
       body.push(
         para(
           run(`${p.name}: `, { bold: true, size: 10 }) +
-            run(p.items.join('; ') + '.', { size: 10 }),
+            run(p.items.join(' · ') + '.', { size: 10 }),
           { after: 4 },
         ),
       )

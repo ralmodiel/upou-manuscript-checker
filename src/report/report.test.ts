@@ -4,7 +4,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { reportDocx } from './docx'
-import { reportName, whereText, type ReportModel } from './model'
+import { placesOf, reportName, whereText, type ReportModel } from './model'
 import { lines, reportPdf } from './pdf'
 
 // macOS spells "ñ" as "n" plus a combining tilde; U+0001 and U+FFFF are not allowed in XML.
@@ -42,7 +42,11 @@ describe('comments files', () => {
 
   it('list the five places the results page shows', () => {
     const where = [{}, ...[1, 2, 3, 4, 5, 6].map((page) => ({ page }))]
-    expect(whereText(where)).toBe('p. 2; p. 3; p. 4; p. 5; p. 6')
+    expect(whereText(placesOf({ where }))).toBe('p. 2; p. 3; p. 4; p. 5; p. 6')
+    // Pages the details already name are not listed again.
+    expect(whereText(placesOf({ where, details: ['p. 2: one line…', 'Chapter I (P. 4)'] }))).toBe(
+      'p. 3; p. 5; p. 6; p. 7',
+    )
   })
 
   it('get file names any file system takes', () => {

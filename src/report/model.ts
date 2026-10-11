@@ -32,11 +32,21 @@ const KIND: Record<Report['kind'], string> = {
   rtf: 'Rich Text document',
 }
 
-/** The places the results page shows for a finding (the first five), as text. */
-export const whereText = (where: Where[] | undefined) =>
-  (where ?? [])
+/** The places shown for a finding, on the results page and in the comments: the first five with a
+ *  page or a quote, leaving out pages its details already name ("p. 7: …"), so no list is given twice. */
+export function placesOf(f: Pick<Finding, 'where' | 'details'>): Where[] {
+  const named = new Set(
+    (f.details ?? []).flatMap((d) => [...d.matchAll(/\bpp?\.\s*(\d+)/gi)].map((m) => Number(m[1]))),
+  )
+  return (f.where ?? [])
     .filter((w) => w.page !== undefined || w.quote)
+    .filter((w) => w.page === undefined || !named.has(w.page + 1))
     .slice(0, 5)
+}
+
+/** Places as text: “p. 7 “…”; p. 9”. */
+export const whereText = (where: Where[]) =>
+  where
     .map((w) =>
       [w.page !== undefined ? `p. ${w.page + 1}` : '', w.quote ? `“${w.quote}”` : '']
         .filter(Boolean)
@@ -60,7 +70,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
       .map((i) => ({ i, f: byId.get(i.id)! }))
       .filter(({ f }) => f.status === 'fix' || f.status === 'review')
       .map(({ i, f }) => {
-        const where = whereText(f.where)
+        const where = whereText(placesOf(f))
         return {
           // "Check:" before a message that already says "Check …" would only repeat it.
           check: f.status === 'review' && !/^check\b/i.test(f.message),
@@ -83,7 +93,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     title: 'Formatting comments',
     file: r.fileName,
     meta: `${KIND[r.kind]}${r.pages ? ` · ${r.pages} pages` : ''} · checked ${date} against the MDC Format Checklist`,
-    summary: `${n('fix')} to correct · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed${extra ? ` · also ${extra} more noticed` : ''}`,
+    summary: `${n('fix')} to correct · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed${extra ? ` · ${extra} more to correct outside the checklist` : ''}`,
     intro: parts.length
       ? 'Please revise the manuscript to reflect the following:'
       : 'No corrections were found. Please still look over the manuscript before sending it, since an automated check can miss things.',

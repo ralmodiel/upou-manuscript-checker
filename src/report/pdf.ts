@@ -23,6 +23,9 @@ const safe = (s: string) =>
       if (/[\p{Cc}\p{Cf}\p{M}]/u.test(c)) return ''
       if (encodable(c)) return c
       if (/[\p{Pd}−]/u.test(c)) return '-'
+      // Arrows (tables often use them) and symbol-font bullets have plain stand-ins.
+      if (/[←-⇿➔-➿]/u.test(c)) return c === '←' ? '<-' : '->'
+      if (/[\p{Co}■-◿]/u.test(c)) return '•'
       const plain = c.normalize('NFKD').replace(/\p{M}/gu, '')
       return plain && [...plain].every(encodable) ? plain : '?'
     })
@@ -139,7 +142,7 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
       after: 3,
       keep: 3,
     })
-    for (const p of m.passed) write(`${p.name}: ${p.items.join('; ')}.`, { size: 9.5, after: 3 })
+    for (const p of m.passed) write(`${p.name}: ${p.items.join(' · ')}.`, { size: 9.5, after: 3 })
   }
   y -= 6
   for (const c of m.closing) write(c, { after: 4 })

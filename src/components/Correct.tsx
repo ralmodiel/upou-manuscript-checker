@@ -5,7 +5,7 @@ import { CHECKLIST, type Item } from '../engine/checklist'
 import type { Finding, Report, Status } from '../engine/report'
 import { saveFile } from '../lib/browser'
 import { PRIVATE_SHORT, VERIFY } from '../notice'
-import { reportModel, reportName } from '../report/model'
+import { placesOf, reportModel, reportName } from '../report/model'
 import {
   CheckIcon,
   ChevronLeftIcon,
@@ -63,7 +63,7 @@ function PartState({ part, compact = false }: { part: PartView; compact?: boolea
 }
 
 function ItemRow({ item, finding }: { item: Item; finding: Finding }) {
-  const where = finding.where?.filter((w) => w.page !== undefined || w.quote) ?? []
+  const where = placesOf(finding)
   const open = finding.status === 'fix' || finding.status === 'review'
   return (
     <li
@@ -93,7 +93,7 @@ function ItemRow({ item, finding }: { item: Item; finding: Finding }) {
         {open && where.length > 0 && (
           <p className="mt-3 flex flex-wrap gap-1.5">
             <span className="sr-only">Where to look: </span>
-            {where.slice(0, 5).map((w, k) => (
+            {where.map((w, k) => (
               <span
                 key={k}
                 className="inline-flex max-w-full items-center gap-1.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
@@ -242,7 +242,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                   · <span className="font-semibold text-review">{review}</span> to review
                 </>
               )}
-              {extraFix > 0 && <> · also {extraFix} more noticed</>}
+              {extraFix > 0 && <> · {extraFix} more to correct outside the checklist</>}
             </p>
           </div>
           <div

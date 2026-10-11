@@ -78,6 +78,8 @@ export default function App() {
   useEffect(() => {
     if (shown.current === view.stage) return
     shown.current = view.stage
+    // The result starts at the top, even if the page was scrolled while the file was read.
+    if (view.stage === 'correct') window.scrollTo({ top: 0, behavior: 'instant' })
     // An error takes focus itself, so screen readers read it rather than stop at the heading.
     const target =
       document.querySelector<HTMLElement>('main [role=alert]') ??
