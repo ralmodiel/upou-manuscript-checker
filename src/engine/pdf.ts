@@ -4,6 +4,7 @@
 // from gaps, indents and line ends, alignment from where lines end, spacing from line gaps.
 import type * as PdfJsModule from 'pdfjs-dist'
 import type { Box, Doc, Line, Page, Para, Picture, Pixels, Run } from './model.ts'
+import { canvasReadsBack } from './canvas.ts'
 import { shrink } from './images.ts'
 import { FileProblem } from './problem.ts'
 
@@ -777,6 +778,8 @@ async function imagePixels(
   if (!img?.width || !img.height) return undefined
   const { width, height } = img
   if (img.bitmap && typeof OffscreenCanvas !== 'undefined') {
+    // Pixels a privacy setting blanks would make a real seal look missing: none is better.
+    if (!canvasReadsBack()) return undefined
     const canvas = new OffscreenCanvas(width, height)
     const ctx = canvas.getContext('2d')
     if (!ctx) return undefined

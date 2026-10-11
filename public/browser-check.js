@@ -1,6 +1,7 @@
 // A browser below the site's build target (Chrome and Edge 111, Firefox 114, Safari 16.4) would load
-// a broken page: it gets a plain notice instead, and src/main.tsx leaves the page alone. Plain ES5,
-// so the browsers it is for can run it; styles go through the CSSOM, which the CSP allows.
+// a broken page: it gets a plain notice instead, and src/main.tsx leaves the page alone. PDFs need
+// more, tested when one is chosen (loadPdfJs in src/lib/browser.ts). Plain ES5, so the browsers it
+// is for can run it; styles go through the CSSOM, which the CSP allows.
 ;(function () {
   var ok = false
   // color-mix(): Chrome 111, Firefox 113, Safari 16.2. Look-behind, which the checking code uses

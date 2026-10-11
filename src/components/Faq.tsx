@@ -20,8 +20,8 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
         </p>
         <p>
           This site is a set of static pages with no server of its own to receive files. Its code
-          never sends your file anywhere, and its security policy blocks the page from making
-          network requests. The comments you download are made on your device too.
+          never sends your file anywhere, and its security policy blocks the page's scripts from
+          making network requests. The comments you download are made on your device too.
         </p>
         <p>
           Like any website, its host (GitHub Pages) receives the ordinary requests for the pages

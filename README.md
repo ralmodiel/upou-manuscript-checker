@@ -7,7 +7,7 @@ program's review emails.
 
 - **Nothing leaves the device.** The manuscript is read and checked by the page itself, on the
   visitor's desktop, laptop or phone. There is no backend, no database and no API, and the page's
-  security policy (`connect-src 'none'`) blocks scripts from making network requests.
+  security policy (`connect-src 'none'`) blocks the page's scripts from making network requests.
 - **Every checklist item, every time.** All 38 items in 9 parts, each marked _To correct_,
   _To review_, _Passed_ or _Not applicable_, plus three things reviewers often point out: template
   text left in, blank pages and coloured text.
@@ -20,7 +20,8 @@ program's review emails.
 - Light and dark themes, keyboard accessible, respects `prefers-reduced-motion`, prints cleanly.
 - **Current browsers.** Chrome and Edge 111, Firefox 114 and Safari 16.4 or later (the build target).
   An older browser gets a plain notice that it needs an update (`public/browser-check.js`), not a
-  broken page.
+  broken page. PDFs need Chrome and Edge 119, Firefox 122 or Safari 17.4 (pdf.js 6); an older
+  browser is told it needs an update to check PDF files, and can still check Word files.
 
 ## Proof of concept
 
@@ -86,9 +87,11 @@ builds its own small Word file.
 ## Security and privacy
 
 - Production builds carry a strict Content Security Policy as a `<meta>` tag: scripts, styles,
-  fonts and the pdf.js worker come only from the site, and `connect-src 'none'` stops scripts from
-  making network requests (fetch, XHR, WebSocket, beacons). The theme and the browser check run from `public/theme-boot.js`
-  and `public/browser-check.js`, so no inline script is needed.
+  fonts and the pdf.js worker come only from the site, and `connect-src 'none'` stops the page's scripts from
+  making network requests (fetch, XHR, WebSocket, beacons). A `<meta>` policy does not reach the
+  pdf.js worker (GitHub Pages sends no policy header), but pdf.js only reads the file it is given
+  and makes no requests. The theme and the browser check run from `public/theme-boot.js` and
+  `public/browser-check.js`, so no inline script is needed.
 - Files are read in memory and dropped when the page closes. Nothing is stored except the theme
   choice (`localStorage`, key `mdc:theme`). No accounts, cookies or analytics.
 - Files over 100 MB are refused, and the .docx and .odt readers skip zip parts over 64 MB. Text
