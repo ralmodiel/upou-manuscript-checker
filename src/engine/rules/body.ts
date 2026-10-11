@@ -66,18 +66,27 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
       `All ${plural(checked.length, 'paragraph')} of body text in ${name} are justified.`,
     )
   const details = [
-    `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} not justified${bad[0].page === undefined ? '' : ` (${pagesText(bad.map((p) => p.page!))})`}.`,
+    `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} not justified${onPages(bad)}.`,
   ]
   const share = bad.length / checked.length
+  // PDF lines short of the page's margin.
+  const short = (p: Para) =>
+    (p.lines ?? []).filter((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 2.5)
   // Three lines or more and not one reaching the margin: left-aligned, whatever the line breaks.
-  const ragged = (p: Para) =>
-    (p.lines?.length ?? 0) >= 3 &&
-    p.lines!.every((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 2.5)
-  return (bad.length >= 2 || share >= 0.1 || bad.some(ragged) ? fix : review)(
-    id,
-    `Justify the body text of ${name} (Home > Justify, or Ctrl+J).`,
-    { details, where: where(bad) },
-  )
+  const ragged = (p: Para) => (p.lines?.length ?? 0) >= 3 && short(p).length === p.lines!.length
+  const status = bad.length >= 2 || share >= 0.1 || bad.some(ragged) ? fix : review
+  // One paragraph with one short line before its last: left-aligned, or a line break typed there.
+  const one = bad.length === 1 ? short(bad[0]).filter((l) => l !== bad[0].lines?.at(-1)) : []
+  if (one.length === 1)
+    return status(
+      id,
+      `A line stops short of the margin on ${pagesText([one[0].page])}: justify the paragraph, or remove the line break there.`,
+      { details, where: where(bad) },
+    )
+  return status(id, `Justify the body text of ${name} (Home > Justify, or Ctrl+J).`, {
+    details,
+    where: where(bad),
+  })
 }
 
 const spacingName = (x: number) =>
@@ -95,9 +104,24 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
       id,
       `Check that the body text of ${name} is double-spaced (an old .doc file does not say).`,
     )
-  const checked = paras.filter((p) => p.spacing !== undefined)
+  // PDF: one-line list items are paragraphs of their own, each without a spacing; a run of them on
+  // one page is measured by the gap between their baselines, as one paragraph.
+  const runs: Para[][] = []
+  for (const p of paras) {
+    if (ctx.doc.kind !== 'pdf' || p.lines?.length !== 1 || !isList(p)) continue
+    const last = runs.at(-1)?.at(-1)
+    if (last && last.i === p.i - 1 && last.page === p.page) runs.at(-1)!.push(p)
+    else runs.push([p])
+  }
+  const lists = runs
+    .filter((r) => r.length >= 2)
+    .map((r) => {
+      const gaps = r.slice(1).map((q, k) => q.lines![0].y - r[k].lines![0].y)
+      return { ...r[0], spacing: median(gaps) / (1.15 * r[0].lines![0].size) }
+    })
+  const checked = [...paras.filter((p) => p.spacing !== undefined), ...lists]
   if (!checked.length) return na(id, `No body text found in ${name}.`)
-  const bad = checked.filter((p) => p.spacing! < DOUBLE)
+  const bad = checked.filter((p) => p.spacing! < DOUBLE).sort((a, b) => a.i - b.i)
   if (!bad.length) return ok(id, `The body text of ${name} is double-spaced.`)
   const kinds = [...new Set(bad.map((p) => spacingName(p.spacing!)))]
   const share = bad.length / checked.length
@@ -106,9 +130,15 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
     `Double-space the body text of ${name} (Line spacing: Double).`,
     {
       details: [
-        `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} spaced ${kinds.slice(0, 3).join(' or ')}.`,
+        `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} spaced ${kinds.slice(0, 3).join(' or ')}${onPages(bad)}.`,
       ],
       where: where(bad),
     },
   )
 }
+
+/** " (pp. 26, 81)" for PDF paragraphs; nothing for a Word file. */
+const onPages = (ps: Para[]) =>
+  ps[0].page === undefined ? '' : ` (${pagesText(ps.map((p) => p.page!))})`
+
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]

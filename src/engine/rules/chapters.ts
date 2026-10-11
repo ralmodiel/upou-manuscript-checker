@@ -58,6 +58,19 @@ function firstPage(ctx: Ctx, c: Chapter): Set<number> {
   return out
 }
 
+/** PDF: a heading that opens its page far down it, more than a third of the page below where the
+ *  pages' text starts, with no picture above it: empty lines push it down. */
+export function pushedDown(ctx: Ctx, p: Para): boolean {
+  const first = p.lines?.[0]
+  const page = ctx.doc.pages?.[first?.page ?? -1]
+  if (!first || !page || page.images.some((b) => b.y1 <= first.y)) return false
+  const tops = new Map<number, number>()
+  for (const q of ctx.doc.paras)
+    for (const l of q.lines ?? []) tops.set(l.page, Math.min(tops.get(l.page) ?? l.y, l.y))
+  const ys = [...tops.values()].sort((a, b) => a - b)
+  return tops.get(first.page) === first.y && first.y > ys[ys.length >> 1] + page.height / 3
+}
+
 function newPage(ctx: Ctx): Finding {
   const id = 'chapterStart.newPage'
   const { chapters } = ctx.s
@@ -65,6 +78,19 @@ function newPage(ctx: Ctx): Finding {
   const late = chapters.filter(
     (c) => !paras[c.heading].newPage && paras[c.heading].renderedBreak !== 'before',
   )
+  // On a new page, but far down it: empty lines before the label rather than a page break.
+  const low = late.length ? [] : chapters.filter((c) => pushedDown(ctx, paras[c.heading]))
+  if (low.length)
+    return review(
+      id,
+      'Start each chapter at the top of a new page, with a page break (Ctrl+Enter) before it, not empty lines.',
+      {
+        details: low.map(
+          (c) => `${chapterName(c)} starts far down ${pagesText([paras[c.heading].page!])}`,
+        ),
+        where: low.flatMap((c) => at(paras[c.heading])),
+      },
+    )
   if (!late.length) return ok(id, `All ${plural(chapters.length, 'chapter')} start on a new page.`)
   if (ctx.doc.kind === 'pdf')
     return fix(id, 'Start each chapter on a new page.', {
@@ -181,15 +207,23 @@ function noPageNumber(ctx: Ctx): Finding {
     const folio = (c: Chapter) => pdfFolio(doc, doc.paras[c.heading].page ?? -1)
     const shown = s.chapters.filter((c) => folio(c))
     if (!shown.length) return ok(id, 'No page number on the first page of any chapter.')
-    return fix(id, msg, {
-      details: shown
-        .map(
-          (c) =>
-            `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${clip(folio(c)!.raw)}”`,
-        )
-        .slice(0, 6),
-      where: shown.slice(0, 5).map((c) => ({ page: doc.paras[c.heading].page })),
-    })
+    // A footer with a title too: reviewers ask for the whole footer to go.
+    const footer = shown.some((c) => folio(c)!.title)
+    return fix(
+      id,
+      footer
+        ? 'Remove the footer (shortened title and page number) on the first page of each chapter.'
+        : msg,
+      {
+        details: shown
+          .map(
+            (c) =>
+              `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${clip(folio(c)!.raw)}”`,
+          )
+          .slice(0, 6),
+        where: shown.slice(0, 5).map((c) => ({ page: doc.paras[c.heading].page })),
+      },
+    )
   }
   if (!doc.sections)
     return review(
@@ -335,14 +369,11 @@ function hanging(ctx: Ctx): Finding {
     if (pages.length === 2 && !p.inTable && p.align !== 'center') {
       const onFirst = lines.filter((l) => l.page === pages[0]).length
       const onNext = lines.length - onFirst
-      // A line carried over counts only when what follows it opens a paragraph the same way this
-      // one opened (not a sub-item the writer put on a new line with a tab).
+      // A line carried over counts only when what follows starts no further in than this
+      // paragraph did (the next paragraph or entry, not a sub-item set further in with a tab).
       const after = next?.lines?.[0]
       const closes =
-        !after ||
-        after.page !== pages[1] ||
-        Math.abs(after.x0 - lines[0].x0) <= 3 ||
-        headingLike(next)
+        !after || after.page !== pages[1] || after.x0 <= lines[0].x0 + 3 || headingLike(next)
       if (onFirst === 1 || (onNext === 1 && closes)) {
         details.push(
           `${place(pages[onFirst === 1 ? 0 : 1], p)}: one line of the paragraph “${quote(p.text, 35)}” ${onFirst === 1 ? 'is left at the bottom of the page' : 'runs over to the next page'}`,

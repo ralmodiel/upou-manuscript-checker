@@ -114,7 +114,7 @@ function numbers(ctx: Ctx): Finding {
     if (!problems.length)
       return ok(
         id,
-        `${pagesText(pages)} are numbered ${roman(first - base + 1)}–${roman(last - base + 1)}, with the shortened title and an ellipsis.`,
+        `${pagesText(pages)} are numbered ${roman(first - base + 1)}\u2060–\u2060${roman(last - base + 1)}, with the shortened title and an ellipsis.`,
       )
     return fix(id, msg, { details: summarize(problems), where: [{ page: problems[0].page }] })
   }

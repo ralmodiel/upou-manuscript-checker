@@ -4,7 +4,7 @@ import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts
 import { bolded, isHeadingish, nextText } from '../structure.ts'
 import { list, norm, plural, quote } from '../text.ts'
 import { DOUBLE } from './body.ts'
-import { bodyNumbers } from './chapters.ts'
+import { bodyNumbers, pushedDown } from './chapters.ts'
 import { more, pagesText } from './numbering.ts'
 
 const YEAR = /\((\d{4}[a-z]?|n\.\s?d\.|in press|forthcoming)(?!\w)/i
@@ -101,6 +101,19 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
         `${at}“${y1.cite}” should come before “${y0.cite}”: one author's works go from the earliest year`,
       )
       misplaced.push(e)
+    } else if (
+      y0 &&
+      y1 &&
+      y0.who === y1.who &&
+      y1.year === y0.year &&
+      !y0.dated &&
+      !y1.dated &&
+      y1.title < y0.title
+    ) {
+      pairs.push(
+        `${at}${y1.by}: “${y1.from}” should come before “${y0.from}”: one author's works of the same year go by title, with a, b after the year`,
+      )
+      misplaced.push(e)
     }
     prev = e
   }
@@ -119,10 +132,11 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
 
 const pageOf = (e: Entry) => e.paras[0].page
 
-/** The authors before the year (letters only) and the year, to order one author's works. */
+/** The authors before the year (letters only), the year and the title, to order one author's works
+ *  and to find a work listed twice. APA puts undated works first and works in press last. */
 function byline(e: Entry) {
   const m = YEAR.exec(e.text)
-  if (!m || !/^\d/.test(m[1])) return undefined
+  if (!m) return undefined
   const by = e.text.slice(0, m.index).replace(/^\d+[.)]\s*/, '')
   const who = by
     .normalize('NFD')
@@ -132,7 +146,30 @@ function byline(e: Entry) {
   const cite = quote(by, 40)
     .replace(/[\s,]+$/, '')
     .replace(/(\p{L}{2})\.$/u, '$1')
-  return who ? { who, year: m[1], cite: `${cite} (${m[1]})` } : undefined
+  const rest = e.text.slice(m.index)
+  // The title, up to its closing period, without a leading article.
+  const title = e.text
+    .slice(m.index + m[0].length)
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .split(/\.\s/)[0]
+    .normalize('NFD')
+    .toLowerCase()
+    .replace(/^(a|an|the)\s+/, '')
+    .replace(/[^a-z0-9]/g, '')
+  return who
+    ? {
+        who,
+        year: /^\d/.test(m[1]) ? m[1] : /^n/i.test(m[1]) ? '0' : '9',
+        title,
+        // Told apart by a letter already: 2011a, n.d.-a, in press-a.
+        marked: /^\((\d{4}[a-z]|(n\.\s?d\.|in press)\s?-\s?[a-z])/i.test(rest),
+        // A full date ("2011, March 3"): works of one year then go by date, not by title.
+        dated: /^\(\d{4}[a-z]?,/.test(rest),
+        by: cite,
+        from: quote(rest, 40),
+        cite: `${cite} (${m[1]})`,
+      }
+    : undefined
 }
 
 function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
@@ -189,17 +226,41 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   // The template's sample entries are said above: these look at the student's own.
   const own = refs.filter((e) => !SAMPLE.test(e.text))
   const noYear = own.filter((e) => !YEAR.test(e.text))
-  if (noYear.length) {
+  // A year mistyped in the parentheses ("(20214") or written outside them is certain; no year at
+  // all may be an entry read in two pieces.
+  const misdated = noYear.filter((e) => {
+    const t = e.text.replace(/\S*(https?:\/\/|www\.|doi\.org|doi:)\S*/gi, '')
+    return /\(\d{5,}/.test(t) || /(?<![\d/(.-])(1[89]|20)\d{2}[a-z]?(?![\d/-])/.test(t)
+  })
+  const undated = noYear.filter((e) => !misdated.includes(e))
+  if (misdated.length) {
     issues.push(
-      `No year in parentheses after the author: ${list(noYear.slice(0, 3).map((e) => `“${quote(e.text, 40)}”`))}${noYear.length > 3 ? ` and ${noYear.length - 3} more` : ''}.`,
+      `Write the year in parentheses after the author, as “(2020).”: ${entriesText(misdated)}.`,
     )
+    statuses.push('fix')
+  }
+  if (undated.length) {
+    issues.push(`No year after the author: ${entriesText(undated)}.`)
     statuses.push('review')
   }
-  // APA and the template centre the heading.
+  // APA and the template centre the heading. A Word file states its alignment; in a PDF a heading
+  // that starts at the margin is plainly not centred.
   const head = ctx.doc.paras[ctx.s.references.heading]
   if (!head.plain && head.align !== 'center') {
+    const left = ctx.doc.pages?.[head.page ?? -1]?.margins?.left
+    const x0 = head.lines?.[0]?.x0
+    const sure =
+      ctx.doc.kind !== 'pdf'
+        ? !/^\s/.test(head.text) // not set in with spaces or tabs
+        : left !== undefined && x0 !== undefined && x0 - left < 3
     issues.push('Centre the heading “References”, as APA style and the template do.')
-    statuses.push('review')
+    statuses.push(sure ? 'fix' : 'review')
+  }
+  if (pushedDown(ctx, head)) {
+    issues.push(
+      `Start the reference list at the top of its page: empty lines push the heading down (${pagesText([head.page!])}).`,
+    )
+    statuses.push('fix')
   }
   // APA double-spaces within and between entries: an empty line between them is one too many.
   const loose = refs.slice(1).filter((e, k) => {
@@ -215,24 +276,48 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     issues.push('Remove the empty lines between the references: APA double-spaces them all alike.')
     statuses.push('review')
   }
-  // The same work listed twice: the same authors, year and title.
+  // The same work listed twice (the same authors, year and title) is a sure correction; two works
+  // of one author and year need a, b after the year (2011a, 2011b).
   const seen = new Map<string, Entry>()
-  const twice: string[] = []
+  const years = new Map<string, Entry>()
+  const twice: [Entry, Entry][] = []
+  const lettered: Entry[] = []
   for (const e of own) {
-    const k = norm(e.text)
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]/gu, '')
-      .slice(0, 80)
+    const y = byline(e)
+    const k = y
+      ? `${y.who}|${y.year}|${y.title}`
+      : norm(e.text)
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}]/gu, '')
+          .slice(0, 80)
     const first = seen.get(k)
-    if (first)
-      twice.push(
-        `“${quote(e.text, 40)}”${pageOf(e) === undefined ? '' : ` (${pagesText([pageOf(first)!, pageOf(e)!])})`}`,
-      )
+    if (first) twice.push([first, e])
     else seen.set(k, e)
+    if (!y || first) continue
+    if (years.has(`${y.who}|${y.year}`) && !y.marked) lettered.push(e)
+    else years.set(`${y.who}|${y.year}`, e)
   }
   if (twice.length) {
     issues.push(
-      `Listed twice: ${list(twice.slice(0, 3))}${twice.length > 3 ? ` and ${twice.length - 3} more` : ''}.`,
+      `Listed twice: ${entriesText(
+        twice.map(([, b]) => b),
+        undefined,
+        twice.map(([a]) => a),
+      )}.`,
+    )
+    statuses.push('fix')
+  }
+  if (lettered.length) {
+    issues.push(
+      `Two works of one author and year: add a, b after the year (2011a, 2011b), in the order of their titles: ${entriesText(lettered, (e) => `“${byline(e)!.cite}”`)}.`,
+    )
+    statuses.push('review')
+  }
+  // APA cites personal communications in the text only.
+  const personal = own.filter((e) => /\bpersonal communication\b/i.test(e.text))
+  if (personal.length) {
+    issues.push(
+      `Leave personal communications out of the reference list (APA cites them in the text only): ${entriesText(personal)}.`,
     )
     statuses.push('review')
   }
@@ -240,16 +325,41 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     return review(
       id,
       ctx.doc.kind === 'doc'
-        ? `${plural(refs.length, 'reference')}, each with its year. Check that they have hanging indents and double spacing (an old .doc file does not say).`
-        : `${plural(refs.length, 'reference')} with hanging indents and double spacing, each with its year. Check the rest of the APA setup (each entry's parts, italics, DOIs) against the APA page linked here.`,
+        ? `Check that the ${plural(refs.length, 'reference')} have hanging indents and double spacing (an old .doc file does not say); each has its year.`
+        : `Check the rest of the APA setup (each entry's parts, italics, DOIs) against the APA page linked here: the ${plural(refs.length, 'reference')} have hanging indents, double spacing and a year each.`,
     )
+  const status = worst(statuses)
   return {
     id,
-    status: worst(statuses),
-    message: 'Follow the APA style reference list setup (see the APA page linked here).',
+    status,
+    message:
+      status === 'review'
+        ? 'Check the APA style reference list setup (see the APA page linked here).'
+        : 'Follow the APA style reference list setup (see the APA page linked here).',
     details: issues,
   }
 }
+
+/** Up to three entries (quoted, or as `label` gives them) with their pages, then how many more and
+ *  on which pages; `also` gives each entry's other page (where a work is listed the first time). */
+const entriesText = (
+  es: Entry[],
+  label = (e: Entry) => `“${quote(e.text, 40)}”`,
+  also: (Entry | undefined)[] = [],
+) =>
+  list(
+    es
+      .slice(0, 3)
+      .map((e, k) => {
+        const pages = [also[k], e].flatMap((x) =>
+          x && pageOf(x) !== undefined ? [pageOf(x)!] : [],
+        )
+        return `${label(e)}${pages.length ? ` (${pagesText(pages)})` : ''}`
+      })
+      .concat(
+        es.length > 3 ? [more(es.length - 3, es.slice(3).map(pageOf)).replace(/^…and /, '')] : [],
+      ),
+  )
 
 function labels(ctx: Ctx): Finding {
   const id = 'appendices.labels'
@@ -277,7 +387,13 @@ function labels(ctx: Ctx): Finding {
     issues.push(`The appendix letters skip or repeat (${marks.join(', ')}).`)
     statuses.push('fix')
   }
+  // As the template sets them: the label, then its title on the line below, both centred.
   const untitled: Para[] = []
+  const sameLine: Para[] = []
+  const offCentre: Para[] = []
+  const centred = (p: Para) => !!p.plain || p.align === 'center'
+  const labelOf = (p: Para) =>
+    /^(appendix|annex)\s*([a-z]{1,2}|\d{1,2})?\b/i.exec(norm(p.text))?.[0] ?? quote(p.text, 30)
   for (const a of aps) {
     const head = doc.paras[a.heading]
     const inline = norm(head.text).replace(
@@ -285,17 +401,30 @@ function labels(ctx: Ctx): Finding {
       '',
     )
     const next = nextText(doc.paras, a.heading + 1, a.end)
+    // A short line under the label is its title, set as one or not.
     const short = next !== undefined && norm(doc.paras[next].text).length <= 150
-    if (inline || (short && isHeadingish(doc.paras[next!]))) continue
-    // A short line under the label, not set as a title: its title, most likely, for a second look.
-    issues.push(
-      short
-        ? `Check the title below “${a.label}”: set it as a title on the line below the label, as in the template.`
-        : `Add a title below “${a.label}”.`,
-    )
-    statuses.push(short ? 'review' : 'fix')
-    untitled.push(head)
+    if (!inline && !short) {
+      issues.push(`Add a title below “${labelOf(head)}”.`)
+      statuses.push('fix')
+      untitled.push(head)
+      continue
+    }
+    if (inline) sameLine.push(head)
+    if (!centred(head) || (!inline && !centred(doc.paras[next!]))) offCentre.push(head)
   }
+  if (sameLine.length) {
+    issues.push(
+      `Put each title on the line below its label, as the template does: ${list(sameLine.map(labelOf))}.`,
+    )
+    statuses.push('review')
+  }
+  if (offCentre.length) {
+    issues.push(
+      `Centre each label and its title, as the template does: ${list(offCentre.map(labelOf))}.`,
+    )
+    statuses.push('review')
+  }
+  untitled.push(...sameLine, ...offCentre.filter((p) => !sameLine.includes(p)))
   if (!issues.length)
     return ok(
       id,

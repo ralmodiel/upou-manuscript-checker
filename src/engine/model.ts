@@ -90,11 +90,20 @@ export interface Page {
   paras: number[]
   images: Box[]
   /** Ink, stamps, free text and drawn shapes: anything a signature or a tick could be. */
-  marks: (Box & { kind: string; count?: number })[]
+  marks: (Box & {
+    kind: string
+    count?: number
+    /** A filled path's colour ('#rrggbb'). */
+    fill?: string
+    /** A form field: filled in (ticked, chosen, typed) or not. */
+    on?: boolean
+  })[]
   /** Small text marks (✓, X, /) and where they stand, for the permission boxes. */
   glyphs: (Box & { text: string })[]
   /** Text painted in a colour other than black ('#rrggbb'). */
   colored: { text: string; color: string }[]
+  /** Coloured text inside hyperlinks was left out of `colored` (a link keeps its colour). */
+  linked?: boolean
   /** Where the lines of running text start and end, as read from the page. */
   margins?: { left: number; right: number }
 }

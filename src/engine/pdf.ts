@@ -44,6 +44,8 @@ const ITALIC = /italic|oblique/i
 const MARKER = /^(\(?\d{1,2}[.)]|\(?[a-z][.)]|\([A-Z]\)|[•●▪◦‣∙·-])\s/
 const LABEL =
   /^(Table|TABLE|Fig(ure|\.)?|FIG(URE|\.)?|Chapter|CHAPTER|Appendix|APPENDIX|Annex|ANNEX)(\s*[A-Z]?\d+([.-]\d+)*|\s+[IVXLC]+\b|\s+[A-Z]\b)?\s*[.:–—-]?\s*($|[\p{Lu}(])/u
+/** A caption or note line: never a running head, and outside the table above or below it. */
+const OUTSIDE = /^(note[.:]|(table|fig(ure)?\.?)\s*\d)/i
 /** Whether line `l` opens a paragraph after `prev`. A label opens one only when bold, as the
  *  format sets it, or after a line ending in no letter: a sentence may wrap onto a new line at
  *  "Table 3.1." too. */
@@ -113,6 +115,15 @@ export async function readPdf(
   }
 
   const { OPS } = pdfjs
+  // Paths painted with a fill: a box filled in, a word highlighted.
+  const FILLS = new Set<number>([
+    OPS.fill,
+    OPS.eoFill,
+    OPS.fillStroke,
+    OPS.eoFillStroke,
+    OPS.closeFillStroke,
+    OPS.closeEOFillStroke,
+  ])
   const pages: Page[] = []
   const allLines: Line[][] = []
   const pictures: Picture[] = []
@@ -175,9 +186,10 @@ export async function readPdf(
                   )
                   .join('')
               : ''
-            // Pieces drawn one by one are mostly words: keep a space between them.
+            // Pieces drawn one by one (letters, kerned parts): their spaces come back from the
+            // page's lines below.
             if (!text.trim()) continue
-            if (run?.color === fill) run.text += /\s$/.test(run.text) ? text : ' ' + text
+            if (run?.color === fill) run.text += text
             else colored.push((run = { text, color: fill }))
           }
         } else if (fn === OPS.paintFormXObjectBegin) {
@@ -203,14 +215,34 @@ export async function readPdf(
               ...boxOf(ctm, mm[0], mm[1], mm[2], mm[3]),
               kind: 'path',
               count: path.length,
+              ...(FILLS.has(args[0] as number) ? { fill } : {}),
             })
         }
       }
-      for (const a of annots as { subtype?: string; rect?: number[]; fieldType?: string }[]) {
+      for (const a of annots as {
+        subtype?: string
+        rect?: number[]
+        fieldType?: string
+        fieldValue?: unknown
+        exportValue?: string
+        buttonValue?: string
+        checkBox?: boolean
+        radioButton?: boolean
+      }[]) {
         if (!a.rect || a.subtype === 'Link' || a.subtype === 'Popup') continue
         marks.push({
           ...boxOf([1, 0, 0, 1, 0, 0], a.rect[0], a.rect[1], a.rect[2], a.rect[3]),
           kind: a.fieldType ? `${a.subtype}:${a.fieldType}` : (a.subtype ?? 'annotation'),
+          // A form field marks only when filled in: a box ticked, a button chosen, text typed.
+          ...(a.subtype === 'Widget'
+            ? {
+                on: a.checkBox
+                  ? a.fieldValue === a.exportValue
+                  : a.radioButton
+                    ? a.fieldValue === a.buttonValue
+                    : typeof a.fieldValue === 'string' && a.fieldValue.trim() !== '',
+              }
+            : {}),
         })
       }
 
@@ -277,7 +309,24 @@ export async function readPdf(
               .join(''),
           )
         : ''
-      allLines.push(toLines(spans, n))
+      const lines = toLines(spans, n)
+      allLines.push(lines)
+      const own = linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored
+      // Coloured text quoted as the page's lines read it, spaces and all.
+      const said = own.length
+        ? lines
+            .map((l) => l.text)
+            .join(' ')
+            .normalize('NFKC')
+        : ''
+      const at: number[] = []
+      for (let i = 0; i < said.length; i++) if (!/\s/.test(said[i])) at.push(i)
+      const bare = at.map((i) => said[i]).join('')
+      const readable = (c: Page['colored'][number]) => {
+        const t = flat(c.text)
+        const k = t ? bare.indexOf(t) : -1
+        return k < 0 ? c : { ...c, text: said.slice(at[k], at[k + t.length - 1] + 1) }
+      }
       pages.push({
         n,
         width: vp.width,
@@ -289,13 +338,21 @@ export async function readPdf(
         images: images.map(({ x0, y0, x1, y1 }) => ({ x0, y0, x1, y1 })),
         marks,
         glyphs,
-        colored: linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored,
+        colored: own.map(readable),
+        ...(own.length < colored.length ? { linked: true } : {}),
       })
 
       // The title page's picture is kept small, for the seal check (a cover page may come first).
       if (n < 3 && images.length) {
-        const big = images.reduce((p, q) =>
-          (q.x1 - q.x0) * (q.y1 - q.y0) > (p.x1 - p.x0) * (p.y1 - p.y0) ? q : p,
+        // The seal is round: a wider picture larger than it (a signature, a banner) is not the
+        // seal, and a tick box is too small to be it.
+        const w = (b: Box) => b.x1 - b.x0
+        const h = (b: Box) => b.y1 - b.y0
+        const round = images.filter(
+          (b) => Math.min(w(b), h(b)) >= 36 && Math.max(w(b), h(b)) < 1.5 * Math.min(w(b), h(b)),
+        )
+        const big = (round.length ? round : images).reduce((p, q) =>
+          w(q) * h(q) > w(p) * h(p) ? q : p,
         )
         const pixels = big.id ? await imagePixels(page, big.id) : undefined
         pictures.push({
@@ -427,7 +484,8 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
         .toLowerCase()
       return { l, k, side, d: Math.round(side === 'f' ? h - l.y : l.y) }
     })
-    .filter((x) => /\p{L}/u.test(x.k))
+    // Words, and not a caption or note: "Table 3" opening page after page is still a caption.
+    .filter((x) => /\p{L}/u.test(x.k) && !OUTSIDE.test(x.l.text.trim()))
   const anywhere = new Map<string, Set<number>>()
   const near = new Map<string, Set<number>>()
   const add = (m: Map<string, Set<number>>, k: string, page: number) =>
@@ -473,9 +531,6 @@ function splitBands(lines: Line[], height: number, running: Set<Line>) {
   // Once a line is footer, everything under it is too.
   return { body: body.filter((l) => !footer.some((f) => f.y <= l.y)), footer, header }
 }
-
-/** A caption or note line: it stands outside the table above or below it. */
-const OUTSIDE = /^(note[.:]|(table|fig(ure)?\.?)\s*\d)/i
 
 /** Lines inside ruled tables: between the first and the last of two or more horizontal rules of
  *  one length, one above the other, with no caption or note between them. Underlines (a rule just
@@ -592,7 +647,11 @@ const roomFor = (prev: Line, next: Line, right: number) =>
 function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[] {
   const size = mode(pagesLines.flat().map((l) => l.size))
   const docMargins = marginsOf(pagesLines.flat(), size) ?? { left: 72, right: 523 }
-  const margins = pagesLines.map((ls) => marginsOf(ls, size, docMargins) ?? docMargins)
+  const margins = pagesLines.map((ls) => {
+    // A ruled table's rows do not show where the page's text runs.
+    const text = ls.filter((l) => !tables.has(l))
+    return marginsOf(text, size, docMargins) ?? docMargins
+  })
   const paras: Para[] = []
   let draft: Line[] = []
   let cont: number | undefined // x0 of the second line
@@ -686,8 +745,17 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
           const gaps = draft
             .slice(1)
             .flatMap((l, i) => (l.page === draft[i].page ? [l.y - draft[i].y] : []))
+          // With no gap on this page to go by yet, a line running on at the left margin (no bold
+          // heading on either side) takes the next gap as its measure: double-spaced lines made
+          // taller by a symbol (an arrow) are still one paragraph.
+          const after = pagesLines[p][k + 1]
+          const runOn =
+            !!after && Math.abs(c.x0 - m.left) <= 3 && boldness(prev) < 1 && boldness(c) < 1
           const apart =
-            gap <= 0 || (gaps.length ? gap > 1.35 * median(gaps) : gap > 2.6 * prev.size)
+            gap <= 0 ||
+            (gaps.length
+              ? gap > 1.35 * median(gaps)
+              : gap > Math.max(2.6 * prev.size, runOn ? 1.35 * (after.y - c.y) : 0))
           if (apart || !sameSize || tabular) split = true
           // Stacked centred or right-aligned lines are one paragraph only when the next line's first
           // word would not have fitted on the line above, and both are bold or neither is.

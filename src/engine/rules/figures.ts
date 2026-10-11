@@ -3,6 +3,7 @@ import type { Box, Para } from '../model.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
 import { bolded, isTocLine } from '../structure.ts'
 import { list, norm, quote } from '../text.ts'
+import { more, pagesText } from './numbering.ts'
 
 export interface Caption {
   para: Para
@@ -156,14 +157,23 @@ const names = (cs: Caption[]) =>
     cs
       .slice(0, 6)
       .map(name)
-      .concat(cs.length > 6 ? [`${cs.length - 6} more`] : []),
+      .concat(
+        cs.length > 6
+          ? [
+              more(
+                cs.length - 6,
+                cs.slice(6).map((c) => c.para.page),
+              ).replace(/^…and /, ''),
+            ]
+          : [],
+      ),
   )
 const at = (c: Caption) => ({ page: c.para.page, quote: quote(c.para.text, 50) })
 
 /** Tables and pictures in the body that no caption sits beside (Word). */
 function unlabelled(ctx: Ctx, caps: Caption[]): string[] {
   const { doc } = ctx
-  if (doc.kind === 'pdf') return []
+  if (doc.kind === 'pdf') return unlabelledPictures(ctx, caps)
   const [start, end] = bodyRange(ctx)
   const out: string[] = []
   const near = (i: number) =>
@@ -181,6 +191,50 @@ function unlabelled(ctx: Ctx, caps: Caption[]): string[] {
   return out
 }
 
+/** PDF: pictures an inch or more each way on the chapters' pages with no caption beside them:
+ *  none on their page, nor one closing the page before (when the picture opens its page) or
+ *  opening the page after (when it closes its page). Logos, symbols and the seal are smaller or
+ *  elsewhere; scanned documents in the appendices need no caption. */
+function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
+  const { doc, s } = ctx
+  const pages = doc.pages ?? []
+  if (!s.chapters.length) return []
+  const from = doc.paras[s.chapters[0].heading].page ?? 0
+  const end = s.references?.heading ?? s.appendicesHeading ?? s.appendices[0]?.heading
+  const to = end === undefined ? pages.length : (doc.paras[end].page ?? pages.length)
+  // Each page's text from its first line to its last.
+  const tops = new Map<number, number>()
+  const bottoms = new Map<number, number>()
+  for (const p of doc.paras)
+    for (const l of p.lines ?? []) {
+      tops.set(l.page, Math.min(tops.get(l.page) ?? l.y, l.y))
+      bottoms.set(l.page, Math.max(bottoms.get(l.page) ?? l.y, l.y))
+    }
+  const captioned = (n: number, i?: number) =>
+    caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i))
+  const out: number[] = []
+  for (const pg of pages.slice(from, to)) {
+    if (captioned(pg.n)) continue
+    const big = pg.images.filter(
+      (b) =>
+        Math.min(b.x1 - b.x0, b.y1 - b.y0) >= 72 &&
+        b.y1 > 0.12 * pg.height &&
+        b.y0 < 0.88 * pg.height,
+    )
+    const lonely = big.some(
+      (b) =>
+        !(
+          b.y1 <= (tops.get(pg.n) ?? Infinity) && captioned(pg.n - 1, pages[pg.n - 1]?.paras.at(-1))
+        ) &&
+        !(
+          b.y0 >= (bottoms.get(pg.n) ?? -Infinity) && captioned(pg.n + 1, pages[pg.n + 1]?.paras[0])
+        ),
+    )
+    if (lonely) out.push(pg.n)
+  }
+  return out.map((n) => `a picture on ${pagesText([n])}`)
+}
+
 export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
   const lonely = unlabelled(ctx, caps)
   if (!caps.length) {
@@ -193,7 +247,7 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           'figures.title',
           'Add a figure/table title (in italics) right below each figure/table number.',
         ),
-        review('figures.apa', 'Follow the APA style figure and table setup.'),
+        review('figures.apa', 'Check the APA style figure and table setup.'),
       ]
     return [
       na('figures.number', 'No figures or tables found.'),
@@ -280,13 +334,18 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     apaStatus === 'ok'
       ? review(
           'figures.apa',
-          'Numbers, titles and numbering follow the APA setup. Check the rest (titles in title case, notes, table lines) against the APA pages linked here.',
+          'Check the rest of the APA setup (titles in title case, notes, table lines) against the APA pages linked here: numbers, titles and numbering follow it.',
         )
       : {
-          ...(apaStatus === 'fix' && order.length ? fix : review)(
-            'figures.apa',
-            'Follow the APA style figure and table setup (see the APA pages linked here).',
-          ),
+          ...(apaStatus === 'fix' && order.length
+            ? fix(
+                'figures.apa',
+                'Follow the APA style figure and table setup (see the APA pages linked here).',
+              )
+            : review(
+                'figures.apa',
+                'Check the APA style figure and table setup (see the APA pages linked here).',
+              )),
           details: order.length ? order : undefined,
         }
   return [number, title, apa]

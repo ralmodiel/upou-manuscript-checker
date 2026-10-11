@@ -104,18 +104,19 @@ function colour(ctx: Ctx): Finding {
   const { doc } = ctx
   if (doc.kind === 'doc')
     return review(id, 'Make sure all text is black (an old .doc file does not say).')
+  const URL = /https?:\/\/|doi\.org|www\./i
+  // Links keep their colour: say so when some were left aside.
+  const black = (links: boolean) => ok(id, `All text is black${links ? ' (links aside)' : ''}.`)
   if (doc.kind === 'pdf') {
     // Charts and links may be coloured on purpose, so a PDF's coloured text is for a second look.
-    const hits = (doc.pages ?? []).flatMap((pg) =>
+    const pages = doc.pages ?? []
+    const shown = pages.flatMap((pg) =>
       pg.colored
-        .filter(
-          (c) =>
-            coloured(c.color.replace('#', '').toLowerCase()) &&
-            !/https?:\/\/|doi\.org|www\./i.test(c.text),
-        )
+        .filter((c) => coloured(c.color.replace('#', '').toLowerCase()))
         .map((c) => ({ page: pg.n, text: c.text, color: c.color })),
     )
-    if (!hits.length) return ok(id, 'All text is black.')
+    const hits = shown.filter((h) => !URL.test(h.text))
+    if (!hits.length) return black(hits.length < shown.length || pages.some((pg) => pg.linked))
     return review(id, 'Change colored text to black (unless it is part of a chart or figure).', {
       details: hits
         .slice(0, 5)
@@ -124,17 +125,14 @@ function colour(ctx: Ctx): Finding {
     })
   }
   const hits: { quote: string; color: string }[] = []
+  let links = false
   for (const p of doc.paras)
-    for (const r of p.runs)
-      if (
-        r.color &&
-        !r.link &&
-        r.text.trim() &&
-        coloured(r.color) &&
-        !/https?:\/\/|doi\.org|www\./i.test(r.text)
-      )
-        hits.push({ quote: `${quote(r.text, 25)}” in “${quote(p.text, 40)}`, color: r.color })
-  if (!hits.length) return ok(id, 'All text is black.')
+    for (const r of p.runs) {
+      if (!r.color || !r.text.trim() || !coloured(r.color)) continue
+      if (r.link || URL.test(r.text)) links = true
+      else hits.push({ quote: `${quote(r.text, 25)}” in “${quote(p.text, 40)}`, color: r.color })
+    }
+  if (!hits.length) return black(links)
   return fix(id, 'Change colored text to black.', {
     details: hits
       .slice(0, 5)

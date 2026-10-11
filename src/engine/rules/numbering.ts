@@ -73,7 +73,8 @@ export function pagesText(pages: number[]): string {
   for (let k = 0; k < ps.length; k++) {
     let j = k
     while (j + 1 < ps.length && ps[j + 1] === ps[j] + 1) j++
-    out.push(j > k ? `${ps[k]}–${ps[j]}` : `${ps[k]}`)
+    // Word joiners keep a range on one line ("18–26", not "18–" then "26").
+    out.push(j > k ? `${ps[k]}\u2060–\u2060${ps[j]}` : `${ps[k]}`)
     k = j
   }
   return `${ps.length === 1 ? 'p.' : 'pp.'} ${out.join(', ')}`
@@ -101,6 +102,8 @@ export interface Problem {
     | 'changed'
   page?: number
   text: string
+  /** A long title's length in words. */
+  words?: number
 }
 
 /** A footer as quoted in a message: a long one by its end, where the page number is. */
@@ -157,6 +160,7 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
       out.push({
         type: 'long',
         page,
+        words,
         text: `${at}has a ${words}-word title before the number; shorten it`,
       })
     if (!folio.ellipsis)
@@ -307,6 +311,13 @@ export function summarize(problems: Problem[]): string[] {
           ]
         : shown
     }
-    return [`${LABEL[type]} ${pagesText(pages)} (for example ${ps[0].text})`]
+    // An example only where it says more than the label: what shows instead.
+    if (type === 'kind' || type === 'present')
+      return [`${LABEL[type]} ${pagesText(pages)} (for example ${ps[0].text})`]
+    if (type === 'long')
+      return [
+        `A long title (${ps[0].words} words), not a shortened one, on ${pagesText(pages)}: shorten it`,
+      ]
+    return [`${LABEL[type]} ${pagesText(pages)}`]
   })
 }

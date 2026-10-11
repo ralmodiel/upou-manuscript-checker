@@ -1,7 +1,7 @@
 // The engine end to end on a small Word file made here (the fixture set stays local), plus the
 // guards around it: files it cannot read are turned away with a reason, and the comments it writes
 // stay valid whatever the file name holds.
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { strFromU8, strToU8, unzipSync, zipSync, zlibSync } from 'fflate'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { reportDocx } from '../report/docx.ts'
@@ -95,7 +95,27 @@ describe('check', () => {
     expect(finding(r, 'references.order').details?.join(' ')).toMatch(/earliest year/)
     // Three entries, the undated one included; what is not read is for a second look.
     expect(finding(r, 'references.apa').status).toBe('review')
-    expect(finding(r, 'references.apa').message).toMatch(/^3 references/)
+    expect(finding(r, 'references.apa').message).toMatch(/the 3 references/)
+  })
+
+  it('finds a reference listed twice, one author’s works of a year out of order, a personal communication', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('REFERENCES', '<w:jc w:val="center"/>'),
+        para('Cruz, A. (2019). The second title. Press.', double),
+        para('Cruz, A. (2019). A first title. Press.', double),
+        para('Lim, B. (2020). One work. Press.', double),
+        para('Lim, B. (2020). One work. Press.', double),
+        para('Reyes, C. (2021, May 3). Personal communication.', double),
+      ),
+      opts,
+    )
+    expect(finding(r, 'references.order').details?.join(' ')).toMatch(/go by title/)
+    const apa = finding(r, 'references.apa')
+    expect(apa.status).toBe('fix')
+    expect(apa.details?.join(' ')).toMatch(/Listed twice.*add a, b.*personal communications/)
   })
 
   it('stays fast on long runs of spaces and tabs', async () => {
@@ -149,7 +169,67 @@ describe('PDF reader', () => {
     expect(doc.paras.filter((p) => /Running Title/.test(p.text))).toEqual([])
     expect(doc.paras.filter((p) => p.inTable).map((p) => p.text)).toEqual(['Cell one\tCell two'])
   })
+
+  it('reports a picture in a chapter with no caption beside it', async () => {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+    const picture = await doc.embedPng(png(40, 30))
+    const text =
+      'Body text of the chapter, set in twelve point type, with its words across the page.'
+    for (let n = 0; n < 2; n++) {
+      const page = doc.addPage([612, 792])
+      if (n === 0) {
+        page.drawText('Chapter I', { x: 280, y: 720, size: 12, font: bold })
+        page.drawText('INTRODUCTION', { x: 262, y: 692, size: 12, font: bold })
+      }
+      for (let y = n ? 720 : 650; y > 400; y -= 27.6)
+        page.drawText(text, { x: 72, y, size: 12, font })
+      if (n === 1) page.drawImage(picture, { x: 200, y: 150, width: 200, height: 150 })
+    }
+    const r = await check('thesis.pdf', await doc.save(), {
+      pdfjs: () => import('pdfjs-dist/legacy/build/pdf.mjs'),
+    })
+    expect(finding(r, 'figures.number').status).toBe('fix')
+    expect(finding(r, 'figures.number').details).toEqual(['a picture on p. 2'])
+  })
 })
+
+/** A small grey PNG. */
+function png(w: number, h: number): Uint8Array {
+  const crc = (b: Uint8Array) => {
+    let c = -1
+    for (const x of b) {
+      c ^= x
+      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+    }
+    return ~c >>> 0
+  }
+  const chunk = (type: string, data: Uint8Array) => {
+    const out = new Uint8Array(12 + data.length)
+    const view = new DataView(out.buffer)
+    view.setUint32(0, data.length)
+    out.set(strToU8(type), 4)
+    out.set(data, 8)
+    view.setUint32(8 + data.length, crc(out.subarray(4, 8 + data.length)))
+    return out
+  }
+  const head = new Uint8Array(13)
+  new DataView(head.buffer).setUint32(0, w)
+  new DataView(head.buffer).setUint32(4, h)
+  head[8] = 8 // 8-bit grey
+  const rows = new Uint8Array(h * (w + 1)).fill(128)
+  for (let y = 0; y < h; y++) rows[y * (w + 1)] = 0 // each row: filter "none"
+  const parts = [
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', head),
+    chunk('IDAT', zlibSync(rows)),
+    chunk('IEND', new Uint8Array()),
+  ]
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  parts.reduce((at, p) => (out.set(p, at), at + p.length), 0)
+  return out
+}
 
 describe('Word comments', () => {
   it('stay valid XML whatever the file name holds', async () => {

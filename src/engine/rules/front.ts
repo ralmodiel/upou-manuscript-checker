@@ -16,7 +16,7 @@ import {
   shown,
   wordDiff,
 } from '../text.ts'
-import { judge, pdfFolio, wordFolioAt, type Want } from './numbering.ts'
+import { judge, pagesText, pdfFolio, wordFolioAt, type Want } from './numbering.ts'
 
 // The seal in the MDC template: its file's SHA-256 and its difference hash (scripts/probe/seal-hash.mjs).
 export const SEAL_SHA256 = '1d89b4e2dbe46ea14a34faeeeb4a0fc18999438b12c4fae9bc8ac66abf6ae8c9'
@@ -31,9 +31,6 @@ const textIn = (ctx: Ctx, start: number, end: number) =>
 
 const find = (paras: Para[], re: RegExp) => paras.find((p) => re.test(norm(p.text)))
 
-/** A sentence's end, unless it already has one ("Ph.D."). */
-const stop = (s: string) => (s.endsWith('.') ? s : s + '.')
-
 // ---- The title page, read once ----
 
 export interface TitlePage {
@@ -42,6 +39,8 @@ export interface TitlePage {
   page: number
   /** The first text before the title page (a cover page). */
   cover?: Para
+  /** A page with a picture and no text before the title page (a cover page scanned in). */
+  coverPage?: number
   program?: Para
   author?: Para
   title: Para[]
@@ -104,6 +103,7 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     paras,
     page,
     cover: textIn(ctx, 0, start)[0],
+    coverPage: ctx.doc.pages?.slice(0, page).find((pg) => pg.images.length)?.n,
     program,
     author,
     title: title.filter((p) => p !== adviser),
@@ -230,35 +230,51 @@ function sequence(tp: TitlePage): Finding {
   }))
   const missing = found.filter((a) => a.k < 0).map((a) => a.name)
   const issues: string[] = []
-  if (tp.cover)
+  // The lines the issues are about, for the places.
+  const lines: Para[] = []
+  if (tp.cover) {
     issues.push(
       `Remove the page before the title page (“${quote(tp.cover.text, 40)}”): the title page comes first`,
+    )
+    lines.push(tp.cover)
+  } else if (tp.coverPage !== undefined)
+    issues.push(
+      `Remove the page before the title page (${pagesText([tp.coverPage])}): the title page comes first`,
     )
   if (missing.length) issues.push(`Missing: ${list(missing.map((m) => `“${m}”`))}`)
   const present = found.filter((a) => a.k >= 0)
   for (let k = 1; k < present.length; k++)
-    if (present[k].k < present[k - 1].k)
+    if (present[k].k < present[k - 1].k) {
       issues.push(`“${present[k].name}” should come after “${present[k - 1].name}”`)
+      lines.push(tp.paras[present[k].k])
+    }
   // The author's name comes before the title; a name is short, a title is long.
   if (tp.author && tp.title.length) {
     const words = (p: Para) => norm(p.text).split(' ').length
-    if (words(tp.author) > 8 && tp.title.length === 1 && words(tp.title[0]) <= 6)
+    if (words(tp.author) > 8 && tp.title.length === 1 && words(tp.title[0]) <= 6) {
       issues.push('Write your name before the thesis title')
+      lines.push(tp.author)
+    }
   }
-  for (const [label, re, right] of [
-    ['Student', /^student\s+signature/i, "Student's Signature"],
-    ['Thesis Adviser', /adviser\s+signature/i, "Thesis Adviser's Signature"],
+  for (const [re, right] of [
+    [/^student\s+signature/i, "Student's Signature"],
+    [/adviser\s+signature/i, "Thesis Adviser's Signature"],
   ] as const) {
     const p = tp.paras.find((x) => re.test(norm(x.text)))
-    if (p)
+    if (p) {
       issues.push(
-        `Add an apostrophe and s to the signature label: “${right}” (not “${label} Signature”)`,
+        `Add an apostrophe and s to the signature label: “${right}” (not “${quote(norm(p.text).replace(/\s*:$/, ''), 40)}”)`,
       )
+      lines.push(p)
+    }
   }
   if (!issues.length) return ok(id, 'The title page follows the order of the template.')
   return fix(id, 'Follow the sequence of information in the MDC template.', {
     details: issues,
-    where: [...at(tp.cover), { page: tp.page }],
+    where: [
+      ...lines.slice(0, 5).flatMap(at),
+      ...(missing.length || !lines.length ? [{ page: tp.page }] : []),
+    ],
   })
 }
 
@@ -314,7 +330,7 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
   // Spelling cannot be checked here, only compared with the Acceptance Page.
   return review(
     id,
-    `Adviser: ${stop(name)} Check the spelling against your adviser's own: spelling cannot be checked here.`,
+    `Check the spelling of your adviser's name, “${name}”, against your adviser's own: it cannot be checked here.`,
   )
 }
 
@@ -376,11 +392,35 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   const band = (b: Box) =>
     Math.abs((b.y0 + b.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size
   const from = yesWord.x0 - 4 * line.size
+  const side = (x: number) => (x < or.x0 ? 'yes' : 'no')
+  // Pictures or filled shapes on both sides are the boxes themselves (a Google Docs export draws
+  // its boxes as pictures); on one side only, they mark it: a tick pasted in, a box filled in, a
+  // word highlighted (a filled shape, not white, wider than a rule and no wider than a word).
+  const oneSide = (xs: number[]) => (new Set(xs.map(side)).size === 1 ? xs : [])
+  const width = (b: Box) => b.x1 - b.x0
+  const pictures = page.images.filter((b) => band(b) && b.x0 > from).map((b) => b.x0)
+  const filled = page.marks
+    .filter(
+      (m) =>
+        m.kind === 'path' &&
+        !!m.fill &&
+        m.fill !== '#ffffff' &&
+        band(m) &&
+        m.x0 > from &&
+        width(m) >= 0.4 * line.size &&
+        width(m) <= 4 * line.size,
+    )
+    .map((m) => m.x0)
   const xs = [
     ...page.glyphs.filter((g) => band(g) && g.x0 > from && MARK.test(g.text)).map((g) => g.x0),
-    ...page.marks.filter((m) => band(m) && m.kind !== 'path' && m.x0 > from).map((m) => m.x0),
+    // Annotations and form fields, but not a checkbox left unticked.
+    ...page.marks
+      .filter((m) => band(m) && m.kind !== 'path' && m.on !== false && m.x0 > from)
+      .map((m) => m.x0),
+    ...oneSide(pictures),
+    ...oneSide(filled),
   ]
-  return pick(xs.map((x) => (x < or.x0 ? 'yes' : 'no')))
+  return pick(xs.map(side))
 }
 
 function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
@@ -448,7 +488,7 @@ function folioCheck(
     const problems = judge(folio, want, page)
     if (!problems.length)
       return ok(id, want === 'none' ? `No page number on the ${name}.` : `${name}: “${folio?.raw}”`)
-    return fix(id, wantMessage(want, name), {
+    return fix(id, wantMessage(want, name, !!folio?.title), {
       details: problems.map((p) => p.text),
       where: [{ page }],
     })
@@ -465,9 +505,9 @@ function folioCheck(
   })
 }
 
-const wantMessage = (want: Want, name: string) =>
+const wantMessage = (want: Want, name: string, titled = false) =>
   want === 'none'
-    ? `Remove the page number on the ${name}.`
+    ? `Remove the ${titled ? 'footer (shortened title and page number)' : 'page number'} on the ${name}.`
     : `Add the shortened thesis title + ellipsis + page number (${want.kind === 'roman' && want.value ? roman(want.value) : 'Roman numerals'}) on the ${name}.`
 
 // ---- University Permission Page ----
@@ -623,7 +663,14 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   if (main && norm(main).toLowerCase() !== norm(t).toLowerCase()) {
     const d = wordDiff(main, t)
     issues.push(
-      `Title Page: “${quote(main, 90)}”; Acceptance Page: “${quote(t, 90)}”${d.onlyB.length ? ` (differs at “${d.onlyB.slice(0, 4).join(' ')}”)` : ''}.`,
+      `Title Page: “${quote(main, 90)}”; Acceptance Page: “${quote(t, 90)}”${
+        d.onlyB.length
+          ? ` (not on the Title Page: ${d.onlyB
+              .slice(0, 4)
+              .map((w) => `“${w}”`)
+              .join(', ')})`
+          : ''
+      }.`,
     )
   }
   const author = /prepared by\s+(.+?)\s+with the title/i.exec(sentence)?.[1]
@@ -649,12 +696,25 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
         : undefined,
       where: at(blank[0]?.para),
     })
-  if (names.dean && bareName(names.dean.name) !== bareName(DEAN))
+  const dean = names.dean
+  if (dean && bareName(dean.name) !== bareName(DEAN)) {
+    // A committee member's name left on the Dean's line (a line copied and not changed).
+    if (names.committee.some((c) => bareName(c.name) === bareName(dean.name)))
+      return fix(
+        id,
+        `Write the Dean's name on the Dean's line: “${dean.name}” is a committee member's name. The MDC template has “${DEAN}, Ph.D.”.`,
+        {
+          // Names hold commas ("NAME, Ph.D."): semicolons part them.
+          details: [`Check the spelling of: ${names.committee.map((c) => c.name).join('; ')}.`],
+          where: at(dean.para),
+        },
+      )
     return review(
       id,
-      `Check the Dean's name: “${names.dean.name}”. The MDC template has “${DEAN}, Ph.D.”.`,
-      { where: at(names.dean.para) },
+      `Check the Dean's name (the MDC template has “${DEAN}, Ph.D.”) and the spelling of each name below: spelling cannot be checked here.`,
+      { details: all.map((n) => n.name), where: at(dean.para) },
     )
+  }
   return review(id, 'Check the spelling of each name below: spelling cannot be checked here.', {
     details: all.map((n) => n.name),
   })
@@ -707,7 +767,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
   const missing = (name: string) =>
     `No ${name} was found in the text. If it is one of the scanned pages, check this item yourself.`
   return [
-    ...(scans.includes(0)
+    ...(scans.includes(tp.page)
       ? unread(
           'title',
           'The title page is a scanned picture, so it could not be read here. Check this item yourself.',
