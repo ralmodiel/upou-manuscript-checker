@@ -99,7 +99,9 @@ function ItemRow({ item, finding }: { item: Item; finding: Finding }) {
                 className="inline-flex max-w-full items-center gap-1.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
               >
                 {w.page !== undefined && (
-                  <span className="font-semibold text-ink tabular-nums">p. {w.page + 1}</span>
+                  <span className="shrink-0 font-semibold whitespace-nowrap text-ink tabular-nums">
+                    p. {w.page + 1}
+                  </span>
                 )}
                 {w.quote && <span className="line-clamp-2 wrap-anywhere">“{w.quote}”</span>}
               </span>
@@ -168,6 +170,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
   const go = (k: number) => {
     if (all) {
       document.getElementById(`part-${k}`)?.scrollIntoView({ block: 'start' })
+      document.getElementById(`part-${k}-title`)?.focus({ preventScroll: true })
       return
     }
     focusPart.current = true
@@ -202,7 +205,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
     fix > 0
       ? `${fix} ${fix === 1 ? 'thing' : 'things'} to correct`
       : review > 0
-        ? 'Nothing to correct, a few to review'
+        ? `Nothing to correct, ${review} to review`
         : 'Every check passed'
   const bar = [
     { n: ok, cls: 'bg-ok', label: 'passed' },
@@ -222,7 +225,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
             <p className="mt-0.5 text-sm text-ink-3">
               {KIND[report.kind]}
               {report.pages ? ` · ${report.pages} pages` : ''} · checked in{' '}
-              {(report.ms / 1000).toFixed(1)} s on this computer
+              {(report.ms / 1000).toFixed(1)} s on this device
             </p>
             <h1
               id="result-title"
@@ -242,7 +245,10 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
               {extraFix > 0 && <> · also {extraFix} more noticed</>}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 max-sm:*:grow" data-print="hide">
+          <div
+            className="flex flex-wrap gap-2 max-sm:*:grow lg:grid lg:shrink-0 lg:grid-cols-2"
+            data-print="hide"
+          >
             <button
               type="button"
               className={buttonClass('primary', 'md')}
@@ -318,10 +324,12 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
       </section>
 
       <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-12">
-        <aside className="lg:order-2 lg:col-span-4" data-print="hide">
+        <aside aria-labelledby="parts-title" className="lg:order-2 lg:col-span-4" data-print="hide">
           <div className="lg:sticky lg:top-24 lg:-m-1 lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:p-1">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="font-display text-2xl text-ink">All parts</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 id="parts-title" className="font-display text-2xl text-ink">
+                All parts
+              </h2>
               <div
                 role="group"
                 aria-label="Show"
@@ -336,7 +344,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                     type="button"
                     aria-pressed={all === o.v}
                     onClick={() => setAll(o.v)}
-                    className="h-9 cursor-pointer rounded-pill px-3 text-xs font-semibold text-ink-2 transition-colors aria-pressed:bg-action aria-pressed:text-on-action"
+                    className="h-9 cursor-pointer rounded-pill px-3 text-xs font-semibold whitespace-nowrap text-ink-2 transition-colors aria-pressed:bg-maroon aria-pressed:text-paper"
                   >
                     {o.label}
                   </button>
@@ -350,7 +358,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                     type="button"
                     onClick={() => go(k)}
                     aria-current={!all && k === current ? 'true' : undefined}
-                    className="flex w-full cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2.5 text-left transition-colors hover:bg-surface-2 aria-[current=true]:bg-surface aria-[current=true]:shadow-(--shadow-elev-1) aria-[current=true]:ring-1 aria-[current=true]:ring-line"
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2.5 text-left transition-colors hover:bg-surface-2 aria-[current=true]:bg-surface aria-[current=true]:shadow-(--shadow-elev-1) aria-[current=true]:ring-1 aria-[current=true]:ring-ink-3"
                   >
                     <span
                       className={`w-5 font-display text-lg leading-none tabular-nums ${p.fix ? 'text-fix' : p.review ? 'text-review' : 'text-ok'}`}
@@ -399,19 +407,16 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                     className="flex flex-wrap justify-between gap-2 border-t border-line py-4"
                     data-print="hide"
                   >
-                    <button
-                      type="button"
-                      onClick={() => go(k - 1)}
-                      disabled={k === 0}
-                      className={buttonClass(
-                        'ghost',
-                        'sm',
-                        `max-w-full ${k === 0 ? 'invisible' : ''}`,
-                      )}
-                    >
-                      <ChevronLeftIcon />
-                      <span className="truncate">{parts[k - 1]?.name ?? ''}</span>
-                    </button>
+                    {k > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => go(k - 1)}
+                        className={buttonClass('ghost', 'sm', 'max-w-full')}
+                      >
+                        <ChevronLeftIcon />
+                        <span className="truncate">{parts[k - 1].name}</span>
+                      </button>
+                    )}
                     {k < parts.length - 1 && (
                       <button
                         type="button"
@@ -428,8 +433,8 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
             )
           })}
           <p className="mt-6 text-sm leading-relaxed text-ink-3" data-print="hide">
-            Fixed something? Save your file and check it again: nothing from this check is kept, so
-            each check starts fresh.
+            Corrected something? Save your file and check it again: nothing from this check is kept,
+            so each check starts fresh.
           </p>
         </div>
       </div>

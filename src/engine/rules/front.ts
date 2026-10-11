@@ -1,5 +1,6 @@
 // Title Page, University Permission Page and Acceptance Page.
 import type { Box, Para } from '../model.ts'
+import { CHECKLIST } from '../checklist.ts'
 import { colourfulness, dHash, hamming, shrink } from '../images.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding, type Where } from '../report.ts'
 import { DATE, distance, isUpper, list, lowerWords, norm, quote, shown, wordDiff } from '../text.ts'
@@ -17,6 +18,9 @@ const textIn = (ctx: Ctx, start: number, end: number) =>
   ctx.doc.paras.slice(start, end).filter((p) => norm(p.text))
 
 const find = (paras: Para[], re: RegExp) => paras.find((p) => re.test(norm(p.text)))
+
+/** A sentence's end, unless it already has one ("Ph.D."). */
+const stop = (s: string) => (s.endsWith('.') ? s : s + '.')
 
 // ---- The title page, read once ----
 
@@ -38,8 +42,22 @@ export interface TitlePage {
 const TABLE_ROW = /^(invention|publication|confidential|free)\s*\(/i
 const ADVISER_LABEL = /^thesis adviser\b(?!'?s?\s*signature)/i
 
+/** PDF pages before the other preliminary pages that hold a picture and no text: signed pages
+ *  scanned back in, which cannot be read. */
+function scannedFront(ctx: Ctx): number[] {
+  const { doc, s } = ctx
+  if (doc.kind !== 'pdf' || !doc.pages) return []
+  const first = s.prelims[0] ?? s.chapters[0]
+  const end = first ? (doc.paras[first.heading].page ?? 3) : 3
+  return doc.pages
+    .slice(0, end)
+    .filter((pg) => !pg.paras.length && pg.images.length)
+    .map((pg) => pg.n)
+}
+
 export function readTitlePage(ctx: Ctx): TitlePage {
-  const paras = textIn(ctx, ctx.s.title.start, ctx.s.title.end)
+  // A scanned title page has no text: what comes after it is not the title page.
+  const paras = scannedFront(ctx).includes(0) ? [] : textIn(ctx, ctx.s.title.start, ctx.s.title.end)
   const idx = (p?: Para) => (p ? paras.indexOf(p) : -1)
   const program = find(paras, /master of development communication|master of|program/i)
   const adviserLabel = find(paras, ADVISER_LABEL)
@@ -81,8 +99,13 @@ export function readTitlePage(ctx: Ctx): TitlePage {
 
 export const titleOf = (tp: TitlePage) => norm(tp.title.map((p) => shown(p)).join(' '))
 
-const NAME_TAIL = /\s*(\t.*|\(date\).*)$/i
-const cleanName = (s: string) => norm(s.replace(NAME_TAIL, ''))
+/** A name line without its date column: the last line is cut at its first tab or "(date)". */
+function cleanName(s: string) {
+  const line = Math.max(...['\n', '\r', '\u2028', '\u2029'].map((c) => s.lastIndexOf(c))) + 1
+  const date = s.slice(line).search(/\(date\)/i)
+  const cuts = [s.indexOf('\t', line), date < 0 ? -1 : line + date].filter((k) => k >= line)
+  return norm(cuts.length ? s.slice(0, Math.min(...cuts)) : s)
+}
 /** A name without titles and degrees, for comparing spellings. */
 const bareName = (s: string) =>
   cleanName(s)
@@ -202,7 +225,7 @@ function sequence(tp: TitlePage): Finding {
     const p = tp.paras.find((x) => re.test(norm(x.text)))
     if (p)
       issues.push(
-        `Add apostrophe and -s on the signatory field: “${right}” (not “${label} Signature”)`,
+        `Add an apostrophe and s to the signature label: “${right}” (not “${label} Signature”)`,
       )
   }
   if (!issues.length) return ok(id, 'The title page follows the order of the template.')
@@ -261,7 +284,11 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
         where: at(tp.adviser),
       },
     )
-  return ok(id, `Adviser: ${name}. Double-check the spelling against your adviser's own.`)
+  // Spelling cannot be checked here, only compared with the Acceptance Page.
+  return review(
+    id,
+    `Adviser: ${stop(name)} Check the spelling against your adviser's own: spelling cannot be checked here.`,
+  )
 }
 
 function dateOf(p: Para | undefined, id: string, where: string): Finding {
@@ -312,6 +339,9 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   const page = doc.pages?.[row.page ?? -1]
   const line = row.lines?.[0]
   if (!page || !line) return 'none'
+  // One of the two words deleted, as in a Word file.
+  const yes = /\byes\b/i.test(line.text)
+  if (yes !== /\bno\b/i.test(line.text)) return yes ? 'yes' : 'no'
   const or = line.spans.find((s) => /^or$/i.test(s.text))
   const yesWord = line.spans.find((s) => /^yes$/i.test(s.text))
   if (!or || !yesWord) return 'none'
@@ -387,14 +417,10 @@ function folioCheck(
   if (!para) return na(id, `No ${name} found.`)
   if (doc.kind === 'pdf') {
     const page = para.page ?? 0
-    const problems = judge(pdfFolio(doc, page), want, page)
+    const folio = pdfFolio(doc, page)
+    const problems = judge(folio, want, page)
     if (!problems.length)
-      return ok(
-        id,
-        want === 'none'
-          ? `No page number on the ${name}.`
-          : `${name}: “${doc.pages![page].footer}”`,
-      )
+      return ok(id, want === 'none' ? `No page number on the ${name}.` : `${name}: “${folio?.raw}”`)
     return fix(id, wantMessage(want, name), {
       details: problems.map((p) => p.text),
       where: [{ page }],
@@ -407,7 +433,7 @@ function folioCheck(
   if (!problems.length)
     return ok(id, want === 'none' ? `No page number on the ${name}.` : `${name}: “${folio?.raw}”`)
   return fix(id, wantMessage(want, name), {
-    details: problems.map((p) => `Footer ${p.text}`),
+    details: problems.map((p) => p.text.charAt(0).toUpperCase() + p.text.slice(1)),
     where: at(para),
   })
 }
@@ -599,7 +625,10 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       `Check the Dean's name: “${names.dean.name}”. The MDC template has “${DEAN}, Ph.D.”.`,
       { where: at(names.dean.para) },
     )
-  return ok(id, `Names: ${list(all.map((n) => n.name))}. Double-check each spelling.`)
+  return review(
+    id,
+    `Names: ${stop(list(all.map((n) => n.name)))} Check each spelling: spelling cannot be checked here.`,
+  )
 }
 
 const PREFIX = /^(dr|asst\.?\s*prof|assoc\.?\s*prof|prof|engr|atty)\b\.?/i
@@ -643,37 +672,64 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
   const permHead = ctx.s.permission ? ctx.doc.paras[ctx.s.permission.heading] : undefined
   const accHead = ctx.s.acceptance ? ctx.doc.paras[ctx.s.acceptance.heading] : undefined
   const pageOf = (p?: Para) => (p?.page ?? 0) + 1
+  // Scanned pages cannot be read: their items are for the student to check, not to add.
+  const scans = scannedFront(ctx)
+  const unread = (part: string, why: string) =>
+    CHECKLIST.find((p) => p.id === part)!.items.map((i) => review(i.id, why))
+  const missing = (name: string) =>
+    `No ${name} was found in the text. If it is one of the scanned pages, check this item yourself.`
   return [
-    await seal(ctx),
-    sequence(tp),
-    titleUpper(tp),
-    adviser(
-      tp,
-      names.committee.map((c) => c.name),
-    ),
-    dateOf(tp.date, 'title.date', 'title page'),
-    permissionCode(ctx, tp),
-    signature(ctx, tp.studentSig, 'title.signature', 'title page'),
-    folioCheck(ctx, 'title.pageNumber', tp.paras[0] ?? ctx.doc.paras[0], 'none', 'title page'),
-    permissionTitle(ctx, tp),
-    permissionStatement(ctx),
-    permissionSignature(ctx),
-    folioCheck(
-      ctx,
-      'permission.pageNumber',
-      permHead,
-      { kind: 'roman', value: ctx.doc.kind === 'pdf' ? pageOf(permHead) : 2 },
-      'University Permission Page',
-    ),
-    acceptanceTitle(ctx, tp),
-    acceptanceNames(ctx, names),
-    convention(names),
-    folioCheck(
-      ctx,
-      'acceptance.pageNumber',
-      accHead,
-      { kind: 'roman', value: ctx.doc.kind === 'pdf' ? pageOf(accHead) : 3 },
-      'Acceptance Page',
-    ),
+    ...(scans.includes(0)
+      ? unread(
+          'title',
+          'The title page is a scanned picture, so it could not be read here. Check this item yourself.',
+        )
+      : [
+          await seal(ctx),
+          sequence(tp),
+          titleUpper(tp),
+          adviser(
+            tp,
+            names.committee.map((c) => c.name),
+          ),
+          dateOf(tp.date, 'title.date', 'title page'),
+          permissionCode(ctx, tp),
+          signature(ctx, tp.studentSig, 'title.signature', 'title page'),
+          folioCheck(
+            ctx,
+            'title.pageNumber',
+            tp.paras[0] ?? ctx.doc.paras[0],
+            'none',
+            'title page',
+          ),
+        ]),
+    ...(!permHead && scans.length
+      ? unread('permission', missing('University Permission Page'))
+      : [
+          permissionTitle(ctx, tp),
+          permissionStatement(ctx),
+          permissionSignature(ctx),
+          folioCheck(
+            ctx,
+            'permission.pageNumber',
+            permHead,
+            { kind: 'roman', value: ctx.doc.kind === 'pdf' ? pageOf(permHead) : 2 },
+            'University Permission Page',
+          ),
+        ]),
+    ...(!accHead && scans.length
+      ? unread('acceptance', missing('Acceptance Page'))
+      : [
+          acceptanceTitle(ctx, tp),
+          acceptanceNames(ctx, names),
+          convention(names),
+          folioCheck(
+            ctx,
+            'acceptance.pageNumber',
+            accHead,
+            { kind: 'roman', value: ctx.doc.kind === 'pdf' ? pageOf(accHead) : 3 },
+            'Acceptance Page',
+          ),
+        ]),
   ]
 }

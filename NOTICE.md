@@ -5,7 +5,9 @@
 This project is an unofficial, non-commercial proof of concept in its alpha testing stage. It is
 not an official site of the University of the Philippines Open University (UPOU) and is not
 affiliated with or endorsed by UPOU or its Master of Development Communication (MDC) program. The
-site uses no UP or UPOU seal, logo or other artwork.
+site's own pages use no UP or UPOU seal, logo or other artwork. The UP seal appears only inside the
+program's thesis template (`public/downloads/`), unchanged, as the program distributes it for title
+pages.
 
 ## Results need human verification
 
@@ -21,8 +23,10 @@ The software is provided "as is", without warranty of any kind, as stated in the
 ## Privacy
 
 Manuscripts are never submitted to any server. They are processed only in the visitor's browser,
-on their own device; nothing is sent anywhere and nothing is stored. The site has no accounts,
-cookies or analytics.
+on their own device; nothing from them is sent anywhere or stored. The only thing the site keeps
+is the visitor's theme choice (light or dark), in their own browser. The site has no accounts,
+cookies or analytics. Like any website, its host (GitHub Pages) receives the ordinary requests for
+the pages themselves, such as the visitor's IP address; manuscripts are never part of them.
 
 ## Source code
 
@@ -35,8 +39,8 @@ The checklist items the site checks against (quoted in `src/engine/checklist.ts`
 manuscript template and the MDC Format Checklist (`public/downloads/`) are materials of the UPOU
 MDC program. They are reproduced unchanged for the convenience of students and reviewers, who
 should confirm with MDC Program Support that they have the latest versions. If you hold rights in
-any of these materials and want them removed, contact the repository owner and they will be taken
-down.
+any of these materials and want them removed, open an issue in this project's GitHub repository
+and they will be taken down.
 
 The site links to the APA Style pages on tables, figures and reference lists
 ([apastyle.apa.org](https://apastyle.apa.org)); that content belongs to the American

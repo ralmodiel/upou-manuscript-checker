@@ -1,11 +1,17 @@
 // XML helpers over the browser's own parser. Office files use fixed prefixes in practice, but
 // elements and attributes are matched by local name so any prefix (or Strict OOXML) still reads.
 
+import { FileProblem } from './problem.ts'
+
+// Said to the student as it is.
+const DAMAGED =
+  'This file looks damaged: part of it could not be read. Open it, save it again, and check the new copy.'
+
 export function parseXml(text: string): Document {
   // Office and OpenDocument parts never declare a DTD; refusing one rules out entity tricks.
-  if (/<!DOCTYPE/i.test(text.slice(0, 2048))) throw new Error('Unexpected DTD in document part')
+  if (text.includes('<!DOCTYPE')) throw new FileProblem(DAMAGED)
   const doc = new DOMParser().parseFromString(text, 'application/xml')
-  if (doc.getElementsByTagName('parsererror').length) throw new Error('Unreadable XML part')
+  if (doc.getElementsByTagName('parsererror').length) throw new FileProblem(DAMAGED)
   return doc
 }
 

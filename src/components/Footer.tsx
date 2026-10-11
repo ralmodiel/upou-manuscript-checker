@@ -1,4 +1,4 @@
-// The maroon band that closes every page (as in UPOU OER): the notice, the official files and
+// The maroon band that closes every page (as in UPOU OER): the notice, the program's files and
 // references, and the project's own licences.
 import { NOTICE, PRIVATE_SHORT } from '../notice'
 

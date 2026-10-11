@@ -12,6 +12,7 @@ import type {
   Run,
   Section,
 } from './model.ts'
+import { FileProblem } from './problem.ts'
 
 interface CharState {
   bold: boolean
@@ -122,7 +123,7 @@ const SYMBOLS: Record<string, string> = {
 export function readRtf(data: Uint8Array): Doc {
   // Code page 1252 covers what RTF writers put in \'hh escapes for Western text.
   const src = new TextDecoder('latin1').decode(data)
-  if (!src.startsWith('{\\rtf')) throw new Error('This file is not a Rich Text (.rtf) file.')
+  if (!src.startsWith('{\\rtf')) throw new FileProblem('This file is not a Rich Text (.rtf) file.')
   const ansi = new TextDecoder('windows-1252')
 
   const fonts: string[] = []
@@ -630,7 +631,7 @@ export function readRtf(data: Uint8Array): Doc {
   }
   if (para.runs.some((r) => r.text.trim())) endPara()
   endSection()
-  if (!paras.length) throw new Error('This Rich Text file has no text.')
+  if (!paras.length) throw new FileProblem('This Rich Text file has no text.')
   paras[0].newPage = true
   return { kind: 'rtf', paras, sections, pictures, notes: [] }
 }

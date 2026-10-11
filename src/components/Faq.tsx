@@ -19,9 +19,13 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
           <strong className="font-semibold text-ink">No. {PRIVATE_HEAD}</strong> {PRIVATE_BODY}
         </p>
         <p>
-          This site is a set of static pages with no server of its own to receive files, and its
-          security policy stops the page from sending data anywhere. The comments you download are
-          made on your computer too.
+          This site is a set of static pages with no server of its own to receive files. Its code
+          never sends your file anywhere, and its security policy blocks the page from making
+          network requests. The comments you download are made on your device too.
+        </p>
+        <p>
+          Like any website, its host (GitHub Pages) receives the ordinary requests for the pages
+          themselves, such as your IP address; your manuscript is never part of them.
         </p>
       </>
     ),
@@ -84,8 +88,9 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
           or scanned pages.
         </p>
         <p>
-          Treat every result as a guide and confirm it in your manuscript. MDC Program Support’s
-          format review remains the official check, and its comments come first.
+          No AI reads your file: the checks are rules written into this site, and they run the same
+          way every time. Treat every result as a guide and confirm it in your manuscript. MDC
+          Program Support’s format review remains the official check, and its comments come first.
         </p>
       </>
     ),
@@ -94,9 +99,9 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
     q: 'Who is it for?',
     a: (
       <p>
-        MDC students preparing their manuscript and the program’s reviewers preparing comments use
-        the same page. The downloadable comments are set out like the program’s emails: numbered
-        parts with the corrections under each.
+        It is made for MDC students preparing their manuscript and for reviewers preparing format
+        comments; both use the same page. The downloadable comments follow the layout of the
+        program’s comment emails: numbered parts with the corrections under each.
       </p>
     ),
   },

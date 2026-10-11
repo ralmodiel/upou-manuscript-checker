@@ -61,8 +61,8 @@ writing advice.
 ## Evidence on Hand
 
 - data/Format Checklist.xlsx (the authority), data/MDC Thesis Manuscript_SURNAME, Given Name.docx
-  (the template), data/Samples (Manuscripts with Formatting Comments)/ (ten reviewer emails as PDF,
-  holding students' personal data: never published or quoted on the site).
+  (the template), data/Samples (Manuscripts with Formatting Comments)/ (ten reviewer emails as PDF;
+  local reference only, never published or quoted on the site).
 - No testimonials, usage numbers or endorsements exist; none may be invented.
 
 ## Product Principles

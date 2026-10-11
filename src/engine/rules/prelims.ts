@@ -9,7 +9,7 @@ import {
   judge,
   pagesText,
   summarize,
-  wordSectionFolio,
+  wordSectionFolios,
   type Problem,
 } from './numbering.ts'
 
@@ -41,8 +41,12 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
           ? `“${quote(doc.paras[h].text, 30)}”`
           : pagesText([doc.paras[h].page!]),
       )
-      issues.push(`Delete the other version of the ${PRELIM_NAMES[key]} (${list(where)}).`)
-      statuses.push('fix')
+      // A contents or list page may repeat its heading where the list runs on to the next page.
+      const runsOn = key === 'toc' || key === 'tables' || key === 'figures'
+      issues.push(
+        `Delete the other version of the ${PRELIM_NAMES[key]} (${list(where)})${runsOn ? ', unless the heading only repeats where the list runs on to the next page' : ''}.`,
+      )
+      statuses.push(runsOn ? 'review' : 'fix')
     }
   }
   const firsts = ORDER.filter((k) => found.includes(k)).map((k) => ({
@@ -92,20 +96,17 @@ function numbers(ctx: Ctx): Finding {
   const { doc, s } = ctx
   const [start, end] = prelimRange(ctx)
   if (start >= end) return na(id, 'No preliminary pages found after the Acceptance Page.')
+  if (!s.chapters.length)
+    return review(
+      id,
+      'Chapter I was not found, so the numbering of the preliminary pages was not checked.',
+    )
   const msg =
     'Add the shortened thesis title + ellipsis + page number (in Roman numerals: iv, v, vi…) on the preliminary pages.'
   if (doc.kind === 'pdf') {
     const first = doc.paras[start]?.page ?? 3
-    const last = s.chapters.length
-      ? (doc.paras[s.chapters[0].heading].page ?? doc.pages!.length) - 1
-      : -1
-    if (last < first)
-      return s.chapters.length
-        ? na(id, 'No preliminary pages found after the Acceptance Page.')
-        : review(
-            id,
-            'Chapter I was not found, so the numbering of the preliminary pages was not checked.',
-          )
+    const last = (doc.paras[s.chapters[0].heading].page ?? doc.pages!.length) - 1
+    if (last < first) return na(id, 'No preliminary pages found after the Acceptance Page.')
     const pages = Array.from({ length: last - first + 1 }, (_, k) => first + k)
     const problems = auditPdf(doc, pages, (p) => ({ kind: 'roman', value: p + 1 }))
     if (!problems.length)
@@ -126,8 +127,11 @@ function numbers(ctx: Ctx): Finding {
       .slice(Math.max(start, sec.first), Math.min(end, sec.last + 1))
       .find((p) => norm(p.text))
     const at = head ? `the section from “${quote(head.text, 30)}”` : 'a section'
-    for (const p of judge(wordSectionFolio(doc, k), { kind: 'roman' }))
-      problems.push({ ...p, text: `${at}: ${p.text}` })
+    // A section begun before these pages has its first page checked as the page it is (title,
+    // permission or acceptance page).
+    for (const f of wordSectionFolios(doc, k, sec.first < start))
+      for (const p of judge(f.folio, { kind: 'roman' }))
+        problems.push({ ...p, text: `${f.where}${at}: ${p.text}` })
     if (sec.start === 1 && k > 0)
       problems.push({
         type: 'value',

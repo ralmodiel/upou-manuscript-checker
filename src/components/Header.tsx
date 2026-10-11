@@ -7,7 +7,8 @@ import { InfoIcon, MoonIcon, SunIcon } from './icons'
 const NAV =
   'rounded-pill px-3 py-2 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink'
 
-export default function Header({ onHome }: { onHome: () => void }) {
+// `home`: the start page, where the checklist and the files are; elsewhere only the questions are.
+export default function Header({ onHome, home }: { onHome: () => void; home: boolean }) {
   const { theme, toggle } = useTheme()
   const next = theme === 'dark' ? 'light' : 'dark'
   return (
@@ -30,12 +31,16 @@ export default function Header({ onHome }: { onHome: () => void }) {
             {BADGE}
           </span>
           <nav aria-label="Page" className="ml-auto hidden items-center gap-0.5 md:flex">
-            <a href="#checklist" className={NAV}>
-              The checklist
-            </a>
-            <a href="#files" className={NAV}>
-              Template
-            </a>
+            {home && (
+              <>
+                <a href="#checklist" className={NAV}>
+                  The checklist
+                </a>
+                <a href="#files" className={NAV}>
+                  Template
+                </a>
+              </>
+            )}
             <a href="#faq" className={NAV}>
               Questions
             </a>

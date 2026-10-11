@@ -171,7 +171,7 @@ export const CHECKLIST: Part[] = [
   },
   {
     id: 'extra',
-    name: 'Also noticed',
+    name: 'Also noticed (not on the checklist)',
     extra: true,
     items: [
       { id: 'extra.placeholders', text: 'No template placeholder text left' },

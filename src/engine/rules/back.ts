@@ -95,7 +95,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   const hanging = multi.filter((p) => (p.indent?.firstLine ?? 0) <= -18)
   if (ctx.doc.kind !== 'doc' && multi.length && hanging.length / multi.length < 0.8) {
     issues.push(
-      `Use a hanging indent of 0.5 inch (Paragraph > Special: Hanging): ${multi.length - hanging.length} of ${plural(multi.length, 'reference')} have none.`,
+      `Use a hanging indent of 0.5 inch (Paragraph > Special: Hanging): ${multi.length - hanging.length} of ${plural(multi.length, 'reference')} ${multi.length - hanging.length === 1 ? 'has' : 'have'} none.`,
     )
     statuses.push('fix')
   }
@@ -103,7 +103,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   const single = spaced.filter((p) => p.spacing! < DOUBLE)
   if (spaced.length && single.length / spaced.length > 0.2) {
     issues.push(
-      `Double-space the reference list: ${single.length} of ${plural(spaced.length, 'reference')} are not.`,
+      `Double-space the reference list: ${single.length} of ${plural(spaced.length, 'reference')} ${single.length === 1 ? 'is' : 'are'} not.`,
     )
     statuses.push('fix')
   }
@@ -124,10 +124,15 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     statuses.push('review')
   }
   if (!issues.length)
-    return ok(
-      id,
-      `${plural(refs.length, 'reference')} with hanging indents and double spacing, each with its year.`,
-    )
+    return ctx.doc.kind === 'doc'
+      ? review(
+          id,
+          `${plural(refs.length, 'reference')}, each with its year. Check that they have hanging indents and double spacing (an old .doc file does not say).`,
+        )
+      : ok(
+          id,
+          `${plural(refs.length, 'reference')} with hanging indents and double spacing, each with its year.`,
+        )
   return {
     id,
     status: worst(statuses),

@@ -1,4 +1,4 @@
-// Stage 2: the file being read and checked on this computer, with page progress for a PDF.
+// Stage 2: the file being read and checked on this device, with page progress for a PDF.
 import { PRIVATE_SHORT } from '../notice'
 import { PageIcon, ShieldIcon } from './icons'
 
@@ -28,7 +28,11 @@ export default function Checking({ name, progress }: { name: string; progress: P
         Checking your manuscript
       </h1>
       <p className="mt-3 max-w-full font-medium wrap-anywhere text-ink-2">{name}</p>
-      <p role="status" className="mt-6 text-sm text-ink-2 tabular-nums">
+      {/* Screen readers hear each step once; the page count updates visibly and in the progress bar. */}
+      <p role="status" className="sr-only">
+        {progress.step === 'checking' ? status : 'Reading the file…'}
+      </p>
+      <p aria-hidden="true" className="mt-6 text-sm text-ink-2 tabular-nums">
         {status}
       </p>
       <div
@@ -40,7 +44,7 @@ export default function Checking({ name, progress }: { name: string; progress: P
         aria-valuenow={pct}
       >
         {pct === undefined ? (
-          <div className="h-full w-2/5 rounded-pill bg-band-gold motion-safe:animate-sweep motion-reduce:w-full" />
+          <div className="h-full w-2/5 rounded-pill bg-band-gold motion-safe:animate-sweep motion-reduce:w-full motion-reduce:opacity-40" />
         ) : (
           <div
             className="h-full rounded-pill bg-band-gold transition-[width] duration-200"

@@ -3,17 +3,56 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type RGB } from 'pdf-lib'
 import type { ReportModel } from './model'
 
-// Characters the standard fonts can encode (WinAnsi); anything else prints as "?".
+// Characters the standard fonts can encode (WinAnsi). The rest fall back: line breaks start a new
+// line, other spaces become a space, dashes a hyphen, accented letters the plain letter (also when
+// macOS spells "ñ" as "n" plus a tilde), invisible marks nothing; what is left (Chinese, emoji) "?".
 const WIN_ANSI = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ')
+const encodable = (c: string) => {
+  const code = c.charCodeAt(0)
+  return (code >= 0x20 && code <= 0x7e) || (code >= 0xa0 && code <= 0xff) || WIN_ANSI.has(c)
+}
 const safe = (s: string) =>
-  [...s.replace(/\t/g, ' ').replace(/\u00a0/g, ' ')]
+  [
+    ...s
+      .replace(/\r\n?|[\p{Zl}\p{Zp}]/gu, '\n')
+      .replace(/[\t\p{Zs}]/gu, ' ')
+      .normalize('NFC'),
+  ]
     .map((c) => {
-      const code = c.charCodeAt(0)
-      return (code >= 0x20 && code <= 0x7e) || (code >= 0xa0 && code <= 0xff) || WIN_ANSI.has(c)
-        ? c
-        : '?'
+      if (c === '\n') return c
+      if (/[\p{Cc}\p{Cf}\p{M}]/u.test(c)) return ''
+      if (encodable(c)) return c
+      if (/[\p{Pd}−]/u.test(c)) return '-'
+      const plain = c.normalize('NFKD').replace(/\p{M}/gu, '')
+      return plain && [...plain].every(encodable) ? plain : '?'
     })
     .join('')
+
+/** The text in lines that fit `width`, as the PDF prints them. */
+export function lines(text: string, font: PDFFont, size: number, width: number) {
+  const fits = (s: string) => font.widthOfTextAtSize(s, size) <= width
+  const out: string[] = []
+  for (const para of safe(text).split('\n')) {
+    let line = ''
+    for (const word of para.split(/ +/)) {
+      const next = line ? `${line} ${word}` : word
+      if (fits(next) || !line) line = next
+      else {
+        out.push(line)
+        line = word
+      }
+      // A word wider than the line (a link, a file name joined with underscores) breaks anywhere.
+      while (!fits(line)) {
+        let k = 1
+        while (fits(line.slice(0, k + 1))) k++
+        out.push(line.slice(0, k))
+        line = line.slice(k)
+      }
+    }
+    out.push(line)
+  }
+  return out
+}
 
 const MAROON = rgb(0.482, 0.067, 0.075)
 const FOREST = rgb(0, 0.337, 0.247)
@@ -22,7 +61,8 @@ const MUTED = rgb(0.36, 0.353, 0.36)
 
 export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create()
-  pdf.setTitle(safe(`${m.title}: ${m.file}`))
+  pdf.setTitle(`${m.title}: ${m.file}`)
+  pdf.setAuthor('MDC Format Check')
   pdf.setCreator('MDC Format Check')
   pdf.setProducer('MDC Format Check (pdf-lib)')
   const regular = await pdf.embedFont(StandardFonts.Helvetica)
@@ -35,24 +75,8 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   let page = pdf.addPage([W, H])
   let y = H - M
 
-  const lines = (text: string, font: PDFFont, size: number, width: number) => {
-    const out: string[] = []
-    for (const para of safe(text).split('\n')) {
-      let line = ''
-      for (const word of para.split(/ +/)) {
-        const next = line ? `${line} ${word}` : word
-        if (font.widthOfTextAtSize(next, size) <= width || !line) line = next
-        else {
-          out.push(line)
-          line = word
-        }
-      }
-      out.push(line)
-    }
-    return out
-  }
-
-  /** Writes a block of text; `lead` is drawn before the first line (a dash), `indent` holds the rest. */
+  /** Writes a block of text; `lead` is drawn before the first line (a dash), `indent` holds the rest.
+   *  `keep` lines must fit on the page or the block starts a new one (a heading counts its followers). */
   const write = (
     text: string,
     o: {
@@ -74,7 +98,7 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
     const hang = o.hang ?? 0
     const ls = lines(text, font, size, W - 2 * M - indent - hang)
     y -= o.before ?? 0
-    if (y - lineH * Math.min(ls.length, o.keep ?? 2) < M + 24) {
+    if (y - lineH * (o.keep ?? Math.min(ls.length, 2)) < M + 24) {
       page = pdf.addPage([W, H])
       y = H - M
     }

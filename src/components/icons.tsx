@@ -132,17 +132,3 @@ export const ListIcon = (props: IconProps) => (
     <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
   </Icon>
 )
-
-export const StepsIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <rect x="4" y="4" width="16" height="16" rx="2" />
-    <path d="M4 10h16" />
-  </Icon>
-)
-
-export const CopyIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2" />
-    <path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5" />
-  </Icon>
-)

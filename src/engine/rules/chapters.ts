@@ -2,16 +2,17 @@
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
-import { isUpper, list, norm, plural, quote, shown } from '../text.ts'
+import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, doubleSpaced, justified } from './body.ts'
 import {
   auditPdf,
   judge,
   pagesText,
+  pdfFolio,
   sectionStarts,
   summarize,
   wordFolioAt,
-  wordSectionFolio,
+  wordSectionFolios,
   type Problem,
 } from './numbering.ts'
 
@@ -58,7 +59,6 @@ function firstPage(ctx: Ctx, c: Chapter): Set<number> {
 function newPage(ctx: Ctx): Finding {
   const id = 'chapterStart.newPage'
   const { chapters } = ctx.s
-  if (!chapters.length) return na(id, 'No chapters found.')
   const paras = ctx.doc.paras
   const late = chapters.filter(
     (c) => !paras[c.heading].newPage && paras[c.heading].renderedBreak !== 'before',
@@ -89,17 +89,19 @@ function number(ctx: Ctx): Finding {
       'Start each chapter with its number (in title case, Roman numeral, bold, Arial 12 pt.), e.g. “Chapter I”.',
     )
   const issues: string[] = []
+  const wrong: Para[] = []
   for (const c of chapters) {
     const p = paras[c.heading]
     const word = /^chapter/i.exec(norm(p.text))?.[0] ?? 'Chapter'
-    const n = c.number
+    // The label as it should read ("CHAPTER ONE" → "Chapter I").
+    const right = `Chapter ${(c.number ? roman(c.number) : c.numeral).toUpperCase()}`
+    const before = issues.length
     if (!/^[IVXLC]+$/.test(c.numeral))
-      issues.push(
-        `“${c.label}”: chapter numbers must be in Roman numerals (Chapter ${n ? (['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n - 1] ?? '') : 'I'})`,
-      )
+      issues.push(`“${c.label}”: chapter numbers must be in Roman numerals (${right})`)
     if (word !== 'Chapter' || /^CHAPTER$/.test(shown(p).slice(0, 7)))
-      issues.push(`“${c.label}”: write it in title case (Chapter ${c.numeral.toUpperCase()})`)
+      issues.push(`“${c.label}”: write it in title case (${right})`)
     for (const t of typeface(p, `“${c.label}”`)) issues.push(t)
+    if (issues.length > before) wrong.push(p)
   }
   const nums = chapters.map((c) => c.number ?? 0)
   if (nums.some((x, k) => x !== k + 1))
@@ -107,16 +109,18 @@ function number(ctx: Ctx): Finding {
       `Chapter numbers should run I, II, III… in order (found ${chapters.map((c) => c.numeral).join(', ')})`,
     )
   if (!issues.length)
-    return ok(
-      id,
-      `${list(chapters.map(chapterName))}: title case, Roman numerals, bold Arial 12 pt.`,
-    )
+    return ctx.doc.kind === 'doc'
+      ? review(
+          id,
+          `${list(chapters.map(chapterName))}: title case and Roman numerals. Check that they are bold, Arial 12 pt (an old .doc file does not say).`,
+        )
+      : ok(id, `${list(chapters.map(chapterName))}: title case, Roman numerals, bold Arial 12 pt.`)
   return fix(
     id,
     'Write each chapter number in title case with a Roman numeral, bold, Arial 12 pt. (Chapter I).',
     {
       details: issues.slice(0, 8),
-      where: at(paras[chapters[0].heading]),
+      where: (wrong.length ? wrong : [paras[chapters[0].heading]]).slice(0, 5).flatMap(at),
     },
   )
 }
@@ -125,7 +129,6 @@ function title(ctx: Ctx): Finding {
   const id = 'chapterStart.title'
   const { chapters } = ctx.s
   const paras = ctx.doc.paras
-  if (!chapters.length) return na(id, 'No chapters found.')
   const issues: string[] = []
   const where: ReturnType<typeof at> = []
   for (const c of chapters) {
@@ -145,16 +148,23 @@ function title(ctx: Ctx): Finding {
       continue
     }
     const p = paras[c.titlePara]
-    const t = shown(p)
+    // The title after a line break in the label's paragraph, or a paragraph of its own.
+    const t = c.titlePara === c.heading ? shown(p).split('\n').slice(1).join(' ') : shown(p)
+    const before = issues.length
     if (!isUpper(t))
       issues.push(
         `${name}: write the title in upper case (“${quote(t, 40)}”; if this is a subheading, add the chapter title above it)`,
       )
     for (const x of typeface(p, `${name} title`)) issues.push(x)
-    if (issues.length) where.push(...at(p))
+    if (issues.length > before) where.push(...at(p))
   }
   if (!issues.length)
-    return ok(id, 'Every chapter title is on its own line, in upper case, bold Arial 12 pt.')
+    return ctx.doc.kind === 'doc'
+      ? review(
+          id,
+          'Every chapter title is on its own line, in upper case. Check that the titles are bold, Arial 12 pt (an old .doc file does not say).',
+        )
+      : ok(id, 'Every chapter title is on its own line, in upper case, bold Arial 12 pt.')
   return fix(id, 'Write each chapter title below its number, in upper case, bold, Arial 12 pt.', {
     details: issues.slice(0, 8),
     where: where.slice(0, 5),
@@ -164,16 +174,16 @@ function title(ctx: Ctx): Finding {
 function noPageNumber(ctx: Ctx): Finding {
   const id = 'chapterStart.noPageNumber'
   const { doc, s } = ctx
-  if (!s.chapters.length) return na(id, 'No chapters found.')
   const msg = 'Remove the page number on the first page of each chapter.'
   if (doc.kind === 'pdf') {
-    const shown = s.chapters.filter((c) => doc.pages?.[doc.paras[c.heading].page ?? -1]?.footer)
+    const folio = (c: Chapter) => pdfFolio(doc, doc.paras[c.heading].page ?? -1)
+    const shown = s.chapters.filter((c) => folio(c))
     if (!shown.length) return ok(id, 'No page number on the first page of any chapter.')
     return fix(id, msg, {
       details: shown
         .map(
           (c) =>
-            `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${doc.pages![doc.paras[c.heading].page!].footer}”`,
+            `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${folio(c)!.raw}”`,
         )
         .slice(0, 6),
       where: shown.slice(0, 5).map((c) => ({ page: doc.paras[c.heading].page })),
@@ -350,8 +360,15 @@ export function bodyNumbers(
       .slice(Math.max(start, sec.first), Math.min(end, sec.last + 1))
       .find((p) => norm(p.text))
     const where = head ? `the section from “${quote(head.text, 30)}”` : 'a section'
-    for (const p of judge(wordSectionFolio(doc, k), { kind: 'arabic' }))
-      problems.push({ ...p, text: `${where}: ${p.text}` })
+    // Its first page goes unnumbered only when a chapter opens it (or it began before this part).
+    const unnumbered =
+      sec.first < start ||
+      s.chapters.some(
+        (c) => doc.paras[c.heading].section === k && wordFolioAt(doc, c.heading).firstPage,
+      )
+    for (const f of wordSectionFolios(doc, k, unnumbered))
+      for (const p of judge(f.folio, { kind: 'arabic' }))
+        problems.push({ ...p, text: `${f.where}${where}: ${p.text}` })
     const opensChapterOne = ch1 && sec.first <= ch1.i && ch1.i <= sec.last
     if (opensChapterOne && starts[k] !== 1)
       problems.push({
@@ -371,6 +388,25 @@ export function bodyNumbers(
 
 export function chapterRules(ctx: Ctx): Finding[] {
   const { s, doc } = ctx
+  if (!s.chapters.length) {
+    // Without a chapter label the chapters cannot be told apart: nothing here was checked.
+    const why =
+      'No chapter label (Chapter I, Chapter II…) was found, so this was not checked. Label the chapters as in the MDC template, or check this item yourself.'
+    return [
+      number(ctx),
+      hanging(ctx),
+      ...[
+        'chapterStart.newPage',
+        'chapterStart.title',
+        'chapterStart.justified',
+        'chapterStart.spacing',
+        'chapterStart.noPageNumber',
+        'body.justified',
+        'body.spacing',
+        'body.pageNumbers',
+      ].map((id) => review(id, why)),
+    ]
+  }
   const first = new Set<number>()
   for (const c of s.chapters) for (const k of firstPage(ctx, c)) first.add(k)
   const titles = new Set(
@@ -394,12 +430,6 @@ export function chapterRules(ctx: Ctx): Finding[] {
     hanging(ctx),
     justified(ctx, 'body.justified', restParas, 'the chapters'),
     doubleSpaced(ctx, 'body.spacing', restParas, 'the chapters'),
-    bodyNumbers(
-      ctx,
-      'body.pageNumbers',
-      s.chapters[0]?.start ?? doc.paras.length,
-      bodyEnd,
-      'chapter pages',
-    ),
+    bodyNumbers(ctx, 'body.pageNumbers', s.chapters[0].start, bodyEnd, 'chapter pages'),
   ]
 }

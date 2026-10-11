@@ -4,11 +4,11 @@ import { strToU8, zipSync } from 'fflate'
 import { stripControls } from '../engine/controls'
 import type { ReportModel } from './model'
 
+// XML 1.0 also forbids U+FFFE and U+FFFF (Word then calls the whole file corrupted).
 const esc = (s: string) =>
-  stripControls(s).replace(
-    /[&<>"]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!,
-  )
+  stripControls(s)
+    .replace(/\p{Noncharacter_Code_Point}/gu, '')
+    .replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
 interface RunOpts {
   bold?: boolean

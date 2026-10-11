@@ -1,9 +1,9 @@
 // The page: header and notice, the three-stage rail, the stage itself (Prepare, Check, Correct),
-// the questions and the footer. A file dropped anywhere on the page is checked; dropping it never
-// navigates away.
+// the questions and the footer. A file dropped anywhere on the page is checked (a new one replaces a
+// check still running); dropping it never navigates away.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Report } from './engine/report'
-import { decodeImage, loadPdfJs } from './lib/browser'
+import { decodeImage, isStale, loadPdfJs, STALE } from './lib/browser'
 import Checking, { type Progress } from './components/Checking'
 import Correct from './components/Correct'
 import Faq from './components/Faq'
@@ -27,7 +27,6 @@ export default function App() {
   const [view, setView] = useState<View>({ stage: 'prepare' })
   const [dragging, setDragging] = useState(false)
   const run = useRef(0)
-  const checking = view.stage === 'check'
 
   const onFile = useCallback(async (file: File) => {
     const id = ++run.current
@@ -47,9 +46,12 @@ export default function App() {
       if (run.current === id) setView({ stage: 'correct', report })
     } catch (e) {
       if (run.current !== id) return
-      console.error(e)
       const known = e instanceof Error && e.name === 'FileProblem'
-      setView({ stage: 'prepare', error: known ? (e as Error).message : GENERIC })
+      if (!known) console.error(e)
+      setView({
+        stage: 'prepare',
+        error: isStale() ? STALE : known ? (e as Error).message : GENERIC,
+      })
     }
   }, [])
 
@@ -70,10 +72,17 @@ export default function App() {
     return () => clearTimeout(id)
   }, [])
 
-  // Each stage's heading takes focus, so screen readers announce where the visitor now is.
+  // Each new stage's heading takes focus, so screen readers announce where the visitor now is. Not on
+  // the first load: there the skip link and header come first.
+  const shown = useRef(view.stage)
   useEffect(() => {
-    const h = document.querySelector<HTMLElement>('main h1')
-    h?.focus({ preventScroll: true })
+    if (shown.current === view.stage) return
+    shown.current = view.stage
+    // An error takes focus itself, so screen readers read it rather than stop at the heading.
+    const target =
+      document.querySelector<HTMLElement>('main [role=alert]') ??
+      document.querySelector<HTMLElement>('main h1')
+    target?.focus({ preventScroll: true })
   }, [view.stage])
 
   // Drop a file anywhere: the browser would otherwise open it and leave the page.
@@ -103,7 +112,7 @@ export default function App() {
       depth = 0
       setDragging(false)
       const file = e.dataTransfer?.files[0]
-      if (file && !checking) void onFile(file)
+      if (file) void onFile(file)
     }
     window.addEventListener('dragenter', enter)
     window.addEventListener('dragover', over)
@@ -115,24 +124,24 @@ export default function App() {
       window.removeEventListener('dragleave', leave)
       window.removeEventListener('drop', drop)
     }
-  }, [checking, onFile])
+  }, [onFile])
 
-  const stage = view.stage === 'prepare' ? 'prepare' : view.stage
   return (
     <div id="top" className="flex min-h-dvh flex-col">
       <a
         href="#main"
-        className="sr-only z-50 rounded-pill bg-action px-4 py-2 font-semibold text-on-action focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+        className="sr-only z-50 rounded-pill bg-action px-4 py-2 font-semibold text-on-action focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:px-4 focus:py-2"
       >
         Skip to content
       </a>
-      <Header onHome={() => !checking && restart()} />
+      <Header onHome={restart} home={view.stage === 'prepare'} />
       <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-(--gutter) pt-8">
-        <StepRail stage={stage} busy={checking} />
+        <StepRail stage={view.stage} busy={view.stage === 'check'} />
         {view.stage === 'prepare' && view.error && (
           <p
             role="alert"
-            className="mt-8 rounded-card border border-fix/30 bg-fix-soft px-5 py-4 text-sm leading-relaxed text-ink"
+            tabIndex={-1}
+            className="mt-8 rounded-card outline-none border border-fix/30 bg-fix-soft px-5 py-4 text-sm leading-relaxed text-ink"
           >
             <strong className="font-semibold text-fix">That file could not be checked. </strong>
             {view.error}

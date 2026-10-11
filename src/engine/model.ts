@@ -113,6 +113,7 @@ export interface Section {
   start?: number
   format: NumberFormat
   titlePage: boolean
+  /** Where the page number shows: the footers, or the headers for pages numbered at the top. */
   footer: { default?: HeaderFooter; first?: HeaderFooter; even?: HeaderFooter }
   newPage: boolean
 }
@@ -145,4 +146,6 @@ export interface Doc {
   pictures: Picture[]
   /** Things the reader could not do (scanned pages, unsupported parts), said to the student. */
   notes: string[]
+  /** Hardly any text could be read (a scanned PDF): no item can be judged. */
+  unreadable?: boolean
 }

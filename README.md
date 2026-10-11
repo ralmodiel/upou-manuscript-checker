@@ -6,8 +6,8 @@ correct, with the pages to look at, and writes the comments as a Word or PDF fil
 program's review emails.
 
 - **Nothing leaves the device.** The manuscript is read and checked by the page itself, on the
-  visitor's desktop, laptop or phone. There is no backend, no database and no API; the page's
-  security policy blocks every outgoing request (`connect-src 'none'`).
+  visitor's desktop, laptop or phone. There is no backend, no database and no API, and the page's
+  security policy (`connect-src 'none'`) blocks scripts from making network requests.
 - **Every checklist item, every time.** All 38 items in 9 parts, each marked _To correct_,
   _To review_, _Passed_ or _Not applicable_, plus three things reviewers often point out: template
   text left in, blank pages and coloured text.
@@ -77,15 +77,14 @@ they print. Checking both gives the fullest picture, and the site says so.
 
 `scripts/` (fixture builders, a Word automation script that exports each fixture to PDF, .odt,
 .rtf and .doc, a batch verifier, probes and the license audit), `tmp/` (generated fixtures and
-renders) and `data/` (the program's source material, including reviewers' emails that hold
-personal data) are git-ignored and never published. The committed test (`src/engine/check.test.ts`)
+renders) and `data/` (local reference material) are git-ignored and never published. The committed test (`src/engine/check.test.ts`)
 builds its own small Word file.
 
 ## Security and privacy
 
 - Production builds carry a strict Content Security Policy as a `<meta>` tag: scripts, styles,
-  fonts and the pdf.js worker come only from the site, and `connect-src 'none'` means the page
-  cannot send a request anywhere. The theme is applied by `public/theme-boot.js`, so no inline
+  fonts and the pdf.js worker come only from the site, and `connect-src 'none'` stops scripts from
+  making network requests (fetch, XHR, WebSocket, beacons). The theme is applied by `public/theme-boot.js`, so no inline
   script is needed.
 - Files are read in memory and dropped when the page closes. Nothing is stored except the theme
   choice (`localStorage`, key `mdc:theme`). No accounts, cookies or analytics.

@@ -4,6 +4,16 @@ import type { PdfJs } from '../engine/pdf'
 import type { Pixels } from '../engine/model'
 
 let pdfjs: Promise<PdfJs> | undefined
+let stale = false
+
+// Vite reports a lazy part of the site that failed to load: after a new version is published, a page
+// opened before it asks for code files that no longer exist.
+addEventListener('vite:preloadError', () => (stale = true))
+
+/** Whether part of the site failed to load, so the visitor should reload the page. */
+export const isStale = () => stale
+export const STALE =
+  'Part of this page could not be loaded; the site may have been updated since you opened it. Reload the page, then try again.'
 
 /** pdf.js and its worker, loaded on the first PDF (they are the heaviest part of the site). The
  *  legacy build carries the polyfills older phone browsers need. */
@@ -11,10 +21,15 @@ export function loadPdfJs(): Promise<PdfJs> {
   pdfjs ??= Promise.all([
     import('pdfjs-dist/legacy/build/pdf.mjs'),
     import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
-  ]).then(([lib, worker]) => {
-    lib.GlobalWorkerOptions.workerSrc = worker.default
-    return lib
-  })
+  ])
+    .then(([lib, worker]) => {
+      lib.GlobalWorkerOptions.workerSrc = worker.default
+      return lib
+    })
+    .catch((e: unknown) => {
+      pdfjs = undefined // let the next PDF try again
+      throw e
+    })
   return pdfjs
 }
 

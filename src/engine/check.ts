@@ -12,7 +12,10 @@ import { extraRules } from './rules/extra.ts'
 import { figureRules, findCaptions } from './rules/figures.ts'
 import { frontRules, readTitlePage, titleOf } from './rules/front.ts'
 import { prelimRules } from './rules/prelims.ts'
+import { FileProblem } from './problem.ts'
 import { findStructure } from './structure.ts'
+
+export { FileProblem }
 
 export const MAX_BYTES = 100 * 2 ** 20
 
@@ -21,11 +24,6 @@ export interface Options {
   pdfjs: () => Promise<PdfJs>
   env?: Env
   progress?: (step: 'reading' | 'checking', done?: number, total?: number) => void
-}
-
-/** Says why a file cannot be checked, in words for the student. */
-export class FileProblem extends Error {
-  name = 'FileProblem'
 }
 
 const startsWith = (b: Uint8Array, sig: number[], at = 0) => sig.every((x, k) => b[at + k] === x)
@@ -63,7 +61,7 @@ export function sniff(name: string, b: Uint8Array): Kind {
       throw new FileProblem(
         'Apple Pages files cannot be read here. In Pages, choose File > Export To > Word (or PDF), then check that file.',
       )
-    throw new FileProblem('This is not a Word, PDF or OpenDocument file.')
+    throw new FileProblem('This is not a Word, PDF, OpenDocument or Rich Text file.')
   }
   if (ext === 'pages')
     throw new FileProblem(
@@ -102,7 +100,8 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
     throw new FileProblem(
       'This file is over 100 MB. Check a copy without large pictures, or the PDF version.',
     )
-  if (!bytes.length) throw new FileProblem('This file is empty.')
+  if (!bytes.length)
+    throw new FileProblem('This file is empty. Check that you chose the right file.')
   const kind = sniff(name, bytes)
   opts.progress?.('reading')
   let doc: Doc
@@ -121,13 +120,11 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
         'This file type is not supported. Save it as Word (.docx) or PDF, then check that file.',
       )
   } catch (e) {
-    // Readers word their own errors for the student; anything else is a file they could not make sense of.
+    // Readers word their own problems for the student; anything else is a file they could not make sense of.
     if (e instanceof FileProblem) throw e
     console.error(e)
     throw new FileProblem(
-      e instanceof Error && e.constructor === Error
-        ? e.message
-        : 'This file could not be read. It may be damaged or in a form this checker does not know. Save it again as Word (.docx) or PDF and check that.',
+      'This file could not be read. It may be damaged or in a form this checker does not know. Save it again as Word (.docx) or PDF and check that.',
     )
   }
   opts.progress?.('checking')
@@ -159,10 +156,14 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
     kind,
     pages: doc.pages?.length,
     title,
-    findings: ITEMS.map(
-      (item) =>
-        byId.get(item.id) ??
-        review(item.id, 'This check could not run on your file. Check this item yourself.'),
+    findings: ITEMS.map((item) =>
+      doc.unreadable
+        ? review(
+            item.id,
+            'No text could be read from this PDF (it may be scanned pages), so this item was not checked. Check it yourself, or check the Word file.',
+          )
+        : (byId.get(item.id) ??
+          review(item.id, 'This check could not run on your file. Check this item yourself.')),
     ),
     notes: doc.notes,
     ms: Math.round(performance.now() - t0),

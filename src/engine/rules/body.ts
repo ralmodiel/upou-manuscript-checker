@@ -1,7 +1,7 @@
 // Body text: which paragraphs count, and whether they are justified and double-spaced.
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
-import { isHeadingish, TOC_ENTRY } from '../structure.ts'
+import { isHeadingish, isTocLine } from '../structure.ts'
 import { norm, plural, quote } from '../text.ts'
 
 // Double spacing is 2 lines; 24 pt on 12 pt type (1.74) still reads as double, 1.5 lines does not.
@@ -19,7 +19,7 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !p.inTable &&
       !p.inBox &&
       !CAPTION.test(t) &&
-      !TOC_ENTRY.test(p.text) &&
+      !isTocLine(p.text) &&
       !(isHeadingish(p) && t.length <= 120) &&
       !/^key\s?words?\s*:/i.test(t)
     )

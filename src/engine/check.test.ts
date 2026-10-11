@@ -52,6 +52,44 @@ describe('check', () => {
     expect(finding(r, 'extra.placeholders').status).toBe('fix')
   })
 
+  it('reads a chapter title put under its label with a line break', async () => {
+    const r = await check(
+      'thesis.docx',
+      docx(
+        para('A STUDY OF COMMUNITY RADIO', '<w:jc w:val="center"/>'),
+        '<w:p><w:pPr><w:pageBreakBefore/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Chapter I</w:t><w:br/><w:t>INTRODUCTION</w:t></w:r></w:p>',
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Background of the Study</w:t></w:r></w:p>',
+        para('Body text.'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'chapterStart.title').status).toBe('ok')
+  })
+
+  it('does not pass a figure number it cannot place above its figure', async () => {
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Figure 1.</w:t></w:r></w:p>',
+        '<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Sources of Information</w:t></w:r></w:p>',
+        para('Body text.'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'figures.number').status).toBe('review')
+  })
+
+  it('stays fast on long runs of spaces and tabs', async () => {
+    // These once made two patterns backtrack for minutes, freezing the page.
+    const t0 = performance.now()
+    await check(
+      'thesis.docx',
+      thesis(para(`a${' '.repeat(20000)}b`), para(`Name${'\t'.repeat(20000)}`), para('Dean')),
+      opts,
+    )
+    expect(performance.now() - t0).toBeLessThan(2000)
+  })
+
   it('turns away files it cannot read, saying why', async () => {
     expect(() => sniff('notes.txt', strToU8('hello'))).toThrow(FileProblem)
     expect(() => sniff('thesis.gdoc', strToU8('{"url":""}'))).toThrow(/link to Google Docs/)

@@ -13,6 +13,7 @@ import type {
   Run,
   Section,
 } from './model.ts'
+import { FileProblem } from './problem.ts'
 import { attr, kid, kids, parseXml } from './xml.ts'
 
 const MAX_PART = 64 * 2 ** 20
@@ -95,10 +96,13 @@ export function readOdt(data: Uint8Array): Doc {
   try {
     parts = unzipSync(data, { filter: (f) => /\.xml$/i.test(f.name) && f.originalSize <= MAX_PART })
   } catch {
-    throw new Error('This file could not be opened as an OpenDocument file.')
+    throw new FileProblem('This file could not be opened as an OpenDocument file.')
   }
   const content = parts['content.xml'] ? parseXml(strFromU8(parts['content.xml'])) : undefined
-  if (!content) throw new Error('This is not an OpenDocument text file (no content inside).')
+  if (!content)
+    throw new FileProblem(
+      'This is not an OpenDocument text file, or it is damaged. Save it again as .odt, Word (.docx) or PDF and check that.',
+    )
   const stylesDoc = parts['styles.xml'] ? parseXml(strFromU8(parts['styles.xml'])) : undefined
 
   // Font faces: style names to family names.
@@ -390,7 +394,10 @@ export function readOdt(data: Uint8Array): Doc {
   const body = Array.from(content.getElementsByTagName('*')).find(
     (e) => e.localName === 'text' && e.parentElement?.localName === 'body',
   )
-  if (!body) throw new Error('This OpenDocument file has no text body.')
+  if (!body)
+    throw new FileProblem(
+      'This OpenDocument file is empty or damaged. Save it again and check the new copy.',
+    )
   block(body, {})
   if (!paras.length) paras.push({ i: 0, text: '', runs: [] })
   paras[0].newPage = true
@@ -434,14 +441,20 @@ export function readOdt(data: Uint8Array): Doc {
     const fmt = attr(kid(layout, 'page-layout-properties'), 'num-format') ?? '1'
     const next = attr(m, 'next-style-name')
     const nextMaster = next && next !== master ? masters.get(next) : undefined
-    const first = kid(m, 'footer-first')
+    const first = kid(m, 'footer-first') ?? kid(m, 'header-first')
+    // The footer, or the header when the page number is at the top of the page (APA style).
+    const hf = (el: Element | undefined, kind: string) => {
+      const foot = footerOf(kid(el, `footer${kind}`))
+      const head = footerOf(kid(el, `header${kind}`))
+      return !foot?.text.includes('{PAGE}') && head?.text.includes('{PAGE}') ? head : foot
+    }
     return {
       format: FORMATS[fmt] ?? 'decimal',
       titlePage: !!first || !!nextMaster,
       footer: {
-        default: footerOf(nextMaster ? kid(nextMaster, 'footer') : kid(m, 'footer')),
-        first: first ? footerOf(first) : nextMaster ? footerOf(kid(m, 'footer')) : undefined,
-        even: footerOf(kid(m, 'footer-left')),
+        default: hf(nextMaster ?? m, ''),
+        first: first ? hf(m, '-first') : nextMaster ? hf(m, '') : undefined,
+        even: hf(m, '-left'),
       },
     }
   }

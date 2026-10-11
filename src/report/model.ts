@@ -2,6 +2,7 @@
 // with dash items (each with the pages or text to look at), then what is already in order, the
 // closing reminder, and the notices. The Word and PDF writers both render this.
 import { CHECKLIST } from '../engine/checklist'
+import { stripControls } from '../engine/controls'
 import type { Finding, Report, Where } from '../engine/report'
 import { NOTICE, PRIVATE_SHORT, VERIFY } from '../notice'
 
@@ -31,15 +32,16 @@ const KIND: Record<Report['kind'], string> = {
   rtf: 'Rich Text document',
 }
 
+/** The places the results page shows for a finding (the first five), as text. */
 export const whereText = (where: Where[] | undefined) =>
   (where ?? [])
-    .slice(0, 4)
+    .filter((w) => w.page !== undefined || w.quote)
+    .slice(0, 5)
     .map((w) =>
       [w.page !== undefined ? `p. ${w.page + 1}` : '', w.quote ? `“${w.quote}”` : '']
         .filter(Boolean)
         .join(' '),
     )
-    .filter(Boolean)
     .join('; ')
 
 export function reportModel(r: Report, today = new Date()): ReportModel {
@@ -48,18 +50,26 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
   const core = CHECKLIST.filter((p) => !p.extra).flatMap((p) => p.items.map((i) => byId.get(i.id)!))
   const n = (s: Finding['status']) => core.filter((f) => f.status === s).length
   const applicable = core.length - n('na')
+  const extra = CHECKLIST.filter((p) => p.extra)
+    .flatMap((p) => p.items)
+    .filter((i) => byId.get(i.id)?.status === 'fix').length
 
   const parts: ReportModel['parts'] = []
   for (const part of CHECKLIST) {
     const items = part.items
-      .map((i) => byId.get(i.id)!)
-      .filter((f) => f.status === 'fix' || f.status === 'review')
-      .map((f) => ({
-        check: f.status === 'review',
-        text: f.message,
-        details: f.details ?? [],
-        where: whereText(f.where),
-      }))
+      .map((i) => ({ i, f: byId.get(i.id)! }))
+      .filter(({ f }) => f.status === 'fix' || f.status === 'review')
+      .map(({ i, f }) => {
+        const where = whereText(f.where)
+        return {
+          // "Check:" before a message that already says "Check …" would only repeat it.
+          check: f.status === 'review' && !/^check\b/i.test(f.message),
+          text: f.message,
+          // The pages a message calls "linked here", as the results page links them.
+          details: [...(f.details ?? []), ...(i.links ?? []).map((l) => `${l.label}: ${l.href}`)],
+          where: f.message.includes(where) ? '' : where,
+        }
+      })
     if (items.length) parts.push({ n: parts.length + 1, name: part.name, items })
   }
   const passed = CHECKLIST.filter((p) => !p.extra)
@@ -73,7 +83,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     title: 'Formatting comments',
     file: r.fileName,
     meta: `${KIND[r.kind]}${r.pages ? ` · ${r.pages} pages` : ''} · checked ${date} against the MDC Format Checklist`,
-    summary: `${n('fix')} to correct · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed`,
+    summary: `${n('fix')} to correct · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed${extra ? ` · also ${extra} more noticed` : ''}`,
     intro: parts.length
       ? 'Please revise the manuscript to reflect the following:'
       : 'No corrections were found. Please still look over the manuscript before sending it, since an automated check can miss things.',
@@ -81,16 +91,28 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     passed,
     closing: [
       'Please make sure to update the Table of Contents accordingly.',
-      'Items marked “Check:” could not be confirmed from the file; please look at them yourself.',
+      ...(parts.some((p) => p.items.some((i) => i.check))
+        ? [
+            'Items marked “Check:” could not be confirmed from the file; please look at them yourself.',
+          ]
+        : []),
       ...r.notes,
     ],
     notices: [
       VERIFY,
-      `${NOTICE} ${PRIVATE_SHORT} This report was generated on the same computer by MDC Format Check.`,
+      `${NOTICE} ${PRIVATE_SHORT} This report was generated on the same device by MDC Format Check.`,
     ],
   }
 }
 
-/** "thesis.docx" → "thesis – formatting comments.ext" */
-export const reportName = (fileName: string, ext: string) =>
-  `${fileName.replace(/\.[^.]+$/, '')} – formatting comments.${ext}`
+/** "thesis.docx" → "thesis – formatting comments.ext", short enough for any file system (255 bytes). */
+export function reportName(fileName: string, ext: string) {
+  // The manuscript's own name, minus what could mislead in a saved file's name: control and
+  // text-direction characters, and path separators.
+  let stem = stripControls(fileName.replace(/\.[^.]+$/, ''), '').replace(
+    /[\\/\u202a-\u202e\u2066-\u2069]/g,
+    '',
+  )
+  while (new TextEncoder().encode(stem).length > 200) stem = [...stem].slice(0, -1).join('')
+  return `${stem.trim() || 'manuscript'} – formatting comments.${ext}`
+}

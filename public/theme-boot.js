@@ -1,5 +1,5 @@
-// The stored theme (or the system's) on <html data-theme> before the first paint, as
-// bootstrapTheme in src/lib/theme.ts does once the app runs; the CSP allows no inline script.
+// The stored theme (or the system's) on <html data-theme> before the first paint, as the app's
+// useTheme (src/lib/theme.ts) reads it once running; the CSP allows no inline script.
 ;(function () {
   var theme
   try {

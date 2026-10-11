@@ -1,5 +1,7 @@
 // What the program's reviewers also point out: template text left in, blank pages, coloured text.
+import type { Para } from '../model.ts'
 import { fix, ok, review, type Ctx, type Finding } from '../report.ts'
+import { nextText } from '../structure.ts'
 import { list, norm, quote } from '../text.ts'
 import { pagesText } from './numbering.ts'
 
@@ -22,6 +24,16 @@ function placeholders(ctx: Ctx): Finding {
       if (re.test(re.source.includes('\\t') ? p.text : t) && !hits.has(name))
         hits.set(name, { page: p.page, quote: quote(p.text, 40) })
   }
+  // The date under the Dean's name (the title page's date has a check of its own).
+  const acc = ctx.s.acceptance
+  const day =
+    acc &&
+    ctx.doc.paras.slice(acc.start, acc.end).find((p) => /^day\s+month\s+year$/i.test(norm(p.text)))
+  if (day)
+    hits.set('“Day Month Year” (the date) on the Acceptance Page', {
+      page: day.page,
+      quote: quote(day.text, 40),
+    })
   if (!hits.size) return ok(id, 'No template placeholder text left.')
   return fix(id, 'Replace the template’s placeholder text with your own.', {
     details: [...hits.keys()].map((k) => `Still there: ${k}`),
@@ -39,25 +51,43 @@ function blankPages(ctx: Ctx): Finding {
     if (!blank.length) return ok(id, 'No blank pages.')
     return fix(
       id,
-      `Remove the blank ${blank.length === 1 ? 'page' : 'pages'} (${pagesText(blank)}).`,
+      // The places list up to five pages; the message names them all only when there are more.
+      `Remove the blank ${blank.length === 1 ? 'page' : 'pages'}${blank.length > 5 ? ` (${pagesText(blank)})` : ''}.`,
       { where: blank.slice(0, 5).map((page) => ({ page })) },
     )
   }
   // Word: two page starts with nothing between them.
+  const empty = (p: Para) => !norm(p.text) && !p.image && !p.shapes && !p.inTable && !p.inBox
   const starts = doc.paras.filter((p) => p.newPage).map((p) => p.i)
   const blank: string[] = []
   for (let k = 0; k + 1 < starts.length; k++) {
     const between = doc.paras.slice(starts[k], starts[k + 1])
-    if (!between.some((p) => norm(p.text) || p.image || p.shapes)) {
+    if (between.every(empty)) {
       const next = doc.paras[starts[k + 1]]
       blank.push(`before “${quote(next.text, 40)}”`)
     }
   }
-  if (!blank.length) return ok(id, 'No blank pages from page breaks.')
-  return fix(
-    id,
-    `Remove the blank ${blank.length === 1 ? 'page' : 'pages'} (${list(blank.slice(0, 4))}).`,
-  )
+  if (blank.length)
+    return fix(
+      id,
+      `Remove the blank ${blank.length === 1 ? 'page' : 'pages'} (${list(blank.slice(0, 4))}).`,
+    )
+  // Empty lines before a page break spill onto a page of their own when the page above is nearly
+  // full (the template's blank page). A Word file does not record where its pages break.
+  const padded: string[] = []
+  for (const i of [...starts, doc.paras.length]) {
+    let n = 0
+    while (i - n > 0 && empty(doc.paras[i - n - 1])) n++
+    if (n < 5) continue
+    const next = nextText(doc.paras, i)
+    padded.push(next === undefined ? 'the end' : `“${quote(doc.paras[next].text, 30)}”`)
+  }
+  if (padded.length)
+    return review(
+      id,
+      `Empty lines before ${list(padded.slice(0, 4))} can spill onto a blank page. Check the PDF version, and start new pages with a page break (Ctrl+Enter) instead of empty lines.`,
+    )
+  return ok(id, 'No blank pages from page breaks.')
 }
 
 /** Clearly coloured (not black, dark grey or a link): red quotes, pink bars, light-grey text. */

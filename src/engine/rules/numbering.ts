@@ -1,7 +1,7 @@
 // Page numbers ("folios"): the shortened title, an ellipsis, then i, ii... before Chapter I and
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
-import type { Doc, NumberFormat, Section } from '../model.ts'
+import type { Doc, HeaderFooter, NumberFormat, Section } from '../model.ts'
 import { fromRoman, norm, roman } from '../text.ts'
 
 export interface Folio {
@@ -135,7 +135,12 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
 
 // ---- PDF ----
 
-export const pdfFolio = (doc: Doc, page: number) => parseFolio(doc.pages?.[page]?.footer ?? '')
+/** The page's footer, or a page number printed at the top of the page instead. */
+export function pdfFolio(doc: Doc, page: number): Folio | undefined {
+  const pg = doc.pages?.[page]
+  const top = parseFolio(pg?.header ?? '')
+  return parseFolio(pg?.footer ?? '') ?? (top?.value !== undefined ? top : undefined)
+}
 
 /** Checks a run of PDF pages; `want` gives what each page should show. */
 export function auditPdf(doc: Doc, pages: number[], want: (p: number) => Want): Problem[] {
@@ -184,17 +189,32 @@ export function wordFolioAt(
   // Text before `i` in its section means the page is not the section's first (unless a break says so).
   const firstPage =
     firstPagePara(doc, sec) === i || !doc.paras.slice(sec.first, i).some((p) => norm(p.text))
-  const hf = firstPage && sec.titlePage ? sec.footer.first : sec.footer.default
   const value = firstPage ? sectionStarts(doc)[k] : undefined
+  const hf =
+    firstPage && sec.titlePage
+      ? sec.footer.first
+      : doc.evenOdd && value !== undefined && value % 2 === 0
+        ? sec.footer.even
+        : sec.footer.default
   const format = hf?.format ?? sec.format
   return { folio: hf ? wordFolio(hf.text, format, value) : undefined, section: k, firstPage }
 }
 
-/** The footer most pages of section `k` show (all but a different first page). */
-export function wordSectionFolio(doc: Doc, k: number): Folio | undefined {
+/** The footers the pages of section `k` show: most pages, its first page when that one differs
+ *  (unless it is meant to have no number, as a chapter's first page) and its even pages when odd
+ *  and even pages differ. `where` names the pages for messages. */
+export function wordSectionFolios(
+  doc: Doc,
+  k: number,
+  firstUnnumbered: boolean,
+): { where: string; folio?: Folio }[] {
   const sec = doc.sections![k]
-  const hf = sec.footer.default
-  return hf ? wordFolio(hf.text, hf.format ?? sec.format) : undefined
+  const read = (hf?: HeaderFooter) => (hf ? wordFolio(hf.text, hf.format ?? sec.format) : undefined)
+  const out = [{ where: '', folio: read(sec.footer.default) }]
+  if (sec.titlePage && !firstUnnumbered)
+    out.push({ where: 'the first page of ', folio: read(sec.footer.first) })
+  if (doc.evenOdd) out.push({ where: 'the even pages of ', folio: read(sec.footer.even) })
+  return out
 }
 
 const LABEL: Record<Problem['type'], string> = {

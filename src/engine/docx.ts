@@ -13,6 +13,7 @@ import type {
   Run,
   Section,
 } from './model.ts'
+import { FileProblem } from './problem.ts'
 import { all, attr, kid, kids, num, parseXml, toggle } from './xml.ts'
 
 // Largest part read (uncompressed): far above any real document.xml, far below a zip bomb.
@@ -131,7 +132,7 @@ export function readDocx(data: Uint8Array): Doc {
       filter: (f) => /\.(xml|rels)$/i.test(f.name) && f.originalSize <= MAX_PART,
     })
   } catch {
-    throw new Error('This file could not be opened as a Word document.')
+    throw new FileProblem('This file could not be opened as a Word document.')
   }
   const xml = (path: string) => {
     const bytes = parts[path]
@@ -144,7 +145,10 @@ export function readDocx(data: Uint8Array): Doc {
     [...pkgRels.values()].find((r) => r.type.endsWith('/officeDocument'))?.target ??
     'word/document.xml'
   const main = xml(mainPath)
-  if (!main) throw new Error('This file is not a Word document (no document part inside).')
+  if (!main)
+    throw new FileProblem(
+      'This file is not a Word document, or it is damaged. Save it again as Word (.docx) or PDF and check that.',
+    )
   const dir = mainPath.slice(0, mainPath.lastIndexOf('/') + 1)
   const rels = relsOf(xml(`${dir}_rels/${mainPath.slice(dir.length)}.rels`), dir)
 
@@ -486,11 +490,14 @@ export function readDocx(data: Uint8Array): Doc {
   }
 
   const body = all(main, 'body')[0]
-  if (!body) throw new Error('This Word document has no body.')
+  if (!body)
+    throw new FileProblem(
+      'This Word document is empty or damaged. Open it in Word, save it again, and check the new copy.',
+    )
   block(body, undefined)
   sectionEnds.push({ para: paras.length - 1, sectPr: kid(body, 'sectPr') })
 
-  // Sections: each inherits the footers it does not define from the one before.
+  // Sections: each inherits the headers and footers it does not define from the one before.
   const footerCache = new Map<string, HeaderFooter>()
   const footer = (rid: string | undefined) => {
     const target = rid ? rels.get(rid)?.target : undefined
@@ -505,15 +512,27 @@ export function readDocx(data: Uint8Array): Doc {
   const sections: Section[] = []
   let first = 0
   let inherited: Section['footer'] = {}
+  let headers: Section['footer'] = {}
   for (const { para: last, sectPr } of sectionEnds) {
     if (last < first) continue
     const own: Section['footer'] = {}
-    for (const ref of kids(sectPr, 'footerReference')) {
-      const type = attr(ref, 'type') ?? 'default'
-      if (type === 'default' || type === 'first' || type === 'even')
-        own[type] = footer(attr(ref, 'id'))
-    }
+    const ownHeaders: Section['footer'] = {}
+    for (const [name, into] of [
+      ['footerReference', own],
+      ['headerReference', ownHeaders],
+    ] as const)
+      for (const ref of kids(sectPr, name)) {
+        const type = attr(ref, 'type') ?? 'default'
+        if (type === 'default' || type === 'first' || type === 'even')
+          into[type] = footer(attr(ref, 'id'))
+      }
     inherited = { ...inherited, ...own }
+    headers = { ...headers, ...ownHeaders }
+    // A page number at the top of the page (APA style) is the page's number all the same.
+    const shown = { ...inherited }
+    for (const t of ['default', 'first', 'even'] as const)
+      if (!shown[t]?.text.includes('{PAGE}') && headers[t]?.text.includes('{PAGE}'))
+        shown[t] = headers[t]
     const pg = kid(sectPr, 'pgNumType')
     const type = attr(kid(sectPr, 'type'), 'val') ?? 'nextPage'
     const sec: Section = {
@@ -521,7 +540,7 @@ export function readDocx(data: Uint8Array): Doc {
       last,
       format: FORMATS[attr(pg, 'fmt') ?? 'decimal'] ?? 'decimal',
       titlePage: !!toggle(kid(sectPr, 'titlePg')),
-      footer: inherited,
+      footer: shown,
       newPage: sections.length === 0 || !/^(continuous|nextColumn)$/.test(type),
     }
     const start = num(attr(pg, 'start'))

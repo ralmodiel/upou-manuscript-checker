@@ -1,7 +1,7 @@
 // Figures and tables: the number in bold above, the title in italics right below, APA style.
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
-import { bolded, TOC_ENTRY } from '../structure.ts'
+import { bolded, isTocLine } from '../structure.ts'
 import { list, norm, quote } from '../text.ts'
 
 export interface Caption {
@@ -16,6 +16,8 @@ export interface Caption {
 }
 
 const LABEL = /^(figure|table)\s+(\d+(?:[.-]\d+)*|[A-Z]-?\d+)\s*[.:–—-]?\s*(.*)$/i
+/** "Table 1 (continued)": a long table carried over to the next page, not a caption of its own. */
+const CONTINUED = /^(figure|table)\s+\S+\s*\(?cont(inued|['’]d|\.)?\)?\.?$/i
 const italic = (p: Para) => {
   if (p.plain) return true
   let all = 0
@@ -45,15 +47,25 @@ const labelBold = (p: Para) => {
 /** Where body content lives: the chapters and appendices (or all after the front matter). */
 function bodyRange(ctx: Ctx): [number, number] {
   const { s, doc } = ctx
-  const start = s.chapters[0]?.start ?? s.prelims.at(-1)?.end ?? s.title.end
+  // Without chapter labels the last preliminary page runs on into the body: start after its heading.
+  const last = s.prelims.at(-1)
+  const start = s.chapters[0]?.start ?? (last ? last.heading + 1 : s.title.end)
   return [start, doc.paras.length]
 }
 
 function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Caption['object'] {
   const { doc } = ctx
   const is = (q: Para | undefined) => !!q && (kind === 'table' ? !!q.inTable : !!q.image)
+  const from = (title ?? p).i + 1
   if (doc.kind === 'pdf') {
-    if (kind === 'table') return 'unknown'
+    // A table's rows read as lines with wide gaps between the cells (tabs); a table pasted as a
+    // picture is found like a figure.
+    if (kind === 'table') {
+      const row = (q: Para) => q.text.includes('\t')
+      if (doc.paras.slice(from, from + 3).some(row)) return 'after'
+      if (doc.paras.slice(Math.max(0, p.i - 3), p.i).some((q) => q.page === p.page && row(q)))
+        return 'before'
+    }
     const page = doc.pages?.[p.page ?? -1]
     const line = p.lines?.[0]
     if (!page || !line) return 'unknown'
@@ -64,7 +76,6 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
     const nextTop = last && (doc.pages?.[(p.page ?? 0) + 1]?.images.length ?? 0) > 0
     return below || nextTop ? 'after' : above ? 'before' : 'unknown'
   }
-  const from = (title ?? p).i + 1
   for (let k = from; k < Math.min(doc.paras.length, from + 4); k++) {
     if (is(doc.paras[k])) return 'after'
     if (norm(doc.paras[k].text) && !doc.paras[k].inTable && !doc.paras[k].image) break
@@ -84,10 +95,10 @@ export function findCaptions(ctx: Ctx): Caption[] {
     const p = doc.paras[k]
     const t = norm(p.text)
     const m = LABEL.exec(t)
-    if (!m || p.inTable || TOC_ENTRY.test(p.text) || t.length > 250) continue
+    if (!m || p.inTable || isTocLine(p.text) || t.length > 250) continue
     const rest = m[3]
-    // "Table 1 shows that…" is a sentence about the table, not its caption.
-    if (rest && /^\p{Ll}/u.test(rest) && !bolded(p)) continue
+    // "Table 1 shows that…" is a sentence about the table, not its caption; nor is a continued table's.
+    if ((rest && /^\p{Ll}/u.test(rest) && !bolded(p)) || CONTINUED.test(t)) continue
     const kind = m[1].toLowerCase() as Caption['kind']
     let title: Para | undefined
     if (!rest) {
@@ -122,7 +133,8 @@ function unlabelled(ctx: Ctx, caps: Caption[]): string[] {
   const [start, end] = bodyRange(ctx)
   const out: string[] = []
   const near = (i: number) =>
-    caps.some((c) => Math.abs(c.para.i - i) <= 4 || (c.title && Math.abs(c.title.i - i) <= 3))
+    caps.some((c) => Math.abs(c.para.i - i) <= 4 || (c.title && Math.abs(c.title.i - i) <= 3)) ||
+    doc.paras.slice(Math.max(0, i - 4), i).some((q) => CONTINUED.test(norm(q.text)))
   const seen = new Set<number>()
   for (let k = start; k < end; k++) {
     const p = doc.paras[k]
@@ -165,6 +177,10 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     )
   if (notBold.length) numberIssues.push(`Not in bold: ${list(notBold.slice(0, 6).map(name))}.`)
   if (lonely.length) numberIssues.push(`No number at all: ${list(lonely.slice(0, 3))}.`)
+  // An old .doc is read for its text only: bold and italics are for the student to check.
+  const plain = ctx.doc.kind === 'doc'
+  // A table or chart the file does not place (a PDF's drawn chart, Word shapes): not "above".
+  const unsure = caps.filter((c) => c.object === 'unknown')
   const number = numberIssues.length
     ? fix(
         'figures.number',
@@ -174,10 +190,21 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           where: [...below, ...notBold].slice(0, 5).map(at),
         },
       )
-    : ok(
-        'figures.number',
-        `All ${caps.length} figure/table numbers are bold and above their figure or table.`,
-      )
+    : unsure.length
+      ? review(
+          'figures.number',
+          `Check that ${list(unsure.slice(0, 6).map(name))} ${unsure.length === 1 ? 'has its' : 'have their'} number above the figure/table: this file does not show where ${unsure.length === 1 ? 'it stands' : 'they stand'}.`,
+          { where: unsure.slice(0, 5).map(at) },
+        )
+      : plain
+        ? review(
+            'figures.number',
+            `All ${caps.length} figure/table numbers are above their figure or table. Check that they are bold (an old .doc file does not say).`,
+          )
+        : ok(
+            'figures.number',
+            `All ${caps.length} figure/table numbers are bold and above their figure or table.`,
+          )
 
   const sameLine = caps.filter((c) => c.inline)
   const noTitle = caps.filter((c) => !c.inline && !c.title)
@@ -200,7 +227,12 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           where: [...sameLine, ...notItalic, ...noTitle].slice(0, 5).map(at),
         },
       )
-    : ok('figures.title', 'Every figure/table title is in italics, right below its number.')
+    : plain
+      ? review(
+          'figures.title',
+          'Every figure/table title is right below its number. Check that the titles are in italics (an old .doc file does not say).',
+        )
+      : ok('figures.title', 'Every figure/table title is in italics, right below its number.')
 
   // Numbering: 1, 2, 3… for tables and for figures, each in order.
   const order: string[] = []
@@ -214,9 +246,13 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       )
   }
   const apaStatus = worst([number.status, title.status, order.length ? 'fix' : 'ok'])
+  // The rest of the APA setup (title case, notes, table lines) is not read, and reviewers ask for it.
   const apa =
     apaStatus === 'ok'
-      ? ok('figures.apa', 'Numbers, titles and numbering follow the APA setup.')
+      ? review(
+          'figures.apa',
+          'Numbers, titles and numbering follow the APA setup. Check the rest (titles in title case, notes, table lines) against the APA pages linked here.',
+        )
       : {
           ...(apaStatus === 'fix' && order.length ? fix : review)(
             'figures.apa',

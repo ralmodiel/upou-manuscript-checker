@@ -5,6 +5,7 @@
 import type * as PdfJsModule from 'pdfjs-dist'
 import type { Box, Doc, Line, Page, Para, Picture, Pixels, Run } from './model.ts'
 import { shrink } from './images.ts'
+import { FileProblem } from './problem.ts'
 
 export type PdfJs = typeof PdfJsModule
 type Matrix = number[]
@@ -93,7 +94,7 @@ export async function readPdf(
     pdf = await task.promise
   } catch (e) {
     const name = (e as { name?: string }).name
-    throw new Error(
+    throw new FileProblem(
       name === 'PasswordException'
         ? 'This PDF is password-protected. Save a copy without a password and check that.'
         : 'This file could not be opened as a PDF.',
@@ -280,11 +281,12 @@ export async function readPdf(
   const paras = toParas(allLines, pages)
   const notes: string[] = []
   const chars = paras.reduce((s, p) => s + p.text.length, 0)
-  if (chars < 200 * pages.length * 0.1)
+  const unreadable = chars < 200 * pages.length * 0.1
+  if (unreadable)
     notes.push(
       'This PDF has little or no readable text (it may be scanned pages), so most checks cannot run. Check the Word file, or a PDF saved from Word or Google Docs.',
     )
-  return { kind: 'pdf', paras, pages, pictures, notes }
+  return { kind: 'pdf', paras, pages, pictures, notes, unreadable }
 }
 
 /** Groups spans that share a baseline into lines, left to right. */

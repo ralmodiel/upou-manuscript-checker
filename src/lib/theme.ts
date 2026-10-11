@@ -17,7 +17,9 @@ function stored(): ResolvedTheme | undefined {
   }
 }
 const system = (): ResolvedTheme => (window.matchMedia(DARK).matches ? 'dark' : 'light')
-const current = (): ResolvedTheme => stored() ?? system()
+// The switch's choice for this visit, for when storage is blocked and cannot hold it.
+let chosen: ResolvedTheme | undefined
+const current = (): ResolvedTheme => stored() ?? chosen ?? system()
 
 function apply(theme: ResolvedTheme) {
   const root = document.documentElement
@@ -57,13 +59,13 @@ export function useTheme() {
   const theme = useSyncExternalStore(subscribe, current, () => 'light' as const)
   useEffect(() => apply(theme), [theme])
   const toggle = useCallback(() => {
-    const next: ResolvedTheme = current() === 'dark' ? 'light' : 'dark'
+    chosen = current() === 'dark' ? 'light' : 'dark'
     try {
-      localStorage.setItem(KEY, JSON.stringify(next))
+      localStorage.setItem(KEY, JSON.stringify(chosen))
     } catch {
-      // Private mode: the switch still applies for this visit.
+      // Storage blocked: `chosen` keeps the switch for this visit.
     }
-    apply(next)
+    // The effect above applies it, once.
     listeners.forEach((l) => l())
   }, [])
   return { theme, toggle }

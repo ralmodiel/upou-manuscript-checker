@@ -4,9 +4,19 @@
 export type Stage = 'prepare' | 'check' | 'correct'
 
 const STEPS: { id: Stage; name: string; hint: string; fill: string }[] = [
-  { id: 'prepare', name: 'Prepare', hint: 'Choose your manuscript', fill: 'bg-band-maroon' },
+  {
+    id: 'prepare',
+    name: 'Prepare',
+    hint: 'Choose your manuscript',
+    fill: 'bg-band-maroon dark:bg-fix',
+  },
   { id: 'check', name: 'Check', hint: 'Read on this device', fill: 'bg-band-gold' },
-  { id: 'correct', name: 'Correct', hint: 'Fix what is listed', fill: 'bg-band-forest' },
+  {
+    id: 'correct',
+    name: 'Correct',
+    hint: 'Correct what is listed',
+    fill: 'bg-band-forest dark:bg-ok',
+  },
 ]
 
 export default function StepRail({ stage, busy }: { stage: Stage; busy: boolean }) {
@@ -24,7 +34,7 @@ export default function StepRail({ stage, busy }: { stage: Stage; busy: boolean 
                   className={`absolute inset-0 origin-left rounded-pill transition-transform duration-500 ease-out-soft ${s.fill} ${reached && !sweeping ? 'scale-x-100' : 'scale-x-0'}`}
                 />
                 {sweeping && (
-                  <div className="absolute inset-y-0 left-0 w-2/5 rounded-pill bg-band-gold motion-safe:animate-sweep motion-reduce:w-full" />
+                  <div className="absolute inset-y-0 left-0 w-2/5 rounded-pill bg-band-gold motion-safe:animate-sweep motion-reduce:w-full motion-reduce:opacity-40" />
                 )}
               </div>
               <p className="mt-2.5 flex items-baseline gap-2">

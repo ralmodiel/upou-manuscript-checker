@@ -4,6 +4,7 @@
 // that are not read here, so paragraphs are marked `plain` and formatting items ask for a .docx or PDF.
 import * as CFB from 'cfb'
 import { stripControls } from './controls.ts'
+import { FileProblem } from './problem.ts'
 import type { Doc, HeaderFooter, NumberFormat, Para, Picture, Section } from './model.ts'
 
 const NFC: Record<number, NumberFormat> = {
@@ -19,7 +20,7 @@ export function readDoc(data: Uint8Array): Doc {
   try {
     cfb = CFB.read(data, { type: 'array' })
   } catch {
-    throw new Error('This file could not be opened as a Word 97-2003 (.doc) document.')
+    throw new FileProblem('This file could not be opened as a Word 97-2003 (.doc) document.')
   }
   const stream = (name: string) => {
     const e = CFB.find(cfb, name)
@@ -28,20 +29,24 @@ export function readDoc(data: Uint8Array): Doc {
   const wd = stream('WordDocument')
   if (!wd) {
     if (CFB.find(cfb, 'EncryptedPackage'))
-      throw new Error(
+      throw new FileProblem(
         'This file is password-protected. Save a copy without a password and check that.',
       )
-    throw new Error('This is not a Word document.')
+    throw new FileProblem('This is not a Word document.')
   }
   const dv = new DataView(wd.buffer, wd.byteOffset, wd.byteLength)
-  if (dv.getUint16(0, true) !== 0xa5ec) throw new Error('This is not a Word 97-2003 document.')
+  if (dv.getUint16(0, true) !== 0xa5ec)
+    throw new FileProblem('This is not a Word 97-2003 document.')
   const flags = dv.getUint16(0x0a, true)
   if (flags & 0x0100)
-    throw new Error(
+    throw new FileProblem(
       'This file is password-protected. Save a copy without a password and check that.',
     )
   const table = stream(flags & 0x0200 ? '1Table' : '0Table')
-  if (!table) throw new Error('This Word document is damaged (no table stream).')
+  if (!table)
+    throw new FileProblem(
+      'This Word document looks damaged. Open it in Word, save it as Word (.docx) or PDF, and check that.',
+    )
   const tv = new DataView(table.buffer, table.byteOffset, table.byteLength)
 
   const ccpText = dv.getInt32(0x4c, true)
@@ -251,7 +256,7 @@ export function readDoc(data: Uint8Array): Doc {
     sections: sections.length ? sections : undefined,
     pictures,
     notes: [
-      'This is an old Word file (.doc): its text, sections and page numbers were checked, but not its fonts, bold or italic text, alignment or line spacing. Save it as a Word Document (.docx), or as PDF, and check that file for the full review.',
+      'This is an old Word file (.doc): its text, sections and page numbers were checked, but not its fonts, bold or italic text, alignment or line spacing. Save it as a Word Document (.docx), or as PDF, and check that file for the full check.',
     ],
   }
 }

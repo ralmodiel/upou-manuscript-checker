@@ -14,8 +14,8 @@ scripts/
 # Local working data (generated fixtures, renders, reports) is never committed
 tmp/
 
-# Source material from the MDC program: student emails hold personal data. The template and the
-# checklist the site offers are copies in public/downloads/.
+# Local reference material, never committed. The template and the checklist the site offers are
+# copies in public/downloads/.
 data/
 
 # Claude Code session state (locks, local settings) stays on this machine

@@ -23,7 +23,8 @@ export interface Chapter extends Heading {
   number?: number
   /** Title written on the label's own line ("Chapter I: Introduction"). */
   inlineTitle?: string
-  /** The paragraph that holds the chapter title, when it has its own line. */
+  /** The paragraph that holds the chapter title, when it has its own line: the label's own
+   *  paragraph when the title follows a line break in it ("Chapter I", Shift+Enter, "INTRODUCTION"). */
   titlePara?: number
 }
 export interface Appendix extends Heading {
@@ -66,7 +67,11 @@ const PRELIMS: [PrelimKey, RegExp][] = [
 ]
 
 /** A table of contents line: a title, then a page number after a tab, dot leaders or spaces. */
-export const TOC_ENTRY = /(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+)\s*$/i
+const TOC_ENTRY = /(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+)\s*$/i
+/** A table-of-contents line: text, then a leader or gap, then a page number at the end. Only the
+ *  tail is tested: the pattern is anchored there, and a long run of spaces would otherwise make it
+ *  backtrack for minutes. */
+export const isTocLine = (text: string) => TOC_ENTRY.test(text.slice(-256))
 
 const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 const CHAPTER =
@@ -92,7 +97,7 @@ export const headingText = (p: Para) =>
 
 export function isHeadingish(p: Para): boolean {
   const t = norm(p.text)
-  if (!t || t.length > 120 || TOC_ENTRY.test(p.text) || p.inTable) return false
+  if (!t || t.length > 120 || isTocLine(p.text) || p.inTable) return false
   // Without formatting to go by, a short line that is not a sentence may be a heading.
   if (p.plain) return t.length <= 60 && !/[.,;]$/.test(t)
   return bolded(p) || p.align === 'center' || !!p.newPage || /heading|title/i.test(p.style ?? '')
@@ -163,7 +168,7 @@ export function findStructure(doc: Doc): Structure {
         continue
       }
     }
-    if (s.chapters.length) {
+    if (s.chapters.length || s.references) {
       if (/^(appendices|appendixes|annexes)$/i.test(t)) {
         s.appendicesHeading ??= p.i
         continue
@@ -223,6 +228,11 @@ export function findStructure(doc: Doc): Structure {
 
   for (const ch of s.chapters) {
     if (ch.inlineTitle) continue
+    // The title under the label after a line break, in the same paragraph.
+    if (norm(paras[ch.heading].text.split('\n').slice(1).join(' '))) {
+      ch.titlePara = ch.heading
+      continue
+    }
     const k = nextText(paras, ch.heading + 1, ch.end)
     if (
       k !== undefined &&

@@ -1,4 +1,4 @@
-// Stage 1: what this is, the privacy promise, the drop zone; then the official files and the whole
+// Stage 1: what this is, the privacy promise, the drop zone; then the program's files and the whole
 // checklist in its own words, so a visitor knows what will be looked at before choosing a file.
 import { useRef } from 'react'
 import { CHECKLIST } from '../engine/checklist'
@@ -146,7 +146,7 @@ export default function Prepare({
         <div className="grid gap-8 lg:grid-cols-12">
           <div className="lg:col-span-4">
             <h2 id="files-title" className="font-display text-3xl text-ink">
-              Start from the official files
+              Start from the program’s files
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-ink-2">
               The template the program shares and the checklist this site checks against, offered
