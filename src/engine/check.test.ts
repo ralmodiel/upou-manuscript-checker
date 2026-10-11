@@ -118,6 +118,69 @@ describe('check', () => {
     expect(apa.details?.join(' ')).toMatch(/Listed twice.*add a, b.*personal communications/)
   })
 
+  it('tells a mistyped year from one outside the parentheses, and finds a lone a/b letter', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('REFERENCES', '<w:jc w:val="center"/>'),
+        para('Daily Wire Service. (20214, July 10). A news item.', double),
+        para('Cruz, A., 2020. A work with its year outside.', double),
+        para('Tan, G. (2016b). The only work of 2016.', double),
+      ),
+      opts,
+    )
+    const details = finding(r, 'references.apa').details?.join(' ') ?? ''
+    expect(details).toMatch(/Correct the year, mistyped: “Daily Wire Service/)
+    expect(details).toMatch(/Write the year in parentheses after the author[^|]*“Cruz, A\., 2020/)
+    expect(details).not.toMatch(/parentheses after the author[^.]*Daily/)
+    expect(details).toMatch(/no other work of that author and year is listed: “Tan, G\. \(2016b\)”/)
+  })
+
+  it('places an entry behind a misplaced one, reads "van" surnames, co-authors, a near-duplicate and the heading', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('BIBLIOGRAPHY', '<w:jc w:val="center"/>'),
+        para('Boulton, S. (2020). One title. Press.', double),
+        para('Bourne, P. (1988). Another title. Press.', double),
+        para('Bell, P. (1966). A third title. Press.', double),
+        para('Borden, K. (2021). A fourth title. Press.', double),
+        para('Lopez, H., &amp; Garcia, A. (2025). A fifth title. Press.', double),
+        para('Lopez, H., Diaz, A. L., &amp; Ramos, J. B. (2023). A sixth title. Press.', double),
+        para(
+          'Reyes, D. (2021). The ways of faith: the material study of religions. Press.',
+          double,
+        ),
+        para(
+          'Reyes, D. (2021). The ways of faith: the material study of devotion. Verlag.',
+          double,
+        ),
+        para('Santos, S. (2019). A seventh title. Press.', double),
+        para('Santos, S. (2019). An eighth title. Press.', double),
+        para('van Dijk, A. (2015). A ninth title. Press.', double),
+        para('Vale, P. (2022). A tenth title. Press.', double),
+      ),
+      opts,
+    )
+    const order = finding(r, 'references.order').details?.join(' ') ?? ''
+    expect(order).toMatch(
+      /“Borden, K\. \(2021\)\. A fourth title\. Press\.” should come before “Boulton/,
+    )
+    expect(order).toMatch(/“Vale[^”]*” should come before “van Dijk/)
+    expect(order).toMatch(/“Lopez, H\., Diaz[^”]*” should come before “Lopez, H\., & Garcia/)
+    // One work listed twice is not to be ordered by its titles.
+    expect(order).not.toMatch(/Reyes/)
+    const apa = finding(r, 'references.apa').details?.join(' ') ?? ''
+    expect(apa).toMatch(/Title the list “References”.*not “BIBLIOGRAPHY”/)
+    expect(apa).toMatch(/Listed twice, it seems, with different details: “Reyes, D\. \(2021\)”/)
+    expect(apa).not.toMatch(/add a, b after the year \(2021a/)
+    expect(apa).toMatch(
+      /add a, b after the year \(2019a, 2019b\).*found for: “Santos, S\. \(2019\)”/,
+    )
+  })
+
   it('stays fast on long runs of spaces and tabs', async () => {
     // These once made two patterns backtrack for minutes, freezing the page.
     const t0 = performance.now()
@@ -191,7 +254,7 @@ describe('PDF reader', () => {
       pdfjs: () => import('pdfjs-dist/legacy/build/pdf.mjs'),
     })
     expect(finding(r, 'figures.number').status).toBe('fix')
-    expect(finding(r, 'figures.number').details).toEqual(['a picture on p. 2'])
+    expect(finding(r, 'figures.number').details).toEqual(['a picture on p.\u00a02'])
   })
 })
 

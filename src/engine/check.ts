@@ -129,6 +129,8 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
     )
   }
   opts.progress?.('checking')
+  // Let the page show the step before the rules' long run.
+  await new Promise((r) => setTimeout(r, 0))
   const s = findStructure(doc)
   const ctx: Ctx = { doc, s, env: opts.env ?? {} }
   let captions: ReturnType<typeof findCaptions> = []

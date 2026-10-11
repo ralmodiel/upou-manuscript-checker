@@ -65,6 +65,14 @@ export const review = make('review')
 export const ok = make('ok')
 export const na = make('na')
 
+/** At most `n` places, in their order: each page's first before a second on one page, so the
+ *  places cover the pages the details name. */
+export function spread<T extends Where>(xs: T[], n = 5): T[] {
+  const firsts = xs.filter((x, k) => xs.findIndex((y) => y.page === x.page) === k)
+  const kept = new Set([...firsts, ...xs.filter((x) => !firsts.includes(x))].slice(0, n))
+  return xs.filter((x) => kept.has(x))
+}
+
 const RANK: Record<Status, number> = { fix: 3, review: 2, ok: 1, na: 0 }
 /** The more serious of several statuses. */
 export const worst = (xs: Status[]): Status =>

@@ -590,7 +590,7 @@ export function readRtf(data: Uint8Array): Doc {
       k += 2
       if (st.dest === 'skip') continue
       if (next === '\\' || next === '{' || next === '}') text(next)
-      else if (next === '~') text(' ')
+      else if (next === '~') text('\u00a0')
       else if (next === '_') text('-')
       continue
     }

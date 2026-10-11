@@ -5,7 +5,7 @@
 import type * as PdfJsModule from 'pdfjs-dist'
 import type { Box, Doc, Line, Page, Para, Picture, Pixels, Run } from './model.ts'
 import { canvasReadsBack } from './canvas.ts'
-import { shrink } from './images.ts'
+import { darkness, shrink } from './images.ts'
 import { FileProblem } from './problem.ts'
 
 export type PdfJs = typeof PdfJsModule
@@ -351,7 +351,9 @@ export async function readPdf(
         const round = images.filter(
           (b) => Math.min(w(b), h(b)) >= 36 && Math.max(w(b), h(b)) < 1.5 * Math.min(w(b), h(b)),
         )
-        const big = (round.length ? round : images).reduce((p, q) =>
+        // It heads the page: a square photo of a signature further down is not it either.
+        const top = round.filter((b) => b.y0 < vp.height / 2)
+        const big = (top.length ? top : round.length ? round : images).reduce((p, q) =>
           w(q) * h(q) > w(p) * h(p) ? q : p,
         )
         const pixels = big.id ? await imagePixels(page, big.id) : undefined
@@ -362,6 +364,13 @@ export async function readPdf(
           height: big.y1 - big.y0,
           pixels: async () => pixels,
         })
+        // Tick boxes drawn as pictures (a Google Docs export): how dark each is, so a ticked one
+        // swapped in can be told from the empty ones. Small pictures only.
+        for (const [k, b] of images.entries()) {
+          if (!b.id || Math.max(w(b), h(b)) > 40) continue
+          const px = await imagePixels(page, b.id)
+          if (px) pages[n].images[k].ink = darkness(px)
+        }
       }
       page.cleanup()
       progress?.(n + 1, pdf.numPages)
@@ -614,6 +623,10 @@ function marginsOf(lines: Line[], size: number, fallback?: Margins): Margins | u
   }
 }
 
+/** The start of a reference entry: "Surname, I." or an author then "(year)". */
+const ENTRY =
+  /^(\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\.|[^()]{2,100}?\.\s\(((1[89]|20)\d{2}[a-z]?|n\.\s?d\.)[),])/u
+
 /** 1 when every word of a line is bold, 0 when none is (a bold title and "Thesis Adviser:"). */
 const boldness = (l: Line) => {
   const runs = l.runs.filter((r) => r.text.trim())
@@ -646,11 +659,28 @@ const roomFor = (prev: Line, next: Line, right: number) =>
 /** Lines into paragraphs, carrying a paragraph across a page break when its line ran full. */
 function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[] {
   const size = mode(pagesLines.flat().map((l) => l.size))
-  const docMargins = marginsOf(pagesLines.flat(), size) ?? { left: 72, right: 523 }
-  const margins = pagesLines.map((ls) => {
+  // The document's margins come from its pages of the usual width. A page with too little text of
+  // its own takes the margins of the pages of its width: pages turned sideways for a wide table
+  // keep the left margin and take the right one their lines share, or keep the same distance from
+  // the right edge.
+  const width = (n: number) => Math.round(pages[n].width)
+  const usual = mode(pages.map((pg) => pg.width))
+  const linesOf = (w: number) => pagesLines.filter((_, n) => width(n) === w).flat()
+  const docMargins = marginsOf(linesOf(usual), size) ?? { left: 72, right: 523 }
+  const byWidth = new Map<number, Margins>([[usual, docMargins]])
+  const fallbackOf = (n: number) => {
+    const w = width(n)
+    if (!byWidth.has(w))
+      byWidth.set(w, {
+        left: docMargins.left,
+        right: marginsOf(linesOf(w), size)?.right ?? docMargins.right + w - usual,
+      })
+    return byWidth.get(w)!
+  }
+  const margins = pagesLines.map((ls, n) => {
     // A ruled table's rows do not show where the page's text runs.
     const text = ls.filter((l) => !tables.has(l))
-    return marginsOf(text, size, docMargins) ?? docMargins
+    return marginsOf(text, size, fallbackOf(n)) ?? fallbackOf(n)
   })
   const paras: Para[] = []
   let draft: Line[] = []
@@ -659,6 +689,8 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
   let kind: 'left' | 'center' | 'right' = 'left'
   // The paragraph before had a hanging indent (a reference list): an unindented second line is a new entry.
   let lastHanging = false
+  // Where that paragraph's first line starts: one-line entries starting there keep the list going.
+  let hangX: number | undefined
 
   // How many lines of each page start at each point: where a centred line starts depends on its
   // length, so a left edge two other lines share is an indent (a reference list's first lines).
@@ -686,7 +718,14 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
       const para = toPara(draft, paras.length, margins[draft[0].page], kind === 'center')
       if (draft.every((l) => tables.has(l))) para.inTable = true
       paras.push(para)
-      lastHanging = draft.length > 1 && (para.indent?.firstLine ?? 0) < -18
+      if (draft.length > 1) {
+        lastHanging = (para.indent?.firstLine ?? 0) < -18
+        hangX = lastHanging ? draft[0].x0 : undefined
+      } else
+        // A one-line entry ("Collins, R. (2020)…", "UNESCO. (n.d.)…") keeps the list going;
+        // another line (a paragraph's first, a title) ends it.
+        lastHanging &&=
+          hangX !== undefined && Math.abs(draft[0].x0 - hangX) <= 3 && ENTRY.test(draft[0].text)
     }
     draft = []
     cont = undefined
@@ -706,14 +745,30 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
         const sameSize = Math.abs(prev.size - c.size) <= 0.6
         const ended = roomFor(prev, c, pm.right)
         const offCont = cont !== undefined && Math.abs(c.x0 - cont) > 8
-        const newEntry = lastHanging && draft.length === 1 && Math.abs(c.x0 - prev.x0) <= 3
+        // Where entries start: a line there after a one-line entry starts the next entry.
+        const newEntry =
+          lastHanging &&
+          draft.length === 1 &&
+          Math.abs(c.x0 - prev.x0) <= 3 &&
+          (hangX === undefined || Math.abs(prev.x0 - hangX) <= 3)
         // On a page of justified text, a line stopping short of the margin after lines that all ran
-        // full is a paragraph's last (or one before a line break), even if the next word is long.
+        // full is a paragraph's last (or one before a line break), even if the next word is long;
+        // so is a lone such line when the next neither runs on at the margin nor is centred under
+        // it (a heading, a lead-in ending in a colon, a quoted line; not a table's cell). A next
+        // line set in further than a reference entry's or list item's first line is its hanging
+        // indent's (such lists are left-aligned on a justified page), unless the line is wholly
+        // bold: a heading, then an indented first line.
         const shortEnd =
           !!pm.justified &&
-          draft.length >= 2 &&
           prev.x1 < pm.right - 2.5 &&
-          draft.slice(0, -1).every((l) => l.x1 >= margins[l.page].right - 2.5)
+          (draft.length >= 2
+            ? draft.slice(0, -1).every((l) => l.x1 >= margins[l.page].right - 2.5)
+            : c.x0 > m.left + 8 &&
+              !tables.has(c) &&
+              kindOf(c, m) !== 'center' &&
+              (c.x0 <= prev.x0 + 8 ||
+                boldness(prev) === 1 ||
+                !(MARKER.test(prev.text) || ENTRY.test(prev.text))))
         // Lines with cells or a leader (table rows, contents entries) are never one wrapped
         // paragraph, nor are a ruled table's line and a line outside it.
         const tabular =
@@ -735,6 +790,7 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
             tabular ||
             !sameSize ||
             !aligned ||
+            newEntry ||
             opens(c, prev) ||
             kindOf(c, m) !== 'left' ||
             // A wholly bold line against one that is not: a heading starts or ends there.
@@ -765,8 +821,17 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
               prev.x1 - prev.x0 + 0.25 * c.size + firstWord(c) < width - 1 ||
               Math.abs(boldness(prev) - boldness(c)) === 1
           // A left or justified paragraph goes on while its lines run full and keep their indent
-          // (its last line may happen to look centred).
-          else split = ended || shortEnd || opens(c, prev) || offCont || newEntry
+          // (its last line may happen to look centred). A lone line set in over an inch from where
+          // the next one starts is no indented first line: cells of table rows that are staggered
+          // (centred in their columns).
+          else
+            split =
+              ended ||
+              shortEnd ||
+              opens(c, prev) ||
+              offCont ||
+              newEntry ||
+              (draft.length === 1 && prev.x0 > c.x0 + 72)
         }
         if (!split && draft.length === 1) cont = c.x0
       }

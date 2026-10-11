@@ -3,7 +3,7 @@ import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
-import { bodyParas, CAPTION, doubleSpaced, justified } from './body.ts'
+import { bodyParas, CAPTION, doubleSpaced, isList, justified } from './body.ts'
 import {
   auditPdf,
   clip,
@@ -58,9 +58,10 @@ function firstPage(ctx: Ctx, c: Chapter): Set<number> {
   return out
 }
 
-/** PDF: a heading that opens its page far down it, more than a third of the page below where the
- *  pages' text starts, with no picture above it: empty lines push it down. */
-export function pushedDown(ctx: Ctx, p: Para): boolean {
+/** PDF: a heading that opens its page far down it, more than `drop` points (a third of the page
+ *  unless given) below where the pages' text starts, with no picture above it: empty lines push
+ *  it down. */
+export function pushedDown(ctx: Ctx, p: Para, drop?: number): boolean {
   const first = p.lines?.[0]
   const page = ctx.doc.pages?.[first?.page ?? -1]
   if (!first || !page || page.images.some((b) => b.y1 <= first.y)) return false
@@ -68,7 +69,9 @@ export function pushedDown(ctx: Ctx, p: Para): boolean {
   for (const q of ctx.doc.paras)
     for (const l of q.lines ?? []) tops.set(l.page, Math.min(tops.get(l.page) ?? l.y, l.y))
   const ys = [...tops.values()].sort((a, b) => a - b)
-  return tops.get(first.page) === first.y && first.y > ys[ys.length >> 1] + page.height / 3
+  return (
+    tops.get(first.page) === first.y && first.y > ys[ys.length >> 1] + (drop ?? page.height / 3)
+  )
 }
 
 function newPage(ctx: Ctx): Finding {
@@ -79,7 +82,8 @@ function newPage(ctx: Ctx): Finding {
     (c) => !paras[c.heading].newPage && paras[c.heading].renderedBreak !== 'before',
   )
   // On a new page, but far down it: empty lines before the label rather than a page break.
-  const low = late.length ? [] : chapters.filter((c) => pushedDown(ctx, paras[c.heading]))
+  // 1.5 in: a heading style's space before stays well under it, empty lines do not.
+  const low = late.length ? [] : chapters.filter((c) => pushedDown(ctx, paras[c.heading], 108))
   if (low.length)
     return review(
       id,
@@ -325,19 +329,30 @@ function hanging(ctx: Ctx): Finding {
     const end = lines.at(-1)
     if (!pg || !end) continue
     const caption = CAPTION.test(norm(p.text))
+    // A one-line label in italics: a term defined below it, or one of APA's lower headings (not a
+    // quoted line, nor one closing with its source "[S1.1]").
+    const t = norm(p.text)
+    const label =
+      lines.length === 1 &&
+      !p.inTable &&
+      t.length <= 60 &&
+      /\p{L}.*\p{L}/u.test(t) &&
+      !/^["“‘'[(]/.test(t) &&
+      !/[.:;,!?"”’'\]]$/.test(t) &&
+      p.runs.filter((r) => r.text.trim()).every((r) => r.italic)
     // Pictures in the text area (not a logo in the header or footer), above or below the heading.
     const pics = pg.images.filter((b) => b.y1 > 0.12 * pg.height && b.y0 < 0.88 * pg.height)
     const above = pics.some((b) => b.y1 <= lines[0].y)
     // The last thing on its page (no picture below it either), after text or a picture, and with
     // something to come on the pages after; not a caption under its picture, closing the figure.
     if (
-      headingLike(p) &&
+      (headingLike(p) || label) &&
       end.page === p.page &&
       (!next || next.page !== p.page) &&
       !pics.some((b) => b.y0 >= end.y - 2) &&
       (texted.has(pg.n) || above) &&
       (next || (doc.pages?.[pg.n + 1]?.images.length ?? 0) > 0) &&
-      !(caption && above)
+      !((caption || label) && above)
     ) {
       details.push(
         `${place(pg.n, p)}: the heading “${quote(p.text, 40)}” is the last line of the page`,
@@ -349,8 +364,18 @@ function hanging(ctx: Ctx): Finding {
     // the table going on at the next page.
     if (caption && end.page === p.page) {
       let k = p.i + 1
+      // APA: the number on its own line ("Table 1."), the title below it, then the table.
+      const title = doc.paras[k]
+      if (
+        /^(table|fig(ure)?\.?)\s*\d+[.:]?$/i.test(norm(p.text)) &&
+        title?.page === p.page &&
+        !row(title) &&
+        (title.lines?.length ?? 0) <= 3
+      )
+        k++
+      const top = k
       while (doc.paras[k]?.page === p.page && row(doc.paras[k])) k++
-      const rows = doc.paras.slice(p.i + 1, k).flatMap((q) => q.lines ?? [])
+      const rows = doc.paras.slice(top, k).flatMap((q) => q.lines ?? [])
       const rest = doc.paras[k]
       if (
         rows.length &&
@@ -376,9 +401,42 @@ function hanging(ctx: Ctx): Finding {
         !after || after.page !== pages[1] || after.x0 <= lines[0].x0 + 3 || headingLike(next)
       if (onFirst === 1 || (onNext === 1 && closes)) {
         details.push(
-          `${place(pages[onFirst === 1 ? 0 : 1], p)}: one line of the paragraph “${quote(p.text, 35)}” ${onFirst === 1 ? 'is left at the bottom of the page' : 'runs over to the next page'}`,
+          onFirst === 1
+            ? `${place(pages[0], p)}: one line of the paragraph “${quote(p.text, 35)}” is left at the bottom of the page`
+            : `${place(pages[1], p)}: the last line of the paragraph “${quote(p.text, 35)}” (from ${pagesText([pages[0]])}) stands alone at the top of the page`,
         )
         where.push({ page: pages[onFirst === 1 ? 0 : 1], quote: quote(p.text, 40) })
+      }
+    }
+    // A list of one-line items (each its own paragraph) that a page break leaves with one item
+    // alone on a page.
+    const x0 = lines[0].x0
+    const item = (q?: Para): q is Para =>
+      !!q && q.lines?.length === 1 && isList(q) && !bolded(q) && Math.abs(q.lines[0].x0 - x0) <= 3
+    // The last thing on its page (no picture under it), the list going on at the next page.
+    if (item(p) && item(next) && next.page === pg.n + 1 && !pics.some((b) => b.y0 >= end.y - 2)) {
+      // Items set further in (sub-items) belong to the same list.
+      const count = (k: number, step: number, page: number) => {
+        let c = 0
+        const q = (j: number) => doc.paras[j]
+        while (
+          q(k)?.lines?.length === 1 &&
+          isList(q(k)) &&
+          q(k).lines![0].x0 >= x0 - 3 &&
+          q(k).page === page
+        ) {
+          c++
+          k += step
+        }
+        return c
+      }
+      const one =
+        count(next.i, 1, pg.n + 1) === 1 ? next : count(p.i, -1, pg.n) === 1 ? p : undefined
+      if (one) {
+        details.push(
+          `${place(one.page!, one)}: the list item “${quote(one.text, 35)}” ${one === next ? 'stands alone at the top of the page' : 'is left alone at the bottom of the page'}`,
+        )
+        where.push({ page: one.page, quote: quote(one.text, 40) })
       }
     }
   }

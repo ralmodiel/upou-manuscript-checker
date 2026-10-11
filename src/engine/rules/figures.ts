@@ -1,6 +1,6 @@
 // Figures and tables: the number in bold above, the title in italics right below, APA style.
 import type { Box, Para } from '../model.ts'
-import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
+import { fix, na, ok, review, spread, worst, type Ctx, type Finding } from '../report.ts'
 import { bolded, isTocLine } from '../structure.ts'
 import { list, norm, quote } from '../text.ts'
 import { more, pagesText } from './numbering.ts'
@@ -275,14 +275,14 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
         'Transfer the figure/table number (in bold letters) above the figure/table.',
         {
           details: numberIssues,
-          where: [...below, ...notBold].slice(0, 5).map(at),
+          where: spread([...below, ...notBold].map(at)),
         },
       )
     : unsure.length
       ? review(
           'figures.number',
           `Check that ${names(unsure)} ${unsure.length === 1 ? 'has its' : 'have their'} number above the figure/table: this file does not show where ${unsure.length === 1 ? 'it stands' : 'they stand'}.`,
-          { where: unsure.slice(0, 5).map(at) },
+          { where: spread(unsure.map(at)) },
         )
       : plain
         ? review(
@@ -307,7 +307,7 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
         'Place the figure/table title (in italics) right below the figure/table number.',
         {
           details: titleIssues,
-          where: [...sameLine, ...notItalic, ...noTitle].slice(0, 5).map(at),
+          where: spread([...sameLine, ...notItalic, ...noTitle].map(at)),
         },
       )
     : plain

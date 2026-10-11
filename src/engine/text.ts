@@ -95,10 +95,17 @@ export function distance(a: string, b: string): number {
   return row[b.length]
 }
 
-/** Words that differ between two versions of a title (case aside). */
+/** Words that differ between two versions of a title (case and punctuation aside; words of two
+ *  letters or fewer left out, as they say little). */
 export function wordDiff(a: string, b: string): { onlyA: string[]; onlyB: string[] } {
-  const wa = norm(a).toLowerCase().split(' ')
-  const wb = norm(b).toLowerCase().split(' ')
+  const words = (s: string) =>
+    norm(s)
+      .toLowerCase()
+      .split(' ')
+      .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+      .filter((w) => w.length > 2)
+  const wa = words(a)
+  const wb = words(b)
   return {
     onlyA: wa.filter((w) => !wb.includes(w)),
     onlyB: wb.filter((w) => !wa.includes(w)),

@@ -72,6 +72,16 @@ export function hamming(a: string, b: string): number {
   return d
 }
 
+/** Mean darkness (0 white to 1 black): an empty tick box is light, a ticked one darker. */
+export function darkness(img: Pixels): number {
+  let sum = 0
+  const n = img.width * img.height
+  for (let k = 0; k < n; k++)
+    sum +=
+      255 - (0.299 * img.data[k * 4] + 0.587 * img.data[k * 4 + 1] + 0.114 * img.data[k * 4 + 2])
+  return n ? sum / n / 255 : 0
+}
+
 /** Mean colourfulness (0 grey to 255 vivid): the UP seal is maroon, green and gold. */
 export function colourfulness(img: Pixels): number {
   let sum = 0

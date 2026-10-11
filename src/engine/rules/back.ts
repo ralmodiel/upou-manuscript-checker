@@ -9,6 +9,9 @@ import { more, pagesText } from './numbering.ts'
 
 const YEAR = /\((\d{4}[a-z]?|n\.\s?d\.|in press|forthcoming)(?!\w)/i
 const SAMPLE = /author last name|first initial|year of publication|title of work/i
+/** A surname with a small particle, then an initial: "van Daal, R.", "de la Cruz, J.". */
+const PARTICLE =
+  /^(?:(?:van|von|der|den|de|del|della|di|da|du|le|la|ter|ten|dos|das)\s+)+\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u
 
 export interface Entry {
   paras: Para[]
@@ -16,8 +19,9 @@ export interface Entry {
 }
 
 /** The reference entries, under any subheadings. A paragraph goes on with the entry above when it
- *  opens with a small letter or a number ("12(3), 45–67."; not "1. Author"), or, in a PDF,
- *  when it starts further in than the entries' first lines; else when it has no year either. */
+ *  opens with a small letter (not a surname's particle: "van Daal, R.") or a number ("12(3),
+ *  45–67."; not "1. Author"), or, in a PDF, when it starts further in than the entries' first
+ *  lines; else when it has no year either. */
 export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
   const r = ctx.s.references
   if (!r) return { list: [], groups: 0 }
@@ -50,6 +54,7 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
             : undefined
     const opens =
       !out.length ||
+      (placed !== false && PARTICLE.test(t)) ||
       (!/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
         (placed ?? (YEAR.test(t.slice(0, 200)) || /^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t))))
     if (opens) out.push({ paras: [p], text: t })
@@ -83,20 +88,64 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
     )
   const pairs: string[] = []
   const misplaced: Entry[] = []
-  const tight = (s: string) => s.replace(/ /g, '')
-  // Each entry against the last one with a sort key (one without must not hide a pair).
-  let prev: Entry | undefined
-  for (const e of refs) {
-    const b = key(e)
-    if (!b) continue
-    const a = prev && key(prev)
+  // The entries with a sort key (one without must not hide a pair), less a work listed again, as
+  // it is or with its title's end changed: that one is to be removed (references.apa says so), not
+  // moved.
+  const works = new Map<string, string[]>()
+  const keyed = refs.filter((e) => {
+    if (!key(e)) return false
+    const y = byline(e)
+    if (!y) return true
+    const titles = works.get(`${y.who}|${y.year}`) ?? []
+    if (titles.some((t) => t === y.title || (!y.marked && alike(t, y.title)))) return false
+    works.set(`${y.who}|${y.year}`, [...titles, y.title])
+    return true
+  })
+  const ks = keyed.map(key)
+  const tight = ks.map((k) => k.replace(/ /g, ''))
+  // Entry i sorts before entry j, word by word and letter by letter alike ("Sun Group", "SunCorp").
+  const sooner = (i: number, j: number) =>
+    ks[i].localeCompare(ks[j], 'en') < 0 && tight[i].localeCompare(tight[j], 'en') < 0
+  // The longest run of entries already in order (the earliest such): an entry outside it has to
+  // move, one inside it stays (in "A, M, C, D" only M moves, though C and D sort before it).
+  const len = ks.map(() => 1)
+  for (let i = ks.length - 2; i >= 0; i--)
+    for (let j = i + 1; j < ks.length; j++)
+      if (!sooner(j, i) && len[j] + 1 > len[i]) len[i] = len[j] + 1
+  const kept = new Set<number>()
+  let need = Math.max(0, ...len)
+  let last = -1
+  for (let i = 0; i < ks.length && need > 0; i++)
+    if (len[i] === need && (last < 0 || !sooner(i, last))) {
+      kept.add(i)
+      last = i
+      need--
+    }
+  // In order with the entry above, but before an earlier one: [entry, the earliest-sorting earlier
+  // entry it belongs before, where its line goes among the pairs].
+  const behind: [Entry, Entry, number][] = []
+  // Where the list starts the alphabet over.
+  const restarts: (number | undefined)[] = []
+  for (const [k, e] of keyed.entries()) {
+    const prev = keyed[k - 1] as Entry | undefined
     const [y0, y1] = [prev && byline(prev), byline(e)]
     const at = e.paras[0].page === undefined ? '' : `${pagesText([e.paras[0].page])}: `
-    // Out of order word by word and letter by letter alike ("Sun Group", "SunCorp").
-    if (a && b.localeCompare(a, 'en') < 0 && tight(b).localeCompare(tight(a), 'en') < 0) {
-      pairs.push(`${at}“${quote(e.text, 45)}” should come before “${quote(prev!.text, 45)}”`)
+    // The earlier entries it sorts before, for an entry that has to move.
+    const above =
+      kept.has(k) || (y0 && y1 && y0.who === y1.who)
+        ? []
+        : ks.slice(0, k).flatMap((_, j) => (sooner(k, j) ? [j] : []))
+    if (prev && sooner(k, k - 1)) {
+      pairs.push(`${at}“${quote(e.text, 45)}” should come before “${quote(prev.text, 45)}”`)
       misplaced.push(e)
-    } else if (y0 && y1 && y0.who === y1.who && y1.year < y0.year) {
+      restarts.push(e.paras[0].page)
+    } else if (above.length)
+      behind.push([
+        e,
+        keyed[above.reduce((m, j) => (ks[j].localeCompare(ks[m], 'en') < 0 ? j : m))],
+        pairs.length,
+      ])
+    else if (y0 && y1 && y0.who === y1.who && y1.year < y0.year) {
       pairs.push(
         `${at}“${y1.cite}” should come before “${y0.cite}”: one author's works go from the earliest year`,
       )
@@ -114,23 +163,65 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
         `${at}${y1.by}: “${y1.from}” should come before “${y0.from}”: one author's works of the same year go by title, with a, b after the year`,
       )
       misplaced.push(e)
+    } else if (
+      y0 &&
+      y1 &&
+      ks[k - 1] === ks[k] &&
+      y0.who !== y1.who &&
+      namesBefore(y1.names, y0.names)
+    ) {
+      pairs.push(
+        `${at}“${quote(e.text, 45)}” should come before “${quote(prev!.text, 45)}”: works with the same first author go by the next author's surname`,
+      )
+      misplaced.push(e)
     }
-    prev = e
   }
-  if (!pairs.length) return ok(id, `All ${refs.length} references are in alphabetical order.`)
+  // A few: each one is out of place. Many: the list goes through the alphabet more than once.
+  const lead: string[] = []
+  if (behind.length && behind.length <= Math.max(3, refs.length / 10))
+    for (const [e, d, k] of behind.reverse()) {
+      const at = e.paras[0].page === undefined ? '' : `${pagesText([e.paras[0].page])}: `
+      pairs.splice(k, 0, `${at}“${quote(e.text, 45)}” should come before “${quote(d.text, 45)}”`)
+      misplaced.splice(k, 0, e)
+    }
+  else if (behind.length) {
+    const pages = restarts.filter((p) => p !== undefined)
+    lead.push(
+      `The list goes through the alphabet ${restarts.length + 1} times${pages.length ? ` (it starts over on ${pagesText(pages)})` : ''}: put all the entries in one alphabetical list.`,
+    )
+  }
+  if (!pairs.length && !lead.length)
+    return ok(id, `All ${refs.length} references are in alphabetical order.`)
+  const first = misplaced[0] ?? behind[0][0]
   return fix(
     id,
     'Arrange the reference list in alphabetical order (by the first author’s surname).',
     {
-      details: pairs
-        .slice(0, 6)
+      details: lead
+        .concat(pairs.slice(0, 6))
         .concat(pairs.length > 6 ? [more(pairs.length - 6, misplaced.slice(6).map(pageOf))] : []),
-      where: [{ page: pageOf(misplaced[0]), quote: quote(misplaced[0].text, 40) }],
+      where: [{ page: pageOf(first), quote: quote(first.text, 40) }],
     },
   )
 }
 
+/** APA: one first author's works go by the second author's surname, then the third…; one author
+ *  alone comes first ("nothing precedes something"). */
+function namesBefore(x: string[], y: string[]): boolean {
+  if (x.length < 2 && y.length < 2) return false
+  for (let k = 0; k < Math.min(x.length, y.length); k++)
+    if (x[k] !== y[k]) return x[k].localeCompare(y[k], 'en') < 0
+  return x.length < y.length
+}
+
 const pageOf = (e: Entry) => e.paras[0].page
+
+/** Two titles alike but for their ends ("…study of religions", "…study of devotion"): one work. */
+function alike(a: string, b: string) {
+  let n = 0
+  while (n < a.length && n < b.length && a[n] === b[n]) n++
+  return n >= 20 && n >= 0.75 * Math.min(a.length, b.length)
+}
 
 /** The authors before the year (letters only), the year and the title, to order one author's works
  *  and to find a work listed twice. APA puts undated works first and works in press last. */
@@ -165,6 +256,15 @@ function byline(e: Entry) {
         marked: /^\((\d{4}[a-z]|(n\.\s?d\.|in press)\s?-\s?[a-z])/i.test(rest),
         // A full date ("2011, March 3"): works of one year then go by date, not by title.
         dated: /^\(\d{4}[a-z]?,/.test(rest),
+        // The authors' surnames in order ("Reyes, A., Cruz, B. L., & Santos, C. D."), letters only.
+        names: [
+          ...by.matchAll(/(\p{Lu}[\p{L}'’-]*(?:\s\p{L}[\p{L}'’-]*)*),\s+(?:\p{Lu}\.[\s-]*)+/gu),
+        ].map((n) =>
+          n[1]
+            .normalize('NFD')
+            .toLowerCase()
+            .replace(/[^a-z]/g, ''),
+        ),
         by: cite,
         from: quote(rest, 40),
         cite: `${cite} (${m[1]})`,
@@ -190,8 +290,24 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
   const hanging = multi.filter((p) => (p.indent?.firstLine ?? 0) <= -18)
   if (ctx.doc.kind !== 'doc' && multi.length && hanging.length / multi.length < 0.8) {
+    // Set in less than a quarter inch is a hanging indent too small, not none.
+    const small = multi.filter(
+      (p) => (p.indent?.firstLine ?? 0) <= -6 && (p.indent?.firstLine ?? 0) > -18,
+    )
+    const none = multi.length - hanging.length - small.length
+    const sets = small.map((p) => -p.indent!.firstLine).sort((a, b) => a - b)
+    const inch = ((sets[sets.length >> 1] ?? 0) / 72).toFixed(1)
     issues.push(
-      `Use a hanging indent of 0.5 inch (Paragraph > Special: Hanging): ${multi.length - hanging.length} of ${plural(multi.length, 'reference')} ${multi.length - hanging.length === 1 ? 'has' : 'have'} none.`,
+      `Use a hanging indent of 0.5 inch (Paragraph > Special: Hanging): ${list(
+        [
+          none
+            ? `${none} of ${plural(multi.length, 'reference')} ${none === 1 ? 'has' : 'have'} none`
+            : '',
+          small.length
+            ? `${small.length}${none ? '' : ` of ${plural(multi.length, 'reference')}`} hang${small.length === 1 ? 's' : ''} only ${inch} inch`
+            : '',
+        ].filter(Boolean),
+      )}.`,
     )
     statuses.push('fix')
   }
@@ -233,9 +349,16 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     return /\(\d{5,}/.test(t) || /(?<![\d/(.-])(1[89]|20)\d{2}[a-z]?(?![\d/-])/.test(t)
   })
   const undated = noYear.filter((e) => !misdated.includes(e))
-  if (misdated.length) {
+  // "(20214, July 10)" has its parentheses: only its year is wrong.
+  const mistyped = misdated.filter((e) => /\(\d{5,}/.test(e.text))
+  const outside = misdated.filter((e) => !mistyped.includes(e))
+  if (mistyped.length) {
+    issues.push(`Correct the year, mistyped: ${entriesText(mistyped)}.`)
+    statuses.push('fix')
+  }
+  if (outside.length) {
     issues.push(
-      `Write the year in parentheses after the author, as “(2020).”: ${entriesText(misdated)}.`,
+      `Write the year in parentheses after the author, as “(2020).”: ${entriesText(outside)}.`,
     )
     statuses.push('fix')
   }
@@ -256,6 +379,13 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     issues.push('Centre the heading “References”, as APA style and the template do.')
     statuses.push(sure ? 'fix' : 'review')
   }
+  // APA and the template call the list "References" (a bibliography lists other reading too).
+  if (!/^references$/i.test(norm(head.text).replace(/[:.]$/, ''))) {
+    issues.push(
+      `Title the list “References”, as APA style and the template do (not “${quote(head.text, 30)}”).`,
+    )
+    statuses.push('fix')
+  }
   if (pushedDown(ctx, head)) {
     issues.push(
       `Start the reference list at the top of its page: empty lines push the heading down (${pagesText([head.page!])}).`,
@@ -275,13 +405,42 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   if (loose.length && loose.length >= (refs.length - 1) / 2) {
     issues.push('Remove the empty lines between the references: APA double-spaces them all alike.')
     statuses.push('review')
+  } else if (ctx.doc.kind === 'pdf') {
+    // Less than an empty line, more than the line spacing: space set before or after each entry.
+    const roomy = refs.slice(1).filter((e, k) => {
+      const a = refs[k].paras.at(-1)!.lines?.at(-1)
+      const b = e.paras[0].lines?.[0]
+      const pitch = (refs[k].paras[0].spacing ?? 0) * 1.15 * (a?.size ?? 0)
+      const gap = !!a && !!b && a.page === b.page && pitch > 0 ? (b.y - a.y) / pitch : 0
+      return gap > 1.3 && gap <= 1.6
+    })
+    if (roomy.length && roomy.length >= (refs.length - 1) / 2) {
+      issues.push(
+        'Remove the extra space between the references (Paragraph > Spacing Before and After: 0 pt): APA double-spaces them all alike.',
+      )
+      statuses.push('review')
+    }
   }
   // The same work listed twice (the same authors, year and title) is a sure correction; two works
   // of one author and year need a, b after the year (2011a, 2011b).
   const seen = new Map<string, Entry>()
   const years = new Map<string, Entry>()
   const twice: [Entry, Entry][] = []
-  const lettered: Entry[] = []
+  // [the first work of that author and year, another one without a letter]
+  const lettered: [Entry, Entry][] = []
+  // Titles alike but for their ends ("…study of religions", "…study of devotion"): one work.
+  const nearly: [Entry, Entry][] = []
+  // Each author's works of each year, to find a letter (2016b) where that year has one work only.
+  const works = new Map<string, Entry[]>()
+  for (const e of own) {
+    const y = byline(e)
+    if (!y) continue
+    const k = `${y.who}|${y.year.slice(0, 4)}`
+    works.set(k, [...(works.get(k) ?? []), e])
+  }
+  const lone = [...works.values()].flatMap((es) =>
+    es.length === 1 && byline(es[0])!.marked ? es : [],
+  )
   for (const e of own) {
     const y = byline(e)
     const k = y
@@ -294,7 +453,9 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     if (first) twice.push([first, e])
     else seen.set(k, e)
     if (!y || first) continue
-    if (years.has(`${y.who}|${y.year}`) && !y.marked) lettered.push(e)
+    const other = years.get(`${y.who}|${y.year}`)
+    if (other && !y.marked && alike(byline(other)!.title, y.title)) nearly.push([other, e])
+    else if (other && !y.marked) lettered.push([other, e])
     else years.set(`${y.who}|${y.year}`, e)
   }
   if (twice.length) {
@@ -307,9 +468,34 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push('fix')
   }
-  if (lettered.length) {
+  if (nearly.length) {
     issues.push(
-      `Two works of one author and year: add a, b after the year (2011a, 2011b), in the order of their titles: ${entriesText(lettered, (e) => `“${byline(e)!.cite}”`)}.`,
+      `Listed twice, it seems, with different details: ${entriesText(
+        nearly.map(([, b]) => b),
+        (e) => `“${byline(e)!.cite}”`,
+        nearly.map(([a]) => a),
+      )}. Keep one, or, for two works, add a, b after the year.`,
+    )
+    statuses.push('review')
+  }
+  if (lettered.length) {
+    // The example in the entries' own year: (2021a, 2021b) or (n.d.-a, n.d.-b). Each author's works
+    // apart: they are not one pair.
+    const yr = /\(([^()]*)\)$/.exec(byline(lettered[0][1])!.cite)?.[1] ?? '2011'
+    const ex = /^\d/.test(yr) ? `${yr}a, ${yr}b` : `${yr}-a, ${yr}-b`
+    issues.push(
+      `Two works of one author and year: add a, b after the year (${ex}), in the order of their titles; found for: ${entriesText(
+        lettered.map(([, b]) => b),
+        (e) => `“${byline(e)!.cite}”`,
+        lettered.map(([a]) => a),
+        (xs) => xs.join('; '),
+      )}.`,
+    )
+    statuses.push('review')
+  }
+  if (lone.length) {
+    issues.push(
+      `A letter after the year, but no other work of that author and year is listed: ${entriesText(lone, (e) => `“${byline(e)!.cite}”`)}. Remove the letter, or add the missing work.`,
     )
     statuses.push('review')
   }
@@ -346,8 +532,9 @@ const entriesText = (
   es: Entry[],
   label = (e: Entry) => `“${quote(e.text, 40)}”`,
   also: (Entry | undefined)[] = [],
+  join = list,
 ) =>
-  list(
+  join(
     es
       .slice(0, 3)
       .map((e, k) => {
@@ -369,7 +556,12 @@ function labels(ctx: Ctx): Finding {
     return s.appendicesHeading === undefined
       ? na(id, 'No appendices found.')
       : fix(id, 'Label each appendix (Appendix A, Appendix B…) with its title on the next line.', {
-          where: [{ quote: quote(doc.paras[s.appendicesHeading].text) }],
+          where: [
+            {
+              page: doc.paras[s.appendicesHeading].page,
+              quote: quote(doc.paras[s.appendicesHeading].text),
+            },
+          ],
         })
   const issues: string[] = []
   const statuses: Finding['status'][] = []
@@ -391,7 +583,17 @@ function labels(ctx: Ctx): Finding {
   const untitled: Para[] = []
   const sameLine: Para[] = []
   const offCentre: Para[] = []
-  const centred = (p: Para) => !!p.plain || p.align === 'center'
+  // Under the label a table's or figure's number, not a title of the appendix's own.
+  const tableFirst: Para[] = []
+  const centred = (p: Para) => {
+    if (p.plain || p.align === 'center') return true
+    // A PDF line centred on its page: on a wide table's page the text may stop short of the margin.
+    const l = p.lines?.length === 1 ? p.lines[0] : undefined
+    const pg = l && doc.pages?.[l.page]
+    return (
+      !!pg && Math.abs((l.x0 + l.x1) / 2 - pg.width / 2) < 8 && l.x0 > (pg.margins?.left ?? 72) + 12
+    )
+  }
   const labelOf = (p: Para) =>
     /^(appendix|annex)\s*([a-z]{1,2}|\d{1,2})?\b/i.exec(norm(p.text))?.[0] ?? quote(p.text, 30)
   for (const a of aps) {
@@ -401,6 +603,15 @@ function labels(ctx: Ctx): Finding {
       '',
     )
     const next = nextText(doc.paras, a.heading + 1, a.end)
+    if (
+      !inline &&
+      next !== undefined &&
+      /^(table|figure|fig\.)\s*[A-Z]?\d/i.test(norm(doc.paras[next].text))
+    ) {
+      tableFirst.push(head)
+      if (!centred(head)) offCentre.push(head)
+      continue
+    }
     // A short line under the label is its title, set as one or not.
     const short = next !== undefined && norm(doc.paras[next].text).length <= 150
     if (!inline && !short) {
@@ -418,13 +629,23 @@ function labels(ctx: Ctx): Finding {
     )
     statuses.push('review')
   }
+  if (tableFirst.length) {
+    issues.push(
+      `Give each appendix its own title on the line below its label, as the template does (an appendix that is one table or figure takes its title in place of the table's number and title, in APA style): ${list(tableFirst.map(labelOf))}.`,
+    )
+    statuses.push('review')
+  }
   if (offCentre.length) {
     issues.push(
       `Centre each label and its title, as the template does: ${list(offCentre.map(labelOf))}.`,
     )
     statuses.push('review')
   }
-  untitled.push(...sameLine, ...offCentre.filter((p) => !sameLine.includes(p)))
+  untitled.push(
+    ...sameLine,
+    ...tableFirst,
+    ...offCentre.filter((p) => !sameLine.includes(p) && !tableFirst.includes(p)),
+  )
   if (!issues.length)
     return ok(
       id,

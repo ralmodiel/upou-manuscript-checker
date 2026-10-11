@@ -16,7 +16,8 @@ export interface Folio {
 }
 
 const PLACEHOLDER = /shortened thesis title here/i
-const FOLIO = /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s+|^)([ivxlcdm]+|\d+)\s*$/i
+// The number after an ellipsis, a space, or a bar or dot set where the ellipsis goes ("Title │ii").
+const FOLIO = /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s*[|│¦•·]\s*|\s+|^)([ivxlcdm]+|\d+)\s*$/i
 
 export function parseFolio(raw: string): Folio | undefined {
   const t = norm(raw.replace(/\n/g, ' '))
@@ -77,7 +78,8 @@ export function pagesText(pages: number[]): string {
     out.push(j > k ? `${ps[k]}\u2060–\u2060${ps[j]}` : `${ps[k]}`)
     k = j
   }
-  return `${ps.length === 1 ? 'p.' : 'pp.'} ${out.join(', ')}`
+  // A no-break space keeps "p." with its number.
+  return `${ps.length === 1 ? 'p.' : 'pp.'}\u00a0${out.join(', ')}`
 }
 
 /** The line closing a cut list: "…and 5 more, on pp. 7, 9–11". */
@@ -102,7 +104,7 @@ export interface Problem {
     | 'changed'
   page?: number
   text: string
-  /** A long title's length in words. */
+  /** A long title's length in words (on its own problem and on a missing ellipsis after it). */
   words?: number
 }
 
@@ -163,33 +165,57 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
         words,
         text: `${at}has a ${words}-word title before the number; shorten it`,
       })
+    // A whole title is no shortened one: the ellipsis goes after "the title" then.
     if (!folio.ellipsis)
       out.push({
         type: 'ellipsis',
         page,
-        text: `${at}has no ellipsis (…) after the shortened title`,
+        words: words > 12 ? words : undefined,
+        text: `${at}has no ellipsis (…) after the ${words > 12 ? '' : 'shortened '}title`,
       })
   }
   return out
 }
 
-/** Pages whose footer has another title than the page before with one: one thesis, one title. */
-function titleChanges(doc: Doc, pages: number[]): Problem[] {
-  const title = (p: number) => pdfFolio(doc, p)?.title || undefined
-  const out: Problem[] = []
+/** A footer title for comparing: its letters and digits only ("TITLE │" and "Title│" are one). */
+export const titleKey = (t: string) =>
+  norm(t)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+
+/** The footer titles on `pages` by key, the most common first (a tie: the earliest). Only pages
+ *  whose number was read: a number run into the title leaves the title unknown. */
+function titleGroups(doc: Doc, pages: number[]) {
+  const groups = new Map<string, { shown: string; pages: number[] }>()
   for (const p of pages) {
-    const now = title(p)
-    let q = p - 1
-    while (q >= 0 && !title(q)) q--
-    const before = q >= 0 ? title(q) : undefined
-    if (now && before && norm(now).toLowerCase() !== norm(before).toLowerCase())
-      out.push({
-        type: 'changed',
-        page: p,
-        text: `${pagesText([p])}: the title in the footer changes to “${quote(now, 40)}” (before: “${quote(before, 40)}”); keep one shortened title`,
-      })
+    const f = pdfFolio(doc, p)
+    const key = f?.number !== undefined ? titleKey(f.title) : ''
+    if (!key) continue
+    const g = groups.get(key) ?? { shown: norm(f!.title), pages: [] }
+    g.pages.push(p)
+    groups.set(key, g)
   }
-  return out
+  return [...groups]
+    .map(([key, g]) => ({ key, ...g }))
+    .sort((a, b) => b.pages.length - a.pages.length || a.pages[0] - b.pages[0])
+}
+
+/** The title most footers on `pages` carry, as first written; none without a majority. */
+export function mainTitle(doc: Doc, pages: number[]) {
+  const groups = titleGroups(doc, pages)
+  const total = groups.reduce((n, g) => n + g.pages.length, 0)
+  return groups[0] && groups[0].pages.length > total / 2 ? groups[0] : undefined
+}
+
+/** Footers with another title than most of `pages` carry, each title once with its pages: one
+ *  thesis, one title (one odd page is one change, not two). */
+function titleChanges(doc: Doc, pages: number[]): Problem[] {
+  const [main, ...others] = titleGroups(doc, pages)
+  return others.map((g) => ({
+    type: 'changed',
+    page: g.pages[0],
+    text: `${pagesText(g.pages)}: the footer has another title, “${quote(g.shown, 40)}”, than the other pages (“${quote(main.shown, 40)}”); keep one shortened title`,
+  }))
 }
 
 // ---- PDF ----
@@ -318,6 +344,8 @@ export function summarize(problems: Problem[]): string[] {
       return [
         `A long title (${ps[0].words} words), not a shortened one, on ${pagesText(pages)}: shorten it`,
       ]
+    if (type === 'ellipsis' && ps.some((p) => p.words))
+      return [`No ellipsis (…) after the title on ${pagesText(pages)}`]
     return [`${LABEL[type]} ${pagesText(pages)}`]
   })
 }

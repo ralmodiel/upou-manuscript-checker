@@ -88,7 +88,8 @@ export interface Page {
   footerLines: Line[]
   /** Paragraph indices whose first line is on this page. */
   paras: number[]
-  images: Box[]
+  /** Pictures; `ink` (0 white to 1 black) for the small ones on the first pages (tick boxes). */
+  images: (Box & { ink?: number })[]
   /** Ink, stamps, free text and drawn shapes: anything a signature or a tick could be. */
   marks: (Box & {
     kind: string

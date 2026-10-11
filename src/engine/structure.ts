@@ -201,7 +201,7 @@ export function findStructure(doc: Doc): Structure {
   }
   if (!s.acceptance) {
     const k = find(
-      /\b(paper|thesis|study|manuscript) (prepared|written|entitled)\b.*\bby\b|is hereby accepted/i,
+      /\b(paper|thesis|dissertation|study|manuscript) (prepared|written|entitled)\b.*\bby\b|is hereby accepted/i,
     )
     if (k > 0)
       s.acceptance = { heading: pageStart(doc, k), start: pageStart(doc, k), end: paras.length }

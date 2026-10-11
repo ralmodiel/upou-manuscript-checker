@@ -16,7 +16,15 @@ import {
   shown,
   wordDiff,
 } from '../text.ts'
-import { judge, pagesText, pdfFolio, wordFolioAt, type Want } from './numbering.ts'
+import {
+  judge,
+  mainTitle,
+  pagesText,
+  pdfFolio,
+  titleKey,
+  wordFolioAt,
+  type Want,
+} from './numbering.ts'
 
 // The seal in the MDC template: its file's SHA-256 and its difference hash (scripts/probe/seal-hash.mjs).
 export const SEAL_SHA256 = '1d89b4e2dbe46ea14a34faeeeb4a0fc18999438b12c4fae9bc8ac66abf6ae8c9'
@@ -52,10 +60,14 @@ export interface TitlePage {
   rows: Para[]
   studentSig?: Para
   adviserSig?: Para
+  /** "Thesis" or, on a doctoral dissertation, "Dissertation": the word before "Adviser". */
+  work: 'Thesis' | 'Dissertation'
 }
 
 const TABLE_ROW = /^(invention|publication|confidential|free)\s*\(/i
-const ADVISER_LABEL = /^thesis adviser\b(?!'?s?\s*signature)/i
+// A doctoral dissertation on the same template has a "Dissertation Adviser:" and a "Doctor of …".
+const ADVISER_LABEL = /^(thesis|dissertation) adviser\b(?!'?s?\s*signature)/i
+const PROGRAM = /master of development communication|^doctor of\b/i
 
 /** PDF pages before the other preliminary pages that hold a picture and no text: signed pages
  *  scanned back in, which cannot be read. */
@@ -76,9 +88,13 @@ export function readTitlePage(ctx: Ctx): TitlePage {
   // A scanned title page has no text: what comes after it is not the title page.
   const paras = scannedFront(ctx).includes(page) ? [] : textIn(ctx, start, end)
   const idx = (p?: Para) => (p ? paras.indexOf(p) : -1)
-  const program =
-    find(paras, /master of development communication/i) ?? find(paras, /master of|program/i)
+  const program = find(paras, PROGRAM) ?? find(paras, /master of|program/i)
   const adviserLabel = find(paras, ADVISER_LABEL)
+  const work =
+    /^dissertation/i.test(norm(adviserLabel?.text ?? '')) ||
+    (!adviserLabel && /^doctor of/i.test(norm(program?.text ?? '')))
+      ? 'Dissertation'
+      : 'Thesis'
   const faculty = paras.find(
     (p, k) =>
       k > idx(adviserLabel) &&
@@ -115,6 +131,7 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     rows: paras.filter((p) => TABLE_ROW.test(norm(p.text))),
     studentSig: find(paras, /^student'?s?\s+signature/i),
     adviserSig: find(paras, /adviser'?s?\s+signature/i),
+    work,
   }
 }
 
@@ -140,11 +157,12 @@ const bareName = (s: string) =>
 
 // ---- Pictures and marks near a label ----
 
-/** Whether something signature-like sits around a label line on a PDF page. */
-function pdfMarkNear(ctx: Ctx, label: Para): boolean {
+/** What signature-like sits around a label line on a PDF page: a mark (a picture, ink, a stamp,
+ *  a drawn signature) or only a signature field, which may be signed or empty. */
+function pdfMarkNear(ctx: Ctx, label: Para): 'mark' | 'field' | undefined {
   const page = ctx.doc.pages?.[label.page ?? -1]
   const line = label.lines?.[0]
-  if (!page || !line) return false
+  if (!page || !line) return undefined
   const zone: Box = {
     x0: line.x0 - 20,
     x1: page.width,
@@ -154,11 +172,12 @@ function pdfMarkNear(ctx: Ctx, label: Para): boolean {
   const inside = (b: Box) => b.x1 > zone.x0 && b.x0 < zone.x1 && b.y1 > zone.y0 && b.y0 < zone.y1
   // A signature is wider than a letter and taller than a rule: tick boxes drawn as pictures are not.
   const big = (b: Box) => b.x1 - b.x0 >= 2 * line.size && b.y1 - b.y0 >= 0.5 * line.size
-  if (page.images.some((b) => inside(b) && big(b))) return true
-  return page.marks.some(
-    (m) =>
-      inside(m) && (m.kind !== 'path' ? !/Widget:(Tx|Btn)/.test(m.kind) : (m.count ?? 0) > 120),
-  )
+  if (page.images.some((b) => inside(b) && big(b))) return 'mark'
+  const near = page.marks.filter(inside)
+  if (near.some((m) => (m.kind === 'path' ? (m.count ?? 0) > 120 : !/^Widget:/.test(m.kind))))
+    return 'mark'
+  // pdf.js does not tell a signed signature field from an empty one.
+  return near.some((m) => m.kind === 'Widget:Sig') ? 'field' : undefined
 }
 
 /** A picture anchored within a couple of paragraphs of a label (Word). */
@@ -207,11 +226,17 @@ async function seal(ctx: Ctx, tp: TitlePage): Promise<Finding> {
   )
 }
 
-const ANCHORS: [string, RegExp][] = [
+/** The title page's parts in the template's order, named as a thesis or a dissertation has them. */
+const anchors = (work: TitlePage['work']): [string, RegExp][] => [
   ['UNIVERSITY OF THE PHILIPPINES', /university of the philippines/i],
   ['OPEN UNIVERSITY', /open university/i],
-  ['MASTER OF DEVELOPMENT COMMUNICATION', /master of development communication/i],
-  ['Thesis Adviser:', ADVISER_LABEL],
+  [
+    work === 'Dissertation'
+      ? 'the degree program (DOCTOR OF …)'
+      : 'MASTER OF DEVELOPMENT COMMUNICATION',
+    PROGRAM,
+  ],
+  [`${work} Adviser:`, ADVISER_LABEL],
   [
     'Faculty of Information and Communication Studies',
     /faculty of information and communication studies/i,
@@ -219,12 +244,12 @@ const ANCHORS: [string, RegExp][] = [
   ['Permission of the classification…', /permission of the classification/i],
   ['the permission codes (Invention, Publication, Confidential, Free)', /^invention\s*\(/i],
   ["Student's Signature:", /student'?s?\s+signature/i],
-  ["Thesis Adviser's Signature:", /adviser'?s?\s+signature/i],
+  [`${work} Adviser's Signature:`, /adviser'?s?\s+signature/i],
 ]
 
 function sequence(tp: TitlePage): Finding {
   const id = 'title.sequence'
-  const found = ANCHORS.map(([name, re]) => ({
+  const found = anchors(tp.work).map(([name, re]) => ({
     name,
     k: tp.paras.findIndex((p) => re.test(norm(p.text))),
   }))
@@ -252,18 +277,24 @@ function sequence(tp: TitlePage): Finding {
   if (tp.author && tp.title.length) {
     const words = (p: Para) => norm(p.text).split(' ').length
     if (words(tp.author) > 8 && tp.title.length === 1 && words(tp.title[0]) <= 6) {
-      issues.push('Write your name before the thesis title')
+      issues.push(`Write your name before the ${tp.work.toLowerCase()} title`)
       lines.push(tp.author)
     }
   }
   for (const [re, right] of [
     [/^student\s+signature/i, "Student's Signature"],
-    [/adviser\s+signature/i, "Thesis Adviser's Signature"],
+    [/adviser\s+signature/i, "Adviser's Signature"],
   ] as const) {
     const p = tp.paras.find((x) => re.test(norm(x.text)))
     if (p) {
+      // As the file names the work: "Thesis" or "Dissertation" Adviser.
+      const label = norm(p.text).replace(/\s*:$/, '')
+      const work = /^(thesis|dissertation)\b/i.exec(label)?.[1] ?? tp.work
+      const want = right.startsWith('Adviser')
+        ? `${work[0].toUpperCase()}${work.slice(1).toLowerCase()} ${right}`
+        : right
       issues.push(
-        `Add an apostrophe and s to the signature label: “${right}” (not “${quote(norm(p.text).replace(/\s*:$/, ''), 40)}”)`,
+        `Add an apostrophe and s to the signature label: “${want}” (not “${quote(label, 40)}”)`,
       )
       lines.push(p)
     }
@@ -272,8 +303,12 @@ function sequence(tp: TitlePage): Finding {
   return fix(id, 'Follow the sequence of information in the MDC template.', {
     details: issues,
     where: [
+      // A scanned cover: its page is the place.
+      ...(!tp.cover && tp.coverPage !== undefined ? [{ page: tp.coverPage }] : []),
       ...lines.slice(0, 5).flatMap(at),
-      ...(missing.length || !lines.length ? [{ page: tp.page }] : []),
+      ...(missing.length || (!lines.length && tp.coverPage === undefined)
+        ? [{ page: tp.page }]
+        : []),
     ],
   })
 }
@@ -282,9 +317,13 @@ function titleUpper(tp: TitlePage): Finding {
   const id = 'title.title'
   const t = titleOf(tp)
   if (!t)
-    return fix(id, 'Indicate the final thesis title between your name and “Thesis Adviser:”.', {
-      where: [{ page: tp.page }],
-    })
+    return fix(
+      id,
+      `Indicate the final ${tp.work.toLowerCase()} title between your name and “${tp.work} Adviser:”.`,
+      {
+        where: [{ page: tp.page }],
+      },
+    )
   if (/^title$/i.test(t))
     return fix(id, 'Replace “TITLE” with your final thesis title, in upper case.', {
       where: at(tp.title[0]),
@@ -312,11 +351,17 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
       : raw,
   )
   if (!name)
-    return fix(id, "Write your thesis adviser's name under “Thesis Adviser:”.", {
-      where: [{ page: tp.page }],
-    })
+    return fix(
+      id,
+      `Write your ${tp.work.toLowerCase()} adviser's name under “${tp.work} Adviser:”.`,
+      {
+        where: [{ page: tp.page }],
+      },
+    )
   if (/^name$/i.test(name))
-    return fix(id, "Replace “NAME” with your thesis adviser's name.", { where: at(tp.adviser) })
+    return fix(id, `Replace “NAME” with your ${tp.work.toLowerCase()} adviser's name.`, {
+      where: at(tp.adviser),
+    })
   const chair = committee[0] ? bareName(committee[0]) : ''
   const mine = bareName(name)
   if (chair && chair !== mine && distance(chair, mine) <= 3)
@@ -393,12 +438,28 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     Math.abs((b.y0 + b.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size
   const from = yesWord.x0 - 4 * line.size
   const side = (x: number) => (x < or.x0 ? 'yes' : 'no')
-  // Pictures or filled shapes on both sides are the boxes themselves (a Google Docs export draws
-  // its boxes as pictures); on one side only, they mark it: a tick pasted in, a box filled in, a
-  // word highlighted (a filled shape, not white, wider than a rule and no wider than a word).
+  // Filled shapes on both sides are the boxes themselves; on one side only, they mark it: a box
+  // filled in, a word highlighted (a filled shape, not white, wider than a rule, no wider than a word).
   const oneSide = (xs: number[]) => (new Set(xs.map(side)).size === 1 ? xs : [])
   const width = (b: Box) => b.x1 - b.x0
-  const pictures = page.images.filter((b) => band(b) && b.x0 > from).map((b) => b.x0)
+  // Pictures (a Google Docs export draws its boxes as pictures): those on one side only, or more of
+  // them on one side (a tick pasted on its box), mark it; with one box picture a side, the clearly
+  // darker one is a ticked box swapped in.
+  const pics = page.images.filter((b) => band(b) && b.x0 > from)
+  const on = (s: Choice) => pics.filter((b) => side(b.x0) === s)
+  const ink = (s: Choice) => Math.max(0, ...on(s).map((b) => b.ink ?? 0))
+  const [left, right] = [on('yes').length, on('no').length]
+  const marked: Choice | undefined =
+    left !== right
+      ? left > right
+        ? 'yes'
+        : 'no'
+      : Math.abs(ink('yes') - ink('no')) > 0.02
+        ? ink('yes') > ink('no')
+          ? 'yes'
+          : 'no'
+        : undefined
+  const pictures = marked ? on(marked).map((b) => b.x0) : []
   const filled = page.marks
     .filter(
       (m) =>
@@ -417,7 +478,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     ...page.marks
       .filter((m) => band(m) && m.kind !== 'path' && m.on !== false && m.x0 > from)
       .map((m) => m.x0),
-    ...oneSide(pictures),
+    ...pictures,
     ...oneSide(filled),
   ]
   return pick(xs.map(side))
@@ -459,8 +520,15 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
 
 function signature(ctx: Ctx, label: Para | undefined, id: string, page: string): Finding {
   if (!label) return fix(id, `Affix your signature on the ${page}.`)
-  const found = ctx.doc.kind === 'pdf' ? pdfMarkNear(ctx, label) : wordPictureNear(ctx, label)
-  if (found) return ok(id, `Signature found on the ${page}.`)
+  const found =
+    ctx.doc.kind === 'pdf' ? pdfMarkNear(ctx, label) : wordPictureNear(ctx, label) && 'mark'
+  if (found === 'mark') return ok(id, `Signature found on the ${page}.`)
+  if (found === 'field')
+    return review(
+      id,
+      `Check that the signature field beside “${quote(label.text, 40)}” is signed: an empty field looks the same here.`,
+      { where: at(label) },
+    )
   return ctx.doc.kind === 'pdf'
     ? fix(id, `Affix your signature on the ${page}.`, { where: at(label) })
     : review(
@@ -479,6 +547,8 @@ function folioCheck(
   para: Para | undefined,
   want: Want,
   name: string,
+  /** The whole title (title page): a footer holding it is no shortened title. */
+  full?: string,
 ): Finding {
   const { doc } = ctx
   if (!para) return na(id, `No ${name} found.`)
@@ -486,12 +556,32 @@ function folioCheck(
     const page = para.page ?? 0
     const folio = pdfFolio(doc, page)
     const problems = judge(folio, want, page)
+    // One shortened title throughout: this page's against the one most pages before Chapter I carry.
+    if (want !== 'none' && folio?.title && folio.number !== undefined) {
+      const ch = ctx.s.chapters[0]
+      const last = ch ? (doc.paras[ch.heading].page ?? 0) : (doc.pages?.length ?? 0)
+      const main = mainTitle(
+        doc,
+        Array.from({ length: last }, (_, p) => p),
+      )
+      if (main && titleKey(folio.title) !== main.key)
+        problems.push({
+          type: 'changed',
+          page,
+          text: `${pagesText([page])}: the footer has another title, “${quote(folio.title, 40)}”, than the other preliminary pages (“${quote(main.shown, 40)}”); keep one shortened title`,
+        })
+    }
     if (!problems.length)
       return ok(id, want === 'none' ? `No page number on the ${name}.` : `${name}: “${folio?.raw}”`)
-    return fix(id, wantMessage(want, name, !!folio?.title), {
-      details: problems.map((p) => p.text),
-      where: [{ page }],
-    })
+    const whole =
+      !!full && !!titleKey(full) && titleKey(folio?.title ?? '').includes(titleKey(full))
+    return fix(
+      id,
+      problems.length === 1 && problems[0].type === 'changed'
+        ? `Use the same shortened title in the footer of the ${name} as on the other preliminary pages.`
+        : wantMessage(want, name, folio?.title ? (whole ? 'title' : 'shortened title') : undefined),
+      { details: problems.map((p) => p.text), where: [{ page }] },
+    )
   }
   if (!doc.sections) return review(id, `Check the page number on the ${name} in the PDF version.`)
   const { folio, firstPage } = wordFolioAt(doc, para.i)
@@ -505,9 +595,10 @@ function folioCheck(
   })
 }
 
-const wantMessage = (want: Want, name: string, titled = false) =>
+/** `title`: what the footer shows before the number, a title or a shortened one. */
+const wantMessage = (want: Want, name: string, title?: string) =>
   want === 'none'
-    ? `Remove the ${titled ? 'footer (shortened title and page number)' : 'page number'} on the ${name}.`
+    ? `Remove the ${title ? `footer (${title} and page number)` : 'page number'} on the ${name}.`
     : `Add the shortened thesis title + ellipsis + page number (${want.kind === 'roman' && want.value ? roman(want.value) : 'Roman numerals'}) on the ${name}.`
 
 // ---- University Permission Page ----
@@ -697,24 +788,28 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       where: at(blank[0]?.para),
     })
   const dean = names.dean
-  if (dean && bareName(dean.name) !== bareName(DEAN)) {
-    // A committee member's name left on the Dean's line (a line copied and not changed).
-    if (names.committee.some((c) => bareName(c.name) === bareName(dean.name)))
-      return fix(
-        id,
-        `Write the Dean's name on the Dean's line: “${dean.name}” is a committee member's name. The MDC template has “${DEAN}, Ph.D.”.`,
-        {
-          // Names hold commas ("NAME, Ph.D."): semicolons part them.
-          details: [`Check the spelling of: ${names.committee.map((c) => c.name).join('; ')}.`],
-          where: at(dean.para),
-        },
-      )
+  const deanOff = !!dean && bareName(dean.name) !== bareName(DEAN)
+  // A committee member's name left on the Dean's line (a line copied and not changed).
+  if (dean && deanOff && names.committee.some((c) => bareName(c.name) === bareName(dean.name)))
+    return fix(
+      id,
+      `Write the Dean's name on the Dean's line: “${dean.name}” is a committee member's name (the MDC template has “${DEAN}, Ph.D.”). Check the spelling of each committee name below.`,
+      { details: names.committee.map((c) => c.name), where: at(dean.para) },
+    )
+  // A name line ending in a comma ("…, Ph.D,"): a typo, certain enough to correct.
+  const comma = all.filter((n) => /,\s*$/.test(n.name))
+  if (comma.length)
+    return fix(
+      id,
+      `Remove the comma at the end of ${list(comma.map((n) => `“${n.name}”`))}. Check the spelling of each name below.`,
+      { details: all.map((n) => n.name), where: at(comma[0].para) },
+    )
+  if (dean && deanOff)
     return review(
       id,
       `Check the Dean's name (the MDC template has “${DEAN}, Ph.D.”) and the spelling of each name below: spelling cannot be checked here.`,
       { details: all.map((n) => n.name), where: at(dean.para) },
     )
-  }
   return review(id, 'Check the spelling of each name below: spelling cannot be checked here.', {
     details: all.map((n) => n.name),
   })
@@ -730,8 +825,11 @@ function convention(names: Names): Finding {
     (n) => n.name && !/^name$/i.test(n.name),
   )
   if (!all.length) return na(id, 'No committee names yet.')
-  const style = (n: string) =>
-    PREFIX.test(n) ? (SUFFIX.test(n) ? 'both' : 'title') : SUFFIX.test(n) ? 'degree' : 'none'
+  // A stray comma after the degree ("Ph.D,") is a typo (acceptance.names says so), not a style.
+  const style = (raw: string) => {
+    const n = raw.replace(/[,;]\s*$/, '')
+    return PREFIX.test(n) ? (SUFFIX.test(n) ? 'both' : 'title') : SUFFIX.test(n) ? 'degree' : 'none'
+  }
   const styles = all.map((n) => ({ ...n, style: style(n.name) }))
   const kinds = new Set(styles.map((s) => s.style))
   if (kinds.size === 1 && !kinds.has('both'))
@@ -745,12 +843,18 @@ function convention(names: Names): Finding {
     both: 'title and degree',
     none: 'neither title nor degree',
   }
+  // The places: the names that break the convention most of them follow.
+  const count = (st: string) => styles.filter((s) => s.style === st).length
+  const most = [...kinds].reduce((x, y) => (count(y) > count(x) ? y : x))
+  const odd = new Set(
+    styles.filter((s) => s.style !== most || s.style === 'both').map((s) => s.para),
+  )
   return fix(
     id,
     'For uniformity, use either titles before all names (DR. JUAN A. CRUZ) or degree abbreviations after all names (JUAN A. CRUZ, Ph.D.).',
     {
       details: styles.map((s) => `${s.name}: ${describe[s.style as keyof typeof describe]}`),
-      where: at(styles[0].para),
+      where: [...odd].flatMap(at),
     },
   )
 }
@@ -789,6 +893,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
             tp.paras[0] ?? ctx.doc.paras[0],
             'none',
             'title page',
+            titleOf(tp),
           ),
         ]),
     ...(!permHead && scans.length

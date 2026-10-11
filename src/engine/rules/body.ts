@@ -1,6 +1,6 @@
 // Body text: which paragraphs count, and whether they are justified and double-spaced.
 import type { Para } from '../model.ts'
-import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
+import { fix, na, ok, review, spread, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, isTocLine } from '../structure.ts'
 import { norm, plural, quote } from '../text.ts'
 import { pagesText } from './numbering.ts'
@@ -45,10 +45,9 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
 const multiLine = (ctx: Ctx, p: Para) =>
   ctx.doc.kind === 'pdf' ? (p.lines?.length ?? 0) >= 2 : norm(p.text).length > 110
 
-const isList = (p: Para) => !!p.list || LIST.test(norm(p.text))
+export const isList = (p: Para) => !!p.list || LIST.test(norm(p.text))
 
-const where = (ps: Para[]) =>
-  ps.slice(0, 5).map((p) => ({ page: p.page, quote: quote(p.text, 60) }))
+const where = (ps: Para[]) => spread(ps.map((p) => ({ page: p.page, quote: quote(p.text, 60) })))
 
 /** A finding for justification over the given paragraphs; `name` says where ("the chapters"). */
 export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Finding {
@@ -81,7 +80,8 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
     return status(
       id,
       `A line stops short of the margin on ${pagesText([one[0].page])}: justify the paragraph, or remove the line break there.`,
-      { details, where: where(bad) },
+      // No "not justified" count: the paragraph may be justified, with a line break typed there.
+      { where: where(bad) },
     )
   return status(id, `Justify the body text of ${name} (Home > Justify, or Ctrl+J).`, {
     details,
