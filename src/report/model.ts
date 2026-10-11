@@ -44,11 +44,34 @@ export function placesOf(f: Pick<Finding, 'where' | 'details'>): Where[] {
     .slice(0, 5)
 }
 
-/** Places as text: “p. 7 “…”; p. 9”. */
-export const whereText = (where: Where[]) =>
+/** The number printed on a PDF page when it is not the page's own count: "48" on p. 60. */
+export function printedOf(page: number, labels?: Report['pageLabels']) {
+  const label = labels?.[page]
+  return label && label !== String(page + 1) ? label : undefined
+}
+
+/** "p. 60", or "p. 60 (printed 48)". */
+export function pageText(page: number, labels?: Report['pageLabels']) {
+  const printed = printedOf(page, labels)
+  return `p. ${page + 1}${printed ? ` (printed ${printed})` : ''}`
+}
+
+/** A detail's leading page ("p. 14: …") with its printed number too. */
+export const detailText = (detail: string, labels?: Report['pageLabels']) =>
+  detail.replace(/^p\. (\d+)(?=[:,])/, (_, n: string) => pageText(Number(n) - 1, labels))
+
+export const PAGES_NOTE =
+  'Pages (p.) are counted from the first page of the PDF, as a PDF viewer counts them; “printed” is the number shown on the page itself.'
+
+/** Whether a report's printed page numbers differ from its page count anywhere. */
+export const hasPrinted = (r: Report) =>
+  !!r.pageLabels?.some((_, page) => printedOf(page, r.pageLabels))
+
+/** Places as text: “p. 7 “…”; p. 9 (printed ii)”. */
+export const whereText = (where: Where[], labels?: Report['pageLabels']) =>
   where
     .map((w) =>
-      [w.page !== undefined ? `p. ${w.page + 1}` : '', w.quote ? `“${w.quote}”` : '']
+      [w.page !== undefined ? pageText(w.page, labels) : '', w.quote ? `“${w.quote}”` : '']
         .filter(Boolean)
         .join(' '),
     )
@@ -70,13 +93,16 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
       .map((i) => ({ i, f: byId.get(i.id)! }))
       .filter(({ f }) => f.status === 'fix' || f.status === 'review')
       .map(({ i, f }) => {
-        const where = whereText(placesOf(f))
+        const where = whereText(placesOf(f), r.pageLabels)
         return {
           // "Check:" before a message that already says "Check …" would only repeat it.
           check: f.status === 'review' && !/^check\b/i.test(f.message),
           text: f.message,
           // The pages a message calls "linked here", as the results page links them.
-          details: [...(f.details ?? []), ...(i.links ?? []).map((l) => `${l.label}: ${l.href}`)],
+          details: [
+            ...(f.details ?? []).map((d) => detailText(d, r.pageLabels)),
+            ...(i.links ?? []).map((l) => `${l.label}: ${l.href}`),
+          ],
           where: f.message.includes(where) ? '' : where,
         }
       })
@@ -106,6 +132,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
             'Items marked “Check:” could not be confirmed from the file; please look at them yourself.',
           ]
         : []),
+      ...(parts.length && hasPrinted(r) ? [PAGES_NOTE] : []),
       ...r.notes,
     ],
     notices: [

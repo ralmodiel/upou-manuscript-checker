@@ -5,7 +5,15 @@ import { CHECKLIST, type Item } from '../engine/checklist'
 import type { Finding, Report, Status } from '../engine/report'
 import { saveFile } from '../lib/browser'
 import { PRIVATE_SHORT, VERIFY } from '../notice'
-import { placesOf, reportModel, reportName } from '../report/model'
+import {
+  PAGES_NOTE,
+  detailText,
+  hasPrinted,
+  placesOf,
+  printedOf,
+  reportModel,
+  reportName,
+} from '../report/model'
 import {
   CheckIcon,
   ChevronLeftIcon,
@@ -62,7 +70,15 @@ function PartState({ part, compact = false }: { part: PartView; compact?: boolea
   )
 }
 
-function ItemRow({ item, finding }: { item: Item; finding: Finding }) {
+function ItemRow({
+  item,
+  finding,
+  labels,
+}: {
+  item: Item
+  finding: Finding
+  labels: Report['pageLabels']
+}) {
   const where = placesOf(finding)
   const open = finding.status === 'fix' || finding.status === 'review'
   return (
@@ -85,7 +101,7 @@ function ItemRow({ item, finding }: { item: Item; finding: Finding }) {
                 <span aria-hidden="true" className="text-ink-3">
                   ›
                 </span>
-                <span className="min-w-0 break-words">{d}</span>
+                <span className="min-w-0 break-words">{detailText(d, labels)}</span>
               </li>
             ))}
           </ul>
@@ -101,6 +117,12 @@ function ItemRow({ item, finding }: { item: Item; finding: Finding }) {
                 {w.page !== undefined && (
                   <span className="shrink-0 font-semibold whitespace-nowrap text-ink tabular-nums">
                     p. {w.page + 1}
+                    {printedOf(w.page, labels) && (
+                      <span className="font-normal text-ink-3">
+                        {' '}
+                        · printed {printedOf(w.page, labels)}
+                      </span>
+                    )}
                   </span>
                 )}
                 {w.quote && <span className="line-clamp-2 wrap-anywhere">“{w.quote}”</span>}
@@ -312,7 +334,10 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
             <span>{PRIVATE_SHORT}</span>
           </p>
         </div>
-        {report.notes.map((n) => (
+        {[
+          ...(fix + review + extraFix > 0 && hasPrinted(report) ? [PAGES_NOTE] : []),
+          ...report.notes,
+        ].map((n) => (
           <p
             key={n}
             className="mt-3 flex gap-2.5 rounded-[12px] border border-line p-3.5 text-sm leading-relaxed text-ink-2 [&_svg]:size-5"
@@ -398,7 +423,12 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                 </header>
                 <ul className="divide-y divide-line">
                   {p.rows.map((r) => (
-                    <ItemRow key={r.item.id} item={r.item} finding={r.finding} />
+                    <ItemRow
+                      key={r.item.id}
+                      item={r.item}
+                      finding={r.finding}
+                      labels={report.pageLabels}
+                    />
                   ))}
                 </ul>
                 {!all && (
