@@ -1,7 +1,14 @@
 // Stage 3: the whole checklist with the file's status on every item. A summary and the downloads
 // lead; then a card for every manuscript part, and the items under tabs by status. Choosing a part
 // or a tab changes only the list: nothing scrolls, and focus stays where it was.
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { CHECKLIST, type Item } from '../engine/checklist'
 import type { Finding, Report, Status, Where } from '../engine/report'
 import { saveFile } from '../lib/browser'
@@ -22,6 +29,7 @@ import {
   ExternalLinkIcon,
   InfoIcon,
   PrintIcon,
+  CloseIcon,
   RestartIcon,
   ShieldIcon,
 } from './icons'
@@ -83,6 +91,36 @@ const DOT: Record<Status, string> = {
   review: 'bg-review',
   ok: 'bg-ok',
   na: 'bg-ink-3/40',
+}
+
+/** "Clear all filters", or in its place `idle` (or nothing). Both always take their room, one of
+ *  them unseen, so nothing on the page moves as the button comes and goes. */
+function ClearFilters({
+  on,
+  onClear,
+  idle,
+}: {
+  on: boolean
+  onClear: () => void
+  idle?: ReactNode
+}) {
+  return (
+    <span className="grid">
+      {idle && (
+        <span className={`col-start-1 row-start-1 self-center ${on ? 'invisible' : ''}`}>
+          {idle}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onClear}
+        className={buttonClass('ghost', 'sm', `col-start-1 row-start-1 ${on ? '' : 'invisible'}`)}
+      >
+        <CloseIcon />
+        Clear all filters
+      </button>
+    </span>
+  )
 }
 
 function ItemRow({
@@ -235,6 +273,14 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
       behavior: 'instant',
     })
   }, [part, filter])
+
+  const filtered = part !== null || filter !== 'all'
+  /** Every part and every status again. The button pressed goes away with the filters, so focus
+   *  moves to `id` (the "All parts" heading or the All tab), without scrolling. */
+  const clearAll = (id: string) => {
+    choose(null, 'all')
+    requestAnimationFrame(() => document.getElementById(id)?.focus({ preventScroll: true }))
+  }
 
   // Arrow keys, Home and End move between the tabs (and show each), as tabs do.
   const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -405,11 +451,24 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
       </section>
 
       <section aria-labelledby="parts-title" className="mt-10" data-print="hide">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        {/* One height with the hint or the button, so the cards below never move. */}
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <h2 id="parts-title" className="font-display text-3xl text-ink">
-            All parts
+            <button
+              id="all-parts"
+              type="button"
+              aria-pressed={part === null}
+              onClick={() => choose(null, filter)}
+              className="cursor-pointer rounded-sm decoration-maroon/50 decoration-2 underline-offset-6 transition-colors hover:text-maroon hover:underline aria-[pressed=false]:text-ink-2 aria-[pressed=false]:underline"
+            >
+              All parts
+            </button>
           </h2>
-          <p className="text-sm text-ink-3">Choose a part to list only its items.</p>
+          <ClearFilters
+            on={filtered}
+            onClear={() => clearAll('all-parts')}
+            idle={<p className="text-sm text-ink-3">Choose a part to list only its items.</p>}
+          />
         </div>
         <ol className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
           {parts.map((p, k) => (
@@ -485,23 +544,21 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
         </div>
 
         <div id="items" role="tabpanel" aria-labelledby={`tab-${filter}`}>
+          {/* On phones the count takes two lines' room over the button's, so a longer count or the
+              button coming and going never moves the list. */}
           <div
-            className="flex min-h-12 flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3"
+            className="grid grid-cols-1 items-center gap-x-4 py-3 sm:min-h-16 sm:grid-cols-[minmax(0,1fr)_auto]"
             data-print="hide"
           >
-            <p aria-live="polite" className="text-sm text-ink-2 tabular-nums">
+            <p
+              aria-live="polite"
+              className="flex min-h-10 items-center text-sm text-ink-2 tabular-nums sm:min-h-0"
+            >
               {counts[filter]} {counts[filter] === 1 ? 'item' : 'items'}
+              {filter === 'all' ? '' : ` ${STATUS[filter].label.toLowerCase()}`}
               {part !== null ? ` in ${parts[part].name}` : ', all parts'}
             </p>
-            {part !== null && (
-              <button
-                type="button"
-                onClick={() => choose(null, filter)}
-                className={buttonClass('ghost', 'sm')}
-              >
-                Show all parts
-              </button>
-            )}
+            <ClearFilters on={filtered} onClear={() => clearAll('tab-all')} />
           </div>
           {parts.map((p, k) => {
             const rows = p.rows.filter((r) => shows(filter, r.finding.status))
@@ -546,10 +603,11 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
               </p>
               <button
                 type="button"
-                onClick={() => choose(part, 'all')}
+                onClick={() => clearAll('tab-all')}
                 className={buttonClass('secondary', 'sm', 'mt-4')}
               >
-                Show all items
+                <CloseIcon />
+                Clear all filters
               </button>
             </div>
           )}

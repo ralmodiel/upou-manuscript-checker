@@ -48,6 +48,12 @@ export const MinusIcon = (props: IconProps) => (
   </Icon>
 )
 
+export const CloseIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" />
+  </Icon>
+)
+
 export const InfoIcon = (props: IconProps) => (
   <Icon {...props}>
     <circle cx="12" cy="12" r="9" />
