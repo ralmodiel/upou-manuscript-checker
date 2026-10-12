@@ -12,6 +12,7 @@ import { extraRules } from './rules/extra.ts'
 import { figureRules, findCaptions } from './rules/figures.ts'
 import { frontRules, readTitlePage, titleOf } from './rules/front.ts'
 import { pdfFolio } from './rules/numbering.ts'
+import { garbled } from './text.ts'
 import { prelimRules } from './rules/prelims.ts'
 import { FileProblem } from './problem.ts'
 import { findStructure } from './structure.ts'
@@ -92,6 +93,38 @@ async function safely(
   }
 }
 
+/** Items that read the page's geometry or footers, not its words: kept when the text is unreadable. */
+const GEOMETRY =
+  /^(title\.signature|title\.pageNumber|chapterStart\.(noPageNumber|newPage|spacing)|body\.hanging|[a-z]+\.spacing)$/
+const STOP =
+  /^(the|of|and|to|in|is|for|that|with|as|on|by|are|this|be|or|was|were|an|it|from|which)$/i
+
+/** Why most of a PDF's words cannot be trusted: a font that re-encodes its letters on many pages
+ *  (shifted letters, hardly a common word), or most pages being pictures. */
+function unreadWhy(doc: Doc): 'garbled' | 'scanned' | undefined {
+  if (doc.kind !== 'pdf' || !doc.pages) return undefined
+  let text = 0
+  let bad = 0
+  let scans = 0
+  for (const pg of doc.pages) {
+    const t = pg.paras.map((i) => doc.paras[i].text).join(' ')
+    const ws = t.split(/\s+/).filter(Boolean)
+    if (ws.length < 30) {
+      const cover = pg.images.some(
+        (b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.4 * pg.width * pg.height,
+      )
+      if (cover && t.length < 150) scans++
+      continue
+    }
+    text++
+    // ponytail: needs 30 words a page and under 6% common words; a page of code or a table of codes can look so.
+    if (garbled(t) && ws.filter((w) => STOP.test(w)).length < 0.06 * ws.length) bad++
+  }
+  if (text >= 5 && bad >= 0.35 * text) return 'garbled'
+  if (scans >= 0.6 * doc.pages.length) return 'scanned'
+  return undefined
+}
+
 const idsOf = (...parts: string[]) =>
   CHECKLIST.filter((p) => parts.includes(p.id)).flatMap((p) => p.items.map((i) => i.id))
 
@@ -131,6 +164,7 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
   opts.progress?.('checking')
   // Let the page show the step before the rules' long run.
   await new Promise((r) => setTimeout(r, 0))
+  const why = unreadWhy(doc)
   const s = findStructure(doc)
   const ctx: Ctx = { doc, s, env: opts.env ?? {} }
   let captions: ReturnType<typeof findCaptions> = []
@@ -154,6 +188,29 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
   } catch {
     title = undefined
   }
+  // Most of the words cannot be trusted (re-encoded font, or pages that are pictures): what these
+  // items "found missing or different" is the reader's failing, not the student's.
+  if (why)
+    doc.notes.push(
+      why === 'garbled'
+        ? 'The letters in this PDF are stored in a re-encoded font, so its words could not be read reliably. Items that depend on the words are for you to check; a PDF saved from Word or Google Docs reads better.'
+        : 'Most pages of this PDF are pictures (scanned), so their words could not be read. Items that depend on those pages are for you to check.',
+    )
+  const unread = (f: Finding): Finding =>
+    why &&
+    // (template text left in cannot be searched for in letters that are scrambled: not "ok" either)
+    (f.status === 'fix' ||
+      (why === 'garbled' && f.status === 'ok' && f.id === 'extra.placeholders')) &&
+    !GEOMETRY.test(f.id) &&
+    (why === 'garbled' ||
+      /^(prelims\.present|chapterStart\.number|figures|references|appendices)/.test(f.id))
+      ? review(
+          f.id,
+          why === 'garbled'
+            ? 'The words of this PDF could not be read reliably (its font re-encodes the letters), so this item was not judged. Check it yourself.'
+            : 'Most pages of this PDF are scanned pictures, so this item could not be judged. Check it yourself.',
+        )
+      : f
   return {
     fileName: name,
     kind,
@@ -167,8 +224,10 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
             item.id,
             'No text could be read from this PDF (it may be scanned pages), so this item was not checked. Check it yourself, or check the Word file.',
           )
-        : (byId.get(item.id) ??
-          review(item.id, 'This check could not run on your file. Check this item yourself.')),
+        : unread(
+            byId.get(item.id) ??
+              review(item.id, 'This check could not run on your file. Check this item yourself.'),
+          ),
     ),
     notes: doc.notes,
     ms: Math.round(performance.now() - t0),

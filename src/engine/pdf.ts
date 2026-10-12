@@ -373,9 +373,34 @@ export async function readPdf(
           !/^#f[0-9a-f]f[0-9a-f]f[0-9a-f]$/i.test(m.fill) &&
           m.x1 - m.x0 < 0.95 * vp.width,
       )
+      // A typed-over box (a free-text note with its own look) hides a template line beneath it:
+      // a line wholly inside one that does not say what the line says is not on the page.
+      const covers = (
+        annots as {
+          subtype?: string
+          rect?: number[]
+          hasAppearance?: boolean
+          contentsObj?: { str?: string }
+        }[]
+      )
+        .filter((a) => a.subtype === 'FreeText' && a.hasAppearance && a.rect)
+        .map((a) => ({
+          ...boxOf([1, 0, 0, 1, 0, 0], a.rect![0], a.rect![1], a.rect![2], a.rect![3]),
+          said: flat(a.contentsObj?.str ?? '').toLowerCase(),
+        }))
+      const covered = (l: Line) =>
+        covers.some(
+          (c) =>
+            c.x0 <= l.x0 + 2 &&
+            c.x1 >= l.x1 - 2 &&
+            c.y0 <= l.y - l.size + 2 &&
+            c.y1 >= l.y &&
+            !c.said.includes(flat(l.text).toLowerCase()),
+        )
+      const shown = covers.length ? lines.filter((l) => !covered(l)) : lines
       allLines.push(
         whites.length
-          ? lines.filter(
+          ? shown.filter(
               (l) =>
                 flat(l.text).length < 4 ||
                 !whites.includes(flat(l.text)) ||
@@ -384,7 +409,7 @@ export async function readPdf(
                     m.x0 <= l.x0 + 2 && m.x1 >= l.x1 - 2 && m.y0 <= l.y - l.size && m.y1 >= l.y,
                 ),
             )
-          : lines,
+          : shown,
       )
       const own = linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored
       // Coloured text quoted as the page's lines read it, spaces and all.

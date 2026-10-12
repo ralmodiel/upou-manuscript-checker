@@ -176,6 +176,8 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
   return 'unknown'
 }
 
+const ENTRY = /^(fig(ure)?|table)\.?\s*\d+[A-Za-z]?[.:]?\t/i
+
 export function findCaptions(ctx: Ctx): Caption[] {
   const { doc } = ctx
   singleWeight = singleWeights(ctx)
@@ -191,6 +193,10 @@ export function findCaptions(ctx: Ctx): Caption[] {
         : [],
     ),
   )
+  const entries = new Map<number, number>()
+  for (const q of doc.paras)
+    if (q.page !== undefined && ENTRY.test(q.text))
+      entries.set(q.page, (entries.get(q.page) ?? 0) + 1)
   for (let k = start; k < end; k++) {
     const p = doc.paras[k]
     const t = norm(p.text)
@@ -206,6 +212,8 @@ export function findCaptions(ctx: Ctx): Caption[] {
       (t.length > (labelBold(p) ? 400 : 250) &&
         !/^[A-Za-z.]+\s*[A-Z]?\d[\d.a-z -]*?\s?[.:]\s/i.test(t)) ||
       (p.page !== undefined && listed.has(p.page)) ||
+      // (a list's entry, label then tab then title, with others like it on the page: a list not headed as one)
+      (p.page !== undefined && ENTRY.test(p.text) && entries.get(p.page)! >= 2) ||
       // (a long paragraph opened like the body's own, with an indent, is running text)
       (t.length > 400 &&
         (p.indent?.firstLine ?? 0) >= 15 &&

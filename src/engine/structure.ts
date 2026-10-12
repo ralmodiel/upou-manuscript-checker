@@ -96,7 +96,7 @@ const CHAPTER_TITLE =
 // ("II . REVIEW…": a space may stand before the period)
 const NUMBERED_TITLE = /^([ivxlc]+|\d{1,2})\s*[.)]\s+(\S.*)$/i
 const APPENDIX =
-  /^(appendix|appendices|appendixes|annex|annexes)(?:\s+([a-z]{1,2}\d?|\d{1,2}[a-z]?)\b)?[\s.:–—-]*(.*)$/i
+  /^(appendix|appendices|appendixes|annex|annexes)(?:\s+([ivx]{3,5}|[a-z]{1,2}\d?|\d{1,2}[a-z]?)\b)?[\s.:–—-]*(.*)$/i
 /** A reference list's heading, under any of its names, with the number of a numbered section
  *  ("XII. REFERENCES"). */
 const REFERENCES =

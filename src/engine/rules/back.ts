@@ -80,6 +80,8 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
         /,\s*\d{1,3}(\(\d+\)?)?,\s*[A-Za-z]?\d+[-–]\d+\.?(\s+(https?:\/\/|doi:)\S+)?$/.test(t))
     const opens =
       !out.length ||
+      // (a numbered list, "[1] Author…": each number opens an entry)
+      /^\[\d{1,3}\]\s/.test(t) ||
       (placed !== false && PARTICLE.test(t)) ||
       (!goesOn &&
         !/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
@@ -108,7 +110,7 @@ const startsEntry = (t: string) => {
 /** Sort key: the first author's surname (or group author), letter by letter. */
 const key = (e: Entry) =>
   e.text
-    .replace(/^\d+[.)]\s*/, '')
+    .replace(/^(\d+[.)]|\[\d+\])\s*/, '')
     .split(/[,(]/)[0]
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -768,7 +770,17 @@ function labels(ctx: Ctx): Finding {
     issues.push('Label appendices with capital letters (Appendix A, B, C), as APA style does.')
     statuses.push('review')
   }
-  const letters = marks.filter((m) => /^[a-z]$/i.test(m)).map((m) => m.toUpperCase().charCodeAt(0))
+  // Roman numerals (I, II, III…) are a different system, not letters that skip.
+  const romans = marks.some((m) => /^[ivx]{2,5}$/i.test(m))
+  if (romans) {
+    issues.push(
+      'Label appendices with capital letters (Appendix A, B, C), as APA style does, not Roman numerals.',
+    )
+    statuses.push('review')
+  }
+  const letters = romans
+    ? []
+    : marks.filter((m) => /^[a-z]$/i.test(m)).map((m) => m.toUpperCase().charCodeAt(0))
   if (letters.some((c, k) => k > 0 && c !== letters[k - 1] + 1)) {
     issues.push(`The appendix letters skip or repeat (${marks.join(', ')}).`)
     statuses.push(picturePages.length ? 'review' : 'fix')
@@ -799,13 +811,13 @@ function labels(ctx: Ctx): Finding {
     )
   }
   const labelOf = (p: Para) =>
-    /^(appendix|appendices|annex)\s*([a-z]{1,2}\d?|\d{1,2}[a-z]?)?\b/i
+    /^(appendix|appendices|annex)\s*([ivx]{3,5}|[a-z]{1,2}\d?|\d{1,2}[a-z]?)?\b/i
       .exec(norm(p.text))?.[0]
       .trim() || quote(p.text, 30)
   for (const a of aps) {
     const head = doc.paras[a.heading]
     const inline = norm(head.text).replace(
-      /^(appendix|appendices|annex)\s*([a-z]{1,2}\d?|\d{1,2}[a-z]?)?\b[\s.:–—-]*/i,
+      /^(appendix|appendices|annex)\s*([ivx]{3,5}|[a-z]{1,2}\d?|\d{1,2}[a-z]?)?\b[\s.:–—-]*/i,
       '',
     )
     const next = nextText(doc.paras, a.heading + 1, a.end)
