@@ -4,7 +4,7 @@ import { fix, na, ok, review, spread, worst, type Ctx, type Finding } from '../r
 import { bolded, headingText, isTocLine, LIST_HEADING } from '../structure.ts'
 import { inShape, textSize } from './body.ts'
 import { list, norm, quote } from '../text.ts'
-import { more, noTextPages, pagesText } from './numbering.ts'
+import { noTextPages, pagesText } from './numbering.ts'
 
 export interface Caption {
   para: Para
@@ -326,23 +326,18 @@ export function findCaptions(ctx: Ctx): Caption[] {
 }
 
 const name = (c: Caption) => `${c.kind === 'table' ? 'Table' : 'Figure'} ${c.number}`
-/** "Table 1, Table 2 and 5 more": up to six names, then how many more. */
-const names = (cs: Caption[]) =>
-  list(
+/** "Table 1, Table 2 and 5 more (on pp. 4, 9)": up to six names, then how many more, and the pages
+ *  of all of them. */
+const names = (cs: Caption[]) => {
+  const first = list(
     cs
       .slice(0, 6)
       .map(name)
-      .concat(
-        cs.length > 6
-          ? [
-              more(
-                cs.length - 6,
-                cs.slice(6).map((c) => c.para.page),
-              ).replace(/^…and /, ''),
-            ]
-          : [],
-      ),
+      .concat(cs.length > 6 ? [`${cs.length - 6} more`] : []),
   )
+  const pages = cs.flatMap((c) => (c.para.page === undefined ? [] : [c.para.page]))
+  return cs.length > 6 && pages.length ? `${first} (on ${pagesText(pages)})` : first
+}
 const at = (c: Caption) => ({ page: c.para.page, quote: quote(c.para.text, 50) })
 
 /** Tables and pictures in the body that no caption sits beside (Word). */

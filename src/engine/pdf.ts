@@ -693,7 +693,10 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
       return { l, k, side, d: Math.round(side === 'f' ? h - l.y : l.y) }
     })
     // Words, and not a caption or note: "Table 3" opening page after page is still a caption.
-    .filter((x) => /\p{L}/u.test(x.k) && !OUTSIDE.test(x.l.text.trim()))
+    // (nor a source line under a photograph)
+    .filter(
+      (x) => /\p{L}/u.test(x.k) && !OUTSIDE.test(x.l.text.trim()) && !/^\(?sources?\s*:/i.test(x.k),
+    )
   // Pages of one size are read together (turned pages with a wide table have their own feet).
   const sizeOf = (n: number) => `${Math.round(pages[n].width)}x${Math.round(pages[n].height)}`
   const same = new Map<string, number>()
@@ -784,6 +787,9 @@ function splitBands(
       else if (
         under &&
         foot.has(under) &&
+        // (a foot that repeats page after page is whole: a line of words over it that does not
+        // repeat is the text's last line, set close to the foot)
+        !(running.has(under) && !running.has(l) && /\p{L}/u.test(l.text)) &&
         l.y > height - 100 &&
         under.y - l.y <= 1.35 * Math.max(l.size, under.size) &&
         Math.abs(l.size - under.size) < 0.6

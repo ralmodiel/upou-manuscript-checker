@@ -229,6 +229,12 @@ function numbers(ctx: Ctx): Finding {
         id,
         `${pagesText(pages)} are numbered ${roman(first - base + 1)}\u2060–\u2060${roman(last - base + 1)}, with the shortened title and an ellipsis.`,
       )
+    if (problems.every((p) => p.type === 'typo'))
+      return review(
+        id,
+        'The title in the footers is spelled differently from the title page. Check it.',
+        { details: summarize(problems), where: [{ page: problems[0].page }] },
+      )
     if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
       return review(
         id,

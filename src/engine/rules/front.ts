@@ -21,6 +21,7 @@ import {
   wordDiff,
 } from '../text.ts'
 import {
+  againstTitle,
   judge,
   mainTitle,
   pagesText,
@@ -742,7 +743,7 @@ type Choice = 'yes' | 'no' | 'both' | 'none'
 // are not marks.
 const MARK = /[✓✔✗✘☒☑■◼◾▪⬛●√xX/üþýû-]/
 const EMPTY_BOXES = new Set([
-  0x2610, 0x25a1, 0xf030, 0xf06f, 0xf070, 0xf071, 0xf072, 0xf0a1, 0xf0a3, 0xf0a8, 0xf0ff,
+  0x2610, 0x25a1, 0xf030, 0xf06f, 0xf070, 0xf071, 0xf072, 0xf07f, 0xf0a1, 0xf0a3, 0xf0a8, 0xf0ff,
 ])
 const isSymbolMark = (code: number) => code >= 0xf000 && code <= 0xf0ff && !EMPTY_BOXES.has(code)
 const isMark = (s: string) => [...s].some((c) => MARK.test(c) || isSymbolMark(c.charCodeAt(0)))
@@ -879,7 +880,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
       m.x0 > from &&
       width(m) >= 0.5 * line.size &&
       width(m) <= 1.6 * line.size &&
-      Math.abs(width(m) - (m.y1 - m.y0)) <= 0.25 * line.size,
+      Math.abs(width(m) - (m.y1 - m.y0)) <= 0.3 * line.size,
   )
   // A box with two or more strokes inside it (an X drawn in, the lines of a cross) is crossed.
   const crossed = boxes.filter(
@@ -899,13 +900,30 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
           (m.x1 - m.x0 < width(b) - 1 || m.y1 - m.y0 < b.y1 - b.y0 - 0.5),
       ).length >= 2,
   )
+  // (boxes drawn over one another: their middles within a few points, as a tick box and the
+  // slightly smaller squares stroked over it)
+  const same = (m: Box, n: Box) =>
+    Math.abs((n.x0 + n.x1 - m.x0 - m.x1) / 2) <= 2 && Math.abs((n.y0 + n.y1 - m.y0 - m.y1) / 2) <= 3
   const struck = boxes.filter(
     (m, k) =>
-      boxes.filter((n) => Math.abs(n.x0 - m.x0) <= 2 && Math.abs(n.y0 - m.y0) <= 2).length >= 3 &&
-      boxes.findIndex((n) => Math.abs(n.x0 - m.x0) <= 2 && Math.abs(n.y0 - m.y0) <= 2) === k,
+      boxes.filter((n) => same(m, n)).length >= 3 && boxes.findIndex((n) => same(m, n)) === k,
   )
   // A letter "O" over a box glyph circles it.
   const boxGlyphs = page.glyphs.filter((g) => band(g) && /[☐□]/.test(g.text))
+  // A tick stroked inside an empty box glyph (a small drawn path over the box).
+  const emptyBox = page.glyphs.filter(
+    (g) => band(g) && [...g.text].length === 1 && EMPTY_BOXES.has(g.text.charCodeAt(0)),
+  )
+  const ticked = page.marks
+    .filter(
+      (m) =>
+        m.kind === 'path' &&
+        band(m) &&
+        width(m) <= line.size &&
+        m.y1 - m.y0 >= 0.3 * line.size &&
+        emptyBox.some((g) => (m.x0 + m.x1) / 2 >= g.x0 - 1 && (m.x0 + m.x1) / 2 <= g.x1 + 1),
+    )
+    .map((m) => m.x0)
   const circled = (g: { x0: number; text: string }) =>
     /^[Oo]$/.test(g.text) && boxGlyphs.some((b) => Math.abs(b.x0 - g.x0) <= 3)
   // What marks a choice, the surest first: a drawn mark, a typed one, a form field, a picture, and
@@ -918,7 +936,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     .map((m) => m.x0)
   const slash = page.glyphs.filter((g) => band(g) && g.x0 > from && g.text === '/').map((g) => g.x0)
   const evidence = [
-    [...oneSide(filled), ...struck.map((m) => m.x0), ...crossed.map((m) => m.x0)],
+    [...oneSide(filled), ...struck.map((m) => m.x0), ...crossed.map((m) => m.x0), ...ticked],
     typed,
     fields,
     pictures,
@@ -1048,6 +1066,8 @@ function folioCheck(
     const found = [
       ...judge(folio, here, page),
       ...more.flatMap((q) => judge(pdfFolio(doc, q), want, q)),
+      // (the title page's own footer is judged as a footer to remove)
+      ...(want === 'none' ? [] : againstTitle(folio, full, page)),
     ]
     const problems = found.filter((p) => !shortWhole(p))
     // One shortened title throughout: this page's against the one most pages before Chapter I carry.
@@ -1065,6 +1085,13 @@ function folioCheck(
           text: `${pagesText([page])}: the footer has another title, “${quote(folio.title, 40)}”, than the other preliminary pages (“${quote(main.shown, 40)}”); keep one shortened title`,
         })
     }
+    // A misspelt title alone is for the student to look at, not a sure fault.
+    if (problems.length && problems.every((p) => p.type === 'typo'))
+      return review(
+        id,
+        `The footer of the ${name} spells the title differently from the title page. Check it.`,
+        { details: problems.map((p) => p.text), where: [{ page }] },
+      )
     if (!problems.length && found.some(shortWhole))
       return review(
         id,
@@ -1285,6 +1312,13 @@ interface Names {
 const ROLE_LINE =
   /^(?:(?:program|thesis|dissertation|research|panel|committee) )?(?:chair(?:person)?|member|advis[eo]r|co-advis[eo]r|reader|critic)\b/i
 
+// A name and its role on one line, under the signature line: "Name, Ph.D., Member, Advisory
+// Committee", "Name, Dean, Faculty of …".
+const NAME_ROLE = new RegExp(
+  `^([^:;]{3,80}?)(?:,\\s*(?:${ROLE_LINE.source.slice(1)}|dean\\b)|\\s+dean\\b(?=,|\\s+(?:faculty|of)\\b|\\s*$))`,
+  'i',
+)
+
 // A title standing alone on the line above the name ("ASSISTANT PROFESSOR", then the name).
 const TITLE_ONLY =
   /^(dr|prof(essor)?|(asst|assistant|assoc|associate)\.?\s*prof(essor)?|engr|atty|mr|ms|mrs|hon)\.?$/i
@@ -1330,6 +1364,10 @@ function readNames(ctx: Ctx): Names {
           ? cleanName(shown(above)).replace(/^_+/, '')
           : undefined
       committee.push({ name, para: prev, ...(real ? { real } : {}) })
+    } else if (!/^dean\b/i.test(t) && t.split(' ').length <= 14 && NAME_ROLE.test(t)) {
+      const name = NAME_ROLE.exec(t)![1]
+      if (/^(,\s*|\s+)dean\b/i.test(t.slice(name.length))) dean = { name, para: p }
+      else committee.push({ name, para: p })
     } else if (/^dean\b/i.test(t))
       dean = {
         name:
@@ -1453,6 +1491,19 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       id,
       'The names under the Acceptance Page’s sentence are in a picture, so they could not be read here. Check that the advisory committee’s and the Dean’s names are complete and spelled right.',
       { where: [{ page: page.n }] },
+    )
+  // A PDF whose other names read but one line shows only its underscores: the name may sit in a
+  // layer of the page that cannot be read here (typed over the line), so for the student to look at.
+  if (
+    ctx.doc.kind === 'pdf' &&
+    blank.length &&
+    blank.length < all.length &&
+    blank.every((n) => !n.name && /_{4,}/.test(n.para.text))
+  )
+    return review(
+      id,
+      `${plural(blank.length, 'name line')} could not be read (only the signature line shows); the name may be in a layer of the PDF that cannot be read here. Check that the advisory committee’s and the Dean’s names are complete and spelled right.`,
+      { where: at(blank[0].para) },
     )
   if (!all.length || blank.length)
     return fix(id, "Complete the advisory committee's and the Dean's names.", {

@@ -2,7 +2,7 @@
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
 import type { Doc, HeaderFooter, Line, NumberFormat, Section } from '../model.ts'
-import { fromRoman, garbled, norm, quote, roman } from '../text.ts'
+import { distance, fromRoman, garbled, norm, quote, roman } from '../text.ts'
 
 export interface Folio {
   raw: string
@@ -135,6 +135,7 @@ export interface Problem {
     | 'placeholder'
     | 'ellipsis'
     | 'long'
+    | 'typo'
     | 'changed'
     | 'label'
     | 'overlap'
@@ -461,6 +462,58 @@ export function noTextPages(doc: Doc): Set<number> {
   )
 }
 
+/** A footer title set against the thesis title: the whole title (ten words or more, so no
+ *  shortening), or the title with a word misspelled (a word of the footer one or two letters off a
+ *  word of the title). */
+export function footerVsTitle(
+  footer: string,
+  thesis?: string,
+): { whole?: number; typo?: [string, string] } {
+  const words = (t: string) => titleWords(t).filter((w) => /\p{L}/u.test(w))
+  const tw = words(thesis ?? '')
+  const fw = words(footer)
+  if (tw.length < 5 || fw.length < 4) return {}
+  const known = new Set(tw)
+  let typo: [string, string] | undefined
+  for (const w of fw) {
+    if (known.has(w)) continue
+    const near = w.length >= 5 ? tw.find((t) => t.length >= 5 && distance(w, t) <= 2) : undefined
+    if (!near) return {}
+    typo ??= [w, near]
+  }
+  return {
+    ...(fw.length >= 10 && fw.length >= 0.9 * tw.length ? { whole: fw.length } : {}),
+    ...(typo ? { typo } : {}),
+  }
+}
+
+/** The footer's title against the thesis title: the problems of footerVsTitle on a page. */
+export function againstTitle(
+  folio: Folio | undefined,
+  thesis: string | undefined,
+  page: number,
+): Problem[] {
+  if (!folio || folio.number === undefined || !folio.title) return []
+  const { whole, typo } = footerVsTitle(folio.title, thesis)
+  const at = `${pagesText([page])}: `
+  const out: Problem[] = []
+  // (a title of more than twelve words is judge's own "long")
+  if (whole && whole <= 12)
+    out.push({
+      type: 'long',
+      page,
+      words: whole,
+      text: `${at}has the whole ${whole}-word title before the number; shorten it`,
+    })
+  if (typo)
+    out.push({
+      type: 'typo',
+      page,
+      text: `${at}the footer has “${typo[0]}”, the title page “${typo[1]}”`,
+    })
+  return out
+}
+
 /** Checks a run of PDF pages; `want` gives what each page should show. */
 export function auditPdf(
   doc: Doc,
@@ -484,7 +537,7 @@ export function auditPdf(
       .flatMap((p) =>
         unread.has(p)
           ? [{ type: 'unread' as const, page: p, text: `${pagesText([p])}: no text layer` }]
-          : judge(pdfFolio(doc, p), want(p), p),
+          : [...judge(pdfFolio(doc, p), want(p), p), ...againstTitle(pdfFolio(doc, p), thesis, p)],
       ),
     ...titleChanges(doc, pages, thesis, ref),
   ]
@@ -569,6 +622,7 @@ const LABEL: Record<Problem['type'], string> = {
   placeholder: '“Shortened title here” is still on',
   ellipsis: 'No ellipsis (…) after the shortened title on',
   long: 'A long title, not a shortened one, on',
+  typo: 'A footer title spelled differently from the title page on',
   changed: 'The title in the footer changes on',
   label: 'The number has “p.” or “page” before it on',
   overlap: 'The footer prints over itself, so it could not be read, on',

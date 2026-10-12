@@ -460,6 +460,11 @@ const headingLike = (p: Para) => {
   )
 }
 
+// A line of source code: an argument list or assignment ("p_name => 'x'", "x := 1;"), a line
+// opened by a comma, a comment mark or a quote, markup, or identifiers with underscores and brackets.
+const CODE_LINE =
+  /=>|:=|^\s*(,|--|\/\/)\S|^\s*'|#[A-Z_]{3,}#|<\/?[a-z][\w-]*[\s>]|\b[a-z]+_[a-z0-9_]+\s*[=(]|\w\(\s*'[^']*'|\.\w+_\w+\(/i
+
 function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   const id = 'body.hanging'
   const { doc, s } = ctx
@@ -543,6 +548,13 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     if (
       /^\d{1,3}\s+(\p{Ll}|\p{Lu}\w{0,3}\s?:)/u.test(norm(p.text)) &&
       s.appendices.some((a) => p.i > a.heading && p.i < a.end)
+    )
+      continue
+    // Source code (a listing, set line by line) is not running text.
+    if (
+      CODE_LINE.test(norm(p.text)) ||
+      (p.runs.length > 0 &&
+        p.runs.every((r) => !r.text.trim() || /mono|courier|consolas/i.test(r.font ?? '')))
     )
       continue
     const lines = p.lines ?? []
@@ -840,6 +852,12 @@ export function bodyNumbers(
         'Chapter I’s first page is page 1 (though not shown), so the page after it is page 2.',
       )
     // Only pages with no text layer left: nothing there could be read.
+    if (problems.every((p) => p.type === 'typo'))
+      return review(
+        id,
+        'The title in the footers is spelled differently from the title page. Check it.',
+        { details: summarize(problems), where: [{ page: problems[0].page }] },
+      )
     if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
       return review(
         id,
