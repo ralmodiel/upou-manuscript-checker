@@ -56,7 +56,7 @@ writing advice.
   paper and ink, UP maroon, forest and gold, Instrument Serif and Instrument Sans, light and dark.
 - Text wordmark only; no UP seal or UPOU logo artwork on the site.
 - State prominently and in several places: an unofficial proof of concept, not an official UPOU
-  site, in alpha testing; built diligently and meticulously with AI but it can still make mistakes,
+  site, in beta testing; built diligently and meticulously with AI but it can still make mistakes,
   so results need human verification; the program's own review is the official check.
 
 ## Evidence on Hand

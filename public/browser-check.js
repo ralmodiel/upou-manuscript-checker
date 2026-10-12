@@ -26,7 +26,7 @@
       ['h1', 'UPOU Format Check'],
       ['p', 'This browser needs an update to support the checker.'],
       ['p', 'Update it, or open this page in an up-to-date Chrome, Edge, Firefox or Safari.'],
-      ['p', 'An unofficial proof of concept in alpha testing, not an official UPOU site.'],
+      ['p', 'An unofficial proof of concept in beta testing, not an official UPOU site.'],
     ]
     for (var i = 0; i < lines.length; i++) {
       var el = document.createElement(lines[i][0])

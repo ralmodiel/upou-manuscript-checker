@@ -1,13 +1,13 @@
 // What the site says about itself, in one place: the header, the notice strip, the results, the
 // footer, the FAQ and the downloaded report all use these words.
 
-export const BADGE = 'Unofficial · Alpha'
+export const BADGE = 'Unofficial · Beta'
 
 export const SHORT =
-  'Unofficial proof of concept, not a UPOU site, in alpha testing. Made with AI, so it can make mistakes: every result needs human verification.'
+  'Unofficial proof of concept, not a UPOU site, in beta testing. Made with AI, so it can make mistakes: every result needs human verification.'
 
 export const NOTICE =
-  'This site is an unofficial proof of concept in its alpha testing stage. It is not an official UP Open University (UPOU) site and is not affiliated with or endorsed by UPOU. It was built diligently and meticulously with the help of AI, but it can still make mistakes, so every result needs human verification. Your program’s own review remains the official format check.'
+  'This site is an unofficial proof of concept in its beta testing stage. It is not an official UP Open University (UPOU) site and is not affiliated with or endorsed by UPOU. It was built diligently and meticulously with the help of AI, but it can still make mistakes, so every result needs human verification. Your program’s own review remains the official format check.'
 
 /** The privacy promise, in the words the project owner asked for. */
 export const PRIVATE_HEAD = 'Your manuscript is never submitted to any server.'

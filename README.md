@@ -26,7 +26,7 @@ program's review emails.
 
 ## Proof of concept
 
-This is an **unofficial proof of concept in its alpha testing stage**. It is not an official UPOU
+This is an **unofficial proof of concept in its beta testing stage**. It is not an official UPOU
 site and is not affiliated with or endorsed by UPOU. It was built diligently and meticulously with
 the help of AI, but it can still make mistakes, so every result needs human verification. The
 program's own review remains the official format check. See [NOTICE.md](NOTICE.md).

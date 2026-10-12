@@ -158,7 +158,7 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   const pages = pdf.getPages()
   pages.forEach((p, k) => {
     const label = safe(
-      `UPOU Format Check · unofficial proof of concept (alpha) · page ${k + 1} of ${pages.length}`,
+      `UPOU Format Check · unofficial proof of concept (beta) · page ${k + 1} of ${pages.length}`,
     )
     p.drawText(label, { x: M, y: M - 18, size: 8, font: regular, color: MUTED })
   })

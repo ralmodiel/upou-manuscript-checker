@@ -1,4 +1,4 @@
-// The sticky header (wordmark, the unofficial/alpha badge, the theme switch) and, under it, the
+// The sticky header (wordmark, the unofficial/beta badge, the theme switch) and, under it, the
 // notice strip every view carries. Text wordmark only: the site uses no UP or UPOU artwork.
 import { useTheme } from '../lib/theme'
 import { BADGE, SHORT } from '../notice'

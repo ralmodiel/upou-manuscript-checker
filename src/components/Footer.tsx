@@ -97,7 +97,7 @@ export default function Footer() {
           <p className="font-display text-lg leading-none text-on-band">
             UPOU <span className="text-band-gold">Format Check</span>
           </p>
-          <p>Not affiliated with or endorsed by UP Open University · alpha testing</p>
+          <p>Not affiliated with or endorsed by UP Open University · beta testing</p>
         </div>
       </div>
     </footer>

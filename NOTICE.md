@@ -2,7 +2,7 @@
 
 ## Unofficial proof of concept
 
-This project is an unofficial, non-commercial proof of concept in its alpha testing stage. It is
+This project is an unofficial, non-commercial proof of concept in its beta testing stage. It is
 not an official site of the University of the Philippines Open University (UPOU) and is not
 affiliated with or endorsed by UPOU or any of its programs. The
 site's own pages use no UP or UPOU seal, logo or other artwork. The UP seal appears only inside the

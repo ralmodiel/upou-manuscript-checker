@@ -82,7 +82,7 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
     a: (
       <>
         <p>
-          Yes. It is in alpha testing, and although it was built diligently and meticulously with
+          Yes. It is in beta testing, and although it was built diligently and meticulously with
           the help of AI, it reads files the way a program does, not the way a person does. It can
           miss a problem or flag one that is not there, especially with unusual layouts, text boxes,
           or scanned pages.

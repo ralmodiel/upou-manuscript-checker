@@ -14,7 +14,7 @@ corrections). Students and program reviewers use it the same way.
 
 Drop a manuscript (.docx, .doc, .pdf, .odt, .rtf); read it in the browser; see all 38 checklist
 items with statuses; fix what is listed using page numbers and quotes; download the comments as
-.docx or .pdf. Never say "upload". Unofficial, alpha, AI-built disclaimer in header, notice strip,
+.docx or .pdf. Never say "upload". Unofficial, beta, AI-built disclaimer in header, notice strip,
 results, footer, FAQ and report. Template and checklist downloads.
 
 ## Direction contract
@@ -32,7 +32,7 @@ Correct, and each manuscript part in the overview fills forest when all its item
 STORY: The visitor learns the file stays on their device, drops it, watches the nine parts get
 checked, then walks the parts, fixing what is listed at the pages named, and downloads the comments.
 
-FIRST VIEWPORT: Header (wordmark, Unofficial · Alpha badge, theme switch), notice strip, the
+FIRST VIEWPORT: Header (wordmark, Unofficial · Beta badge, theme switch), notice strip, the
 three-stage rail with the current stage lit. Stage 1: serif headline and privacy line on the left,
 the drop zone with its Choose a file button on the right (stacked on phones), template and
 checklist downloads beneath.
