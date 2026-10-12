@@ -11,18 +11,45 @@ const PLACEHOLDERS: [RegExp, string][] = [
   [/insert figure here/i, '“--- INSERT FIGURE HERE ---”'],
   [/^author'?s name$/i, '“AUTHOR’S NAME”'],
   [/^(column \d+\s*)+$/i, 'the sample table (“Column 1”, “Content”)'],
-  [/^(content\s*)+$/i, 'the sample table (“Column 1”, “Content”)'],
-  [/(\t|\.{3,}|\s{2,})0{1,2}\s*$/, 'table of contents page numbers “0” or “00”'],
+  // The course's name left as the word "Course".
+  [/for the degree,?\s*course\.?$/i, '“Course” in place of the degree on the Acceptance Page'],
 ]
+// Capitals as the template has them; a table's heading or cell is not one.
+const LONE: [RegExp, string][] = [
+  [/^NAME$/, '“NAME” in place of a name'],
+  [/(^|,\s*)DATE$/, '“DATE” in place of the date'],
+]
+const SAMPLE_TABLE = 'the sample table (“Column 1”, “Content”)'
+const TOC_ZEROS = 'table of contents page numbers “0” or “00”'
 
 function placeholders(ctx: Ctx): Finding {
   const id = 'extra.placeholders'
   const hits = new Map<string, { page?: number; quote: string }>()
+  const hit = (name: string, p: Para) => {
+    if (!hits.has(name)) hits.set(name, { page: p.page, quote: quote(p.text, 40) })
+  }
+  const lists = ctx.s.prelims.filter(
+    (x) => x.key === 'toc' || x.key === 'tables' || x.key === 'figures',
+  )
+  const columns = ctx.doc.paras.filter((p) => /^(column \d+\s*)+$/i.test(norm(p.text)))
   for (const p of ctx.doc.paras) {
     const t = norm(p.text)
-    for (const [re, name] of PLACEHOLDERS)
-      if (re.test(re.source.includes('\\t') ? p.text : t) && !hits.has(name))
-        hits.set(name, { page: p.page, quote: quote(p.text, 40) })
+    for (const [re, name] of PLACEHOLDERS) if (re.test(t)) hit(name, p)
+    if (!p.inTable && !p.text.includes('\t'))
+      for (const [re, name] of LONE) if (re.test(t)) hit(name, p)
+    // "Content" is a cell of the sample table, beside its "Column 1": a table of the student's
+    // own may have one too.
+    if (
+      /^(content\s*)+$/i.test(t) &&
+      columns.some((c) => (p.table !== undefined ? c.table === p.table : c.page === p.page))
+    )
+      hit(SAMPLE_TABLE, p)
+    // Zeros after the entries of a contents page; a data row may end in them too.
+    if (
+      /(\t|\.{3,}|\s{2,})0{1,2}\s*$/.test(p.text) &&
+      lists.some((x) => p.i > x.heading && p.i < x.end)
+    )
+      hit(TOC_ZEROS, p)
   }
   // The date under the Dean's name (the title page's date has a check of its own).
   const acc = ctx.s.acceptance

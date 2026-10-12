@@ -48,10 +48,14 @@ const LABEL =
 const OUTSIDE = /^(note[.:]|(table|fig(ure)?\.?)\s*\d)/i
 /** Whether line `l` opens a paragraph after `prev`. A label opens one only when bold, as the
  *  format sets it, or after a line ending in no letter: a sentence may wrap onto a new line at
- *  "Table 3.1." too. */
+ *  "Table 3.1." too. A heading wholly in bold, then a label that is not (a table's number under
+ *  the section heading), opens one as well. */
 const opens = (l: Line, prev: Line) =>
   MARKER.test(l.text) ||
-  (LABEL.test(l.text) && (!!l.runs.find((r) => r.text.trim())?.bold || !/\p{L}$/u.test(prev.text)))
+  (LABEL.test(l.text) &&
+    (!!l.runs.find((r) => r.text.trim())?.bold ||
+      !/\p{L}$/u.test(prev.text) ||
+      (boldness(prev) === 1 && boldness(l) === 0)))
 
 /** 'Arial' from 'ABCDEF+Arial-BoldMT', 'Times New Roman' from 'TimesNewRomanPSMT'. */
 export function familyOf(raw: string | undefined): string | undefined {
@@ -533,6 +537,10 @@ function splitBands(lines: Line[], height: number, running: Set<Line>) {
       l.y > height - 72 &&
       (!above || l.y - above.y >= 18 || looksLikeNumber(l.text) || l.y > height - 50)
     )
+      footer.push(l)
+    // A bare page number set higher than the bottom inch (an A4 page's number 1.1 in up) and last
+    // on the page, even right under double-spaced text.
+    else if (!below && l.y > height - 100 && /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text))
       footer.push(l)
     else if (l.y < 54 && (!below || below.y - l.y >= 18)) header.push(l)
     else body.push(l)

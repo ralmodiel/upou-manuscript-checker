@@ -2,7 +2,7 @@
 // page, the permission and acceptance pages, the other preliminary pages, the chapters, the
 // references and the appendices. Table of contents entries (a title then a page number) never count.
 import type { Doc, Para } from './model.ts'
-import { fromRoman, norm } from './text.ts'
+import { fromRoman, isUpper, norm, roman } from './text.ts'
 
 /** Paragraph indices [start, end). */
 export interface Range {
@@ -26,6 +26,8 @@ export interface Chapter extends Heading {
   /** The paragraph that holds the chapter title, when it has its own line: the label's own
    *  paragraph when the title follows a line break in it ("Chapter I", Shift+Enter, "INTRODUCTION"). */
   titlePara?: number
+  /** Found by its title ("I. INTRODUCTION", "INTRODUCTION") for want of a "Chapter I" label. */
+  unlabelled?: boolean
 }
 export interface Appendix extends Heading {
   label: string
@@ -66,6 +68,8 @@ const PRELIMS: [PrelimKey, RegExp][] = [
   ['abstract', /^abstract$/i],
 ]
 
+const LIST_HEADING = /^list of (tables|figures|illustrations)( and (figures|illustrations))?$/i
+
 /** A table of contents line: a title, then a page number after a tab, dot leaders or spaces. */
 const TOC_ENTRY = /(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+)\s*$/i
 /** A table-of-contents line: text, then a leader or gap, then a page number at the end. Only the
@@ -76,6 +80,10 @@ export const isTocLine = (text: string) => TOC_ENTRY.test(text.slice(-256))
 const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 const CHAPTER =
   /^chapter\s+([ivxlcdm]+|\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b\.?\s*[:.\-–—]?\s*(.*)$/i
+/** A chapter's title, standing alone or after its numeral ("I. INTRODUCTION"). */
+const CHAPTER_TITLE =
+  /^(introduction|(review of )?(related )?(literature|studies)|(research )?methodology|methods?|(presentation, )?(results?|analysis|findings)\b.*|discussion|(summary,? )?conclusions?\b.*|summary\b.*|recommendations)$/i
+const NUMBERED_TITLE = /^([ivxlc]+|\d{1,2})[.)]\s+(\S.*)$/i
 const APPENDIX = /^(appendix|annex)(?:\s+([a-z]{1,2}|\d{1,2})\b)?[\s.:–—-]*(.*)$/i
 
 export const bolded = (p: Para) => {
@@ -138,8 +146,10 @@ export function findStructure(doc: Doc): Structure {
   }
 
   for (const p of paras) {
-    if (!isHeadingish(p)) continue
     const t = headingText(p)
+    // The lists of tables and figures may stand on the contents page in plain capitals.
+    const plainList = LIST_HEADING.test(t) && isUpper(t) && !p.inTable && !isTocLine(p.text)
+    if (!isHeadingish(p) && !plainList) continue
     if (!s.permission && /^(university )?permission page$/i.test(t)) {
       s.permission = { heading: p.i, start: p.i, end: paras.length }
       continue
@@ -188,6 +198,8 @@ export function findStructure(doc: Doc): Structure {
         s.appendices.push({ heading: p.i, start: p.i, end: paras.length, label: t, mark: ap[2] })
     }
   }
+
+  findUnlabelled(doc, s)
 
   // Pages found by their wording when the heading is missing.
   const find = (re: RegExp, from = 0) =>
@@ -240,7 +252,7 @@ export function findStructure(doc: Doc): Structure {
   if (up > 0) s.title.start = pageStart(doc, up)
 
   for (const ch of s.chapters) {
-    if (ch.inlineTitle) continue
+    if (ch.inlineTitle || ch.unlabelled) continue
     // The title under the label after a line break, in the same paragraph.
     if (norm(paras[ch.heading].text.split('\n').slice(1).join(' '))) {
       ch.titlePara = ch.heading
@@ -256,4 +268,54 @@ export function findStructure(doc: Doc): Structure {
       ch.titlePara = k
   }
   return s
+}
+
+/** Chapters headed by their title alone, after the front matter and before the first labelled
+ *  chapter ("I. INTRODUCTION", "REVIEW OF RELATED LITERATURE" opening a page): found for the
+ *  ranges' sake; the missing label is still the student's to fix. */
+function findUnlabelled(doc: Doc, s: Structure) {
+  const { paras } = doc
+  const front = Math.max(
+    s.permission?.heading ?? -1,
+    s.acceptance?.heading ?? -1,
+    ...s.prelims.map((x) => x.heading),
+  )
+  if (front < 0) return
+  const stop = Math.min(
+    s.chapters[0]?.heading ?? paras.length,
+    s.references?.heading ?? paras.length,
+    s.appendicesHeading ?? paras.length,
+    s.appendices[0]?.heading ?? paras.length,
+  )
+  const found: Chapter[] = []
+  for (let k = front + 1; k < stop; k++) {
+    const p = paras[k]
+    if (!isHeadingish(p)) continue
+    const opens = p.newPage || p.renderedBreak === 'before'
+    const t = headingText(p)
+    const m = NUMBERED_TITLE.exec(t)
+    const title = m ? m[2] : t
+    // A title in capitals, as the template sets chapter titles (a subheading in title case is
+    // not one), after its numeral in sequence or opening a page.
+    const given = m ? (/^\d+$/.test(m[1]) ? +m[1] : fromRoman(m[1])) : undefined
+    const number = given ?? found.length + 1
+    const named = CHAPTER_TITLE.test(title.toLowerCase())
+    if (!isUpper(title) || !(m ? given === number && (opens || named) : opens && named)) continue
+    // Contents entries have the next entries after them, not text.
+    const prose = paras
+      .slice(k + 1, k + 12)
+      .some((q) => norm(q.text).length > 80 && !isTocLine(q.text) && !q.inTable)
+    if (!prose) continue
+    found.push({
+      heading: k,
+      start: k,
+      end: paras.length,
+      label: t,
+      numeral: roman(number).toUpperCase(),
+      number,
+      ...(m ? { inlineTitle: title } : { titlePara: k }),
+      unlabelled: true,
+    })
+  }
+  s.chapters.unshift(...found)
 }

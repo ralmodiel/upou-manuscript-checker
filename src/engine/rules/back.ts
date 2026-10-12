@@ -56,7 +56,7 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
       !out.length ||
       (placed !== false && PARTICLE.test(t)) ||
       (!/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
-        (placed ?? (YEAR.test(t.slice(0, 200)) || /^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t))))
+        (placed ?? (startsEntry(t) || /^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t))))
     if (opens) out.push({ paras: [p], text: t })
     else {
       out.at(-1)!.paras.push(p)
@@ -64,6 +64,13 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
     }
   }
   return { list: out, groups }
+}
+
+/** A year in parentheses soon after the authors, not after other numbers (a journal's volume and
+ *  pages on a wrapped line, with the next entry beginning further on). */
+const startsEntry = (t: string) => {
+  const m = YEAR.exec(t.slice(0, 200))
+  return !!m && !/\b(1[89]|20)\d{2}\b|\d[;:]|doi/i.test(t.slice(0, m.index))
 }
 
 /** Sort key: the first author's surname (or group author), letter by letter. */
@@ -92,8 +99,14 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
   // it is or with its title's end changed: that one is to be removed (references.apa says so), not
   // moved.
   const works = new Map<string, string[]>()
+  // An author's name with a stray sign in it (a letter lost to a font's encoding) cannot be placed.
+  const unreadable: Entry[] = []
   const keyed = refs.filter((e) => {
     if (!key(e)) return false
+    if (/\p{L}[\]\\^{}|~¶³´@#$%*+=<>_]\p{L}/u.test(e.text.split(/[,(]/)[0])) {
+      unreadable.push(e)
+      return false
+    }
     const y = byline(e)
     if (!y) return true
     const titles = works.get(`${y.who}|${y.year}`) ?? []
@@ -164,6 +177,22 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
       )
       misplaced.push(e)
     } else if (
+      y0?.init &&
+      y1?.init &&
+      ks[k - 1] === ks[k] &&
+      y0.who !== y1.who &&
+      // Not "H." and "H. S.": that may be one author written twice.
+      !y0.init.startsWith(y1.init) &&
+      !y1.init.startsWith(y0.init)
+    ) {
+      // One surname goes by the initials ("Brown, D." before "Brown, J. D."), whoever the others are.
+      if (y1.init.localeCompare(y0.init, 'en') < 0) {
+        pairs.push(
+          `${at}“${quote(e.text, 45)}” should come before “${quote(prev!.text, 45)}”: the same surname goes by the first author's initials`,
+        )
+        misplaced.push(e)
+      }
+    } else if (
       y0 &&
       y1 &&
       ks[k - 1] === ks[k] &&
@@ -190,8 +219,22 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
       `The list goes through the alphabet ${restarts.length + 1} times${pages.length ? ` (it starts over on ${pagesText(pages)})` : ''}: put all the entries in one alphabetical list.`,
     )
   }
+  const skipped = unreadable.length
+    ? [
+        `${plural(unreadable.length, 'reference')} could not be placed, the author's name being unreadable (${list(unreadable.slice(0, 3).map((e) => `“${quote(e.text, 25)}”`))}): check ${unreadable.length === 1 ? 'its' : 'their'} place yourself.`,
+      ]
+    : []
   if (!pairs.length && !lead.length)
-    return ok(id, `All ${refs.length} references are in alphabetical order.`)
+    return unreadable.length
+      ? review(
+          id,
+          'Check the alphabetical order of the reference list: some names could not be read.',
+          {
+            details: skipped,
+            where: [{ page: pageOf(unreadable[0]), quote: quote(unreadable[0].text, 40) }],
+          },
+        )
+      : ok(id, `All ${refs.length} references are in alphabetical order.`)
   const first = misplaced[0] ?? behind[0][0]
   return fix(
     id,
@@ -199,7 +242,8 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
     {
       details: lead
         .concat(pairs.slice(0, 6))
-        .concat(pairs.length > 6 ? [more(pairs.length - 6, misplaced.slice(6).map(pageOf))] : []),
+        .concat(pairs.length > 6 ? [more(pairs.length - 6, misplaced.slice(6).map(pageOf))] : [])
+        .concat(skipped),
       where: [{ page: pageOf(first), quote: quote(first.text, 40) }],
     },
   )
@@ -256,6 +300,10 @@ function byline(e: Entry) {
         marked: /^\((\d{4}[a-z]|(n\.\s?d\.|in press)\s?-\s?[a-z])/i.test(rest),
         // A full date ("2011, March 3"): works of one year then go by date, not by title.
         dated: /^\(\d{4}[a-z]?,/.test(rest),
+        // The first author's initials ("Brown, J. D." → "jd"), when written as initials.
+        init: (/^[^,]+,\s+((?:\p{Lu}\.[\s-]*)+)/u.exec(by)?.[1] ?? '')
+          .toLowerCase()
+          .replace(/[^a-z]/g, ''),
         // The authors' surnames in order ("Reyes, A., Cruz, B. L., & Santos, C. D."), letters only.
         names: [
           ...by.matchAll(/(\p{Lu}[\p{L}'’-]*(?:\s\p{L}[\p{L}'’-]*)*),\s+(?:\p{Lu}\.[\s-]*)+/gu),
@@ -577,6 +625,12 @@ function labels(ctx: Ctx): Finding {
   const letters = marks.filter((m) => /^[a-z]$/i.test(m)).map((m) => m.toUpperCase().charCodeAt(0))
   if (letters.some((c, k) => k > 0 && c !== letters[k - 1] + 1)) {
     issues.push(`The appendix letters skip or repeat (${marks.join(', ')}).`)
+    statuses.push('fix')
+  } else if (letters.length && marks[0] && letters[0] !== 65) {
+    // The first appendix is unlabelled, or the letters begin further on.
+    issues.push(
+      `The appendix letters should begin at A (the first labelled one is ${aps[0].label}): label every appendix in order, Appendix A, Appendix B…`,
+    )
     statuses.push('fix')
   }
   // As the template sets them: the label, then its title on the line below, both centred.

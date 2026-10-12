@@ -95,12 +95,30 @@ export function distance(a: string, b: string): number {
   return row[b.length]
 }
 
+/** Text read through a font that was re-encoded (a repository's copy of a PDF): letters shifted,
+ *  so capitals stand inside words ("MarYet", "StXdent"). Needs several such words, and a
+ *  quarter of the words, so a name like "YouTube" or "McDonald" does not count. */
+export function garbled(s: string): boolean {
+  const words = s.split(/\s+/).filter((w) => w.replace(/[^\p{L}]/gu, '').length >= 3)
+  const odd = words.filter((w) => /\p{Ll}\p{Lu}/u.test(w.replace(/^(Mc|Mac)/, '')))
+  return odd.length >= 3 && odd.length >= 0.25 * words.length
+}
+
+/** A title for comparing two copies: case, a hyphen broken at a line end ("SOCIO-" "CULTURAL")
+ *  and the punctuation or quotes around the title count for nothing. */
+export const titleForm = (s: string) =>
+  norm(s)
+    .toLowerCase()
+    .replace(/\s*-\s+/g, '-')
+    .replace(/^[\s"'.,;:!?…]+|[\s"'.,;:!?…]+$/g, '')
+
 /** Words that differ between two versions of a title (case and punctuation aside; words of two
  *  letters or fewer left out, as they say little). */
 export function wordDiff(a: string, b: string): { onlyA: string[]; onlyB: string[] } {
   const words = (s: string) =>
     norm(s)
       .toLowerCase()
+      .replace(/\s*-\s+/g, '-')
       .split(' ')
       .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
       .filter((w) => w.length > 2)

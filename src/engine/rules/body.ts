@@ -21,10 +21,25 @@ const apart = (ctx: Ctx, p: Para) => {
   )
 }
 
+/** A table's or figure's label alone on its line ("Table 2"), its title coming below (APA). */
+const LABEL_ONLY = /^(table|fig(ure)?\.?)\s*\d+[.:]?$/i
+
+/** An indented quotation: several lines set in from the margin on every line, not a list. */
+export const blockQuote = (ctx: Ctx, p: Para) =>
+  !isList(p) &&
+  (ctx.doc.kind === 'pdf' ? (p.lines?.length ?? 0) >= 2 : norm(p.text).length > 110) &&
+  (p.indent?.left ?? 0) >= 30 &&
+  (p.indent?.firstLine ?? 0) >= -3
+
 /** Running text in paragraphs [start, end): no headings, captions, notes, tables, boxes or blanks. */
 export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<number>()): Para[] {
-  return ctx.doc.paras.slice(start, end).filter((p) => {
+  const { paras } = ctx.doc
+  // PDF: the text size of the document; a note under a page's text is set smaller.
+  const size = mode(paras.flatMap((p) => (p.lines?.[0] ? [p.lines[0].size] : [])))
+  const italic = (p: Para) => p.runs.filter((r) => r.text.trim()).every((r) => r.italic)
+  return paras.slice(start, end).filter((p) => {
     const t = norm(p.text)
+    const next = paras[p.i + 1]
     return (
       t &&
       !skip.has(p.i) &&
@@ -32,13 +47,35 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !p.inBox &&
       !CAPTION.test(t) &&
       // A table's or figure's note belongs to its setup (APA), not to the body text.
-      !/^note[.:]/i.test(t) &&
+      !/^(notes?|sources?)\s*[.:]/i.test(t) &&
       !isTocLine(p.text) &&
       !(isHeadingish(p) && t.length <= 120) &&
       !/^key\s?words?\s*:/i.test(t) &&
-      !apart(ctx, p)
+      !apart(ctx, p) &&
+      // A footnote: set smaller than the text.
+      !(p.lines?.[0] && size && p.lines[0].size < size - 1) &&
+      // A table's title: under its label, or in italics above its table (APA).
+      !LABEL_ONLY.test(norm(paras[p.i - 1]?.text ?? '')) &&
+      !(
+        p.lines &&
+        p.lines.length <= 3 &&
+        italic(p) &&
+        !!next &&
+        (next.inTable || next.text.includes('\t'))
+      )
     )
   })
+}
+
+const mode = (xs: number[]) => {
+  const count = new Map<number, number>()
+  let best = 0
+  for (const x of xs) {
+    const k = Math.round(x * 2) / 2
+    count.set(k, (count.get(k) ?? 0) + 1)
+    if (count.get(k)! > (count.get(best) ?? 0)) best = k
+  }
+  return best
 }
 
 /** Long enough to tell justified from left-aligned: two lines or more. */
@@ -51,7 +88,10 @@ const where = (ps: Para[]) => spread(ps.map((p) => ({ page: p.page, quote: quote
 
 /** A finding for justification over the given paragraphs; `name` says where ("the chapters"). */
 export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Finding {
-  const checked = paras.filter((p) => multiLine(ctx, p) && !isList(p) && p.align !== 'center')
+  // An indented quotation is often left-aligned.
+  const checked = paras.filter(
+    (p) => multiLine(ctx, p) && !isList(p) && p.align !== 'center' && !blockQuote(ctx, p),
+  )
   if (ctx.doc.kind === 'doc')
     return review(
       id,
@@ -119,10 +159,26 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
       const gaps = r.slice(1).map((q, k) => q.lines![0].y - r[k].lines![0].y)
       return { ...r[0], spacing: median(gaps) / (1.15 * r[0].lines![0].size) }
     })
-  const checked = [...paras.filter((p) => p.spacing !== undefined), ...lists]
-  if (!checked.length) return na(id, `No body text found in ${name}.`)
+  const all = [...paras.filter((p) => p.spacing !== undefined), ...lists]
+  // Indented quotations are often set single-spaced: for the student to look at, not to correct.
+  const quotes = all.filter((p) => blockQuote(ctx, p))
+  const checked = all.filter((p) => !quotes.includes(p))
+  if (!all.length) return na(id, `No body text found in ${name}.`)
   const bad = checked.filter((p) => p.spacing! < DOUBLE).sort((a, b) => a.i - b.i)
-  if (!bad.length) return ok(id, `The body text of ${name} is double-spaced.`)
+  if (!bad.length) {
+    const single = quotes.filter((p) => p.spacing! < DOUBLE)
+    if (!single.length) return ok(id, `The body text of ${name} is double-spaced.`)
+    return review(
+      id,
+      `Check the spacing of the indented quotations in ${name}: the rest of the body text is double-spaced.`,
+      {
+        details: [
+          `${plural(single.length, 'quotation')} spaced ${single[0].spacing! < 1.2 ? 'single' : 'less than double'}${onPages(single)}.`,
+        ],
+        where: where(single),
+      },
+    )
+  }
   const kinds = [...new Set(bad.map((p) => spacingName(p.spacing!)))]
   const share = bad.length / checked.length
   return (bad.length >= 2 || share >= 0.1 ? fix : review)(

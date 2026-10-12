@@ -12,8 +12,10 @@ import {
   more,
   pagesText,
   pdfFolio,
+  prelimTitle,
   sectionStarts,
   summarize,
+  titleKey,
   wordFolioAt,
   wordSectionFolios,
   type Problem,
@@ -36,7 +38,8 @@ function typeface(p: Para, what: string): string[] {
   return out
 }
 
-const chapterName = (c: Chapter) => c.label.replace(/^chapter/i, 'Chapter')
+const chapterName = (c: Chapter) =>
+  c.unlabelled ? `“${quote(c.label, 40)}”` : c.label.replace(/^chapter/i, 'Chapter')
 const at = (p?: Para) => (p ? [{ page: p.page, quote: quote(p.text, 50) }] : [])
 
 /** Paragraphs on a chapter's first page (a PDF knows; a Word file is cut at about a page of text). */
@@ -102,14 +105,26 @@ function newPage(ctx: Ctx): Finding {
       details: [`Not at the top of a page: ${list(late.map(chapterName))}.`],
       where: late.flatMap((c) => at(paras[c.heading])),
     })
-  return review(
-    id,
-    'Start each chapter on a new page with a page or section break (Ctrl+Enter), not empty lines.',
-    {
-      details: [`No page break before ${list(late.map(chapterName))}.`],
-      where: late.flatMap((c) => at(paras[c.heading])),
-    },
-  )
+  // A chapter that follows text on the same page with no break between (a continuous section
+  // break, or none at all) cannot be on a new page; one after empty lines may be, if they spill.
+  const runsOn = (c: Chapter) => {
+    const p = paras[c.heading]
+    const sec = ctx.doc.sections?.[p.section ?? -1]
+    return (
+      ctx.doc.kind !== 'doc' &&
+      ((!!sec && !sec.newPage && sec.first <= c.heading) ||
+        (!!paras[c.heading - 1] && !!norm(paras[c.heading - 1].text)))
+    )
+  }
+  const msg =
+    'Start each chapter on a new page with a page or section break (Ctrl+Enter), not empty lines.'
+  const sure = late.filter(runsOn)
+  return (sure.length ? fix : review)(id, msg, {
+    details: [
+      `No page break before ${list(late.map(chapterName))}${sure.length ? `: ${list(sure.map(chapterName))} follow${sure.length === 1 ? 's' : ''} the text above on the same page` : ''}.`,
+    ],
+    where: late.flatMap((c) => at(paras[c.heading])),
+  })
 }
 
 function number(ctx: Ctx): Finding {
@@ -129,6 +144,13 @@ function number(ctx: Ctx): Finding {
     // The label as it should read ("CHAPTER ONE" → "Chapter I").
     const right = `Chapter ${(c.number ? roman(c.number) : c.numeral).toUpperCase()}`
     const before = issues.length
+    if (c.unlabelled) {
+      issues.push(
+        `${chapterName(c)}: the chapter number is missing (write ${right} on its own line, with the title below it)`,
+      )
+      wrong.push(p)
+      continue
+    }
     if (!/^[IVXLC]+$/.test(c.numeral))
       issues.push(`“${c.label}”: chapter numbers must be in Roman numerals (${right})`)
     if (word !== 'Chapter' || /^CHAPTER$/.test(shown(p).slice(0, 7)))
@@ -166,6 +188,16 @@ function title(ctx: Ctx): Finding {
   const where: ReturnType<typeof at> = []
   for (const c of chapters) {
     const name = chapterName(c)
+    if (c.unlabelled && !c.inlineTitle) {
+      // The heading is the title: the missing number is reported with the label.
+      const p = paras[c.heading]
+      const t = shown(p).replace(/^\s*(\d{1,2}|[IVXLCivxlc]+)[.)]\s+/, '')
+      const before = issues.length
+      if (!isUpper(t)) issues.push(`${name}: write the title in upper case`)
+      for (const x of typeface(p, `${name} title`)) issues.push(x)
+      if (issues.length > before) where.push(...at(p))
+      continue
+    }
     if (c.inlineTitle) {
       issues.push(
         `${name}: enter the chapter title (“${quote(c.inlineTitle, 40)}”) into the next line, below the chapter number`,
@@ -210,7 +242,9 @@ function noPageNumber(ctx: Ctx): Finding {
   const msg = 'Remove the page number on the first page of each chapter.'
   if (doc.kind === 'pdf') {
     const folio = (c: Chapter) => pdfFolio(doc, doc.paras[c.heading].page ?? -1)
-    const shown = s.chapters.filter((c) => folio(c))
+    // A chapter that does not open its page has no first page of its own: chapterStart.newPage
+    // says so.
+    const shown = s.chapters.filter((c) => doc.paras[c.heading].newPage && folio(c))
     if (!shown.length) return ok(id, 'No page number on the first page of any chapter.')
     // A footer with a title too: reviewers ask for the whole footer to go.
     const footer = shown.some((c) => folio(c)!.title)
@@ -235,7 +269,11 @@ function noPageNumber(ctx: Ctx): Finding {
       id,
       'Check in the PDF version that the first page of each chapter has no page number.',
     )
-  const shownOn = s.chapters.filter((c) => wordFolioAt(doc, c.heading).folio)
+  const shownOn = s.chapters.filter(
+    (c) =>
+      (doc.paras[c.heading].newPage || doc.paras[c.heading].renderedBreak === 'before') &&
+      wordFolioAt(doc, c.heading).folio,
+  )
   if (!shownOn.length)
     return ok(id, 'Each chapter opens a section whose first page has no page number.')
   return fix(id, msg, {
@@ -486,6 +524,7 @@ export function bodyNumbers(
       pages,
       (p) => ({ kind: 'arabic', value: base === undefined ? undefined : p - base + 1 }),
       thesisTitle(ctx),
+      ch1 ? prelimTitle(doc, ch1.i) : undefined,
     )
     if (!problems.length)
       return ok(
@@ -503,6 +542,7 @@ export function bodyNumbers(
   const secs = [...new Set(doc.paras.slice(start, end).map((p) => p.section ?? 0))]
   const starts = sectionStarts(doc)
   const problems: Problem[] = []
+  const ref = ch1 ? prelimTitle(doc, ch1.i) : undefined
   for (const k of secs) {
     const sec = doc.sections[k]
     const head = doc.paras
@@ -515,9 +555,17 @@ export function bodyNumbers(
       s.chapters.some(
         (c) => doc.paras[c.heading].section === k && wordFolioAt(doc, c.heading).firstPage,
       )
-    for (const f of wordSectionFolios(doc, k, unnumbered))
+    for (const f of wordSectionFolios(doc, k, unnumbered)) {
       for (const p of judge(f.folio, { kind: 'arabic' }))
         problems.push({ ...p, text: `${f.where}${where}: ${p.text}` })
+      // One shortened title throughout: the preliminary pages' against this part's.
+      const shortened = f.folio?.title
+      if (ref && shortened && titleKey(shortened) !== ref.key)
+        problems.push({
+          type: 'changed',
+          text: `${f.where}${where}: the footer has another title, “${quote(shortened, 40)}”, than the preliminary pages (“${quote(ref.shown, 40)}”); keep one shortened title`,
+        })
+    }
     const opensChapterOne = ch1 && sec.first <= ch1.i && ch1.i <= sec.last
     if (opensChapterOne && starts[k] !== 1)
       problems.push({

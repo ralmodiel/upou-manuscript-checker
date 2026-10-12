@@ -93,8 +93,10 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
     // A caption opening its page, and a picture closing the page before.
     const prevPage = doc.pages?.[n - 1]
     const prevText = doc.paras[p.i - 1]?.lines?.findLast((l) => l.page === n - 1)
+    // (not when a picture of this page stands under it, within two inches)
     if (
       page.paras[0] === p.i &&
+      !below.some((g) => g < 12 * line.size) &&
       doc.paras[p.i - 1]?.lines?.at(-1)?.page !== n &&
       prevPage?.images.some((b) => wide(b) && (!prevText || b.y0 >= prevText.y - 2))
     )
@@ -116,6 +118,7 @@ export function findCaptions(ctx: Ctx): Caption[] {
   const { doc } = ctx
   const [start, end] = bodyRange(ctx)
   const out: Caption[] = []
+  const seen = new Map<string, number>()
   for (let k = start; k < end; k++) {
     const p = doc.paras[k]
     const t = norm(p.text)
@@ -138,6 +141,23 @@ export function findCaptions(ctx: Ctx): Caption[] {
         }
       }
     }
+    // A long table carried over the pages with its caption repeated on each (APA asks for
+    // "(continued)", but it is still one table): same number and title on the page before or this one.
+    const text = (rest || norm(title?.text ?? '')).toLowerCase()
+    const key = `${kind}${m[2]}`
+    const lastPage = seen.get(key)
+    seen.set(key, p.page ?? -1)
+    const again = out.findLast((c) => c.kind === kind && c.number === m[2])
+    const prior = (again?.inline || norm(again?.title?.text ?? '')).toLowerCase()
+    if (
+      lastPage !== undefined &&
+      p.page !== undefined &&
+      p.page - lastPage <= 1 &&
+      text &&
+      prior &&
+      (prior.startsWith(text) || text.startsWith(prior))
+    )
+      continue
     out.push({
       para: p,
       kind,

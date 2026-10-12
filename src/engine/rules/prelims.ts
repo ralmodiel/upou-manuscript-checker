@@ -26,12 +26,28 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
   required.push('abstract')
   const issues: string[] = []
   const statuses: Finding['status'][] = []
-  const missing = required.filter((k) => !found.includes(k))
+  // A dedication page without its heading: it opens "Dedicated to:".
+  const dedicated = found.includes('dedication')
+    ? undefined
+    : doc.paras.find(
+        (p) =>
+          p.i >= (s.acceptance?.end ?? s.title.end) &&
+          p.i < (s.chapters[0]?.start ?? s.references?.start ?? doc.paras.length) &&
+          p.newPage &&
+          /^dedicated\s+to\b/i.test(norm(p.text)),
+      )
+  const missing = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
   if (missing.length) {
     issues.push(
       `Include the missing preliminary pages: ${list(missing.map((k) => PRELIM_NAMES[k]))}.`,
     )
     statuses.push('fix')
+  }
+  if (dedicated) {
+    issues.push(
+      `The Dedication page opens “${quote(dedicated.text, 30)}” with no “Dedication” heading: check that it is set as in the template.`,
+    )
+    statuses.push('review')
   }
   // Duplicates, as two abstracts (one heading may stand for two keys: "List of Tables and Figures").
   for (const key of ORDER) {
@@ -76,11 +92,13 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
       `All there: ${list(ORDER.filter((k) => found.includes(k)).map((k) => PRELIM_NAMES[k]))}.`,
     )
   const status = worst(statuses)
+  // The first of the most serious issues leads.
+  const lead = statuses.indexOf(status)
   return {
     id,
     status,
-    message: issues[0],
-    details: issues.length > 1 ? issues.slice(1) : undefined,
+    message: issues[lead],
+    details: issues.length > 1 ? issues.filter((_, k) => k !== lead) : undefined,
   }
 }
 

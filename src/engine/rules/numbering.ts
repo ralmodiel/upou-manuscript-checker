@@ -2,7 +2,7 @@
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
 import type { Doc, HeaderFooter, NumberFormat, Section } from '../model.ts'
-import { fromRoman, norm, quote, roman } from '../text.ts'
+import { fromRoman, garbled, norm, quote, roman } from '../text.ts'
 
 export interface Folio {
   raw: string
@@ -20,7 +20,9 @@ const PLACEHOLDER = /shortened (thesis |dissertation |manuscript |project )?titl
 const FOLIO = /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s*[|│¦•·]\s*|\s+|^)([ivxlcdm]+|\d+)\s*$/i
 
 export function parseFolio(raw: string): Folio | undefined {
-  const t = norm(raw.replace(/\n/g, ' '))
+  let t = norm(raw.replace(/\n/g, ' '))
+  // A re-encoded font may print the ellipsis as «: in a footer of such text it is one.
+  if (garbled(t)) t = t.replace(/«(?=\s*([ivxlcdm]+|\d+)$)/i, '…')
   if (!t) return undefined
   const m = FOLIO.exec(t)
   if (!m)
@@ -223,10 +225,56 @@ export function mainTitle(doc: Doc, pages: number[]) {
   return groups[0] && groups[0].pages.length > total / 2 ? groups[0] : undefined
 }
 
+export interface TitleRef {
+  key: string
+  shown: string
+}
+
+/** The shortened title most of the preliminary pages carry in their footers (those before the
+ *  first chapter's heading, paragraph `chapter`); none without a majority. */
+export function prelimTitle(doc: Doc, chapter: number): TitleRef | undefined {
+  if (doc.kind === 'pdf') {
+    const page = doc.paras[chapter]?.page
+    const main =
+      page === undefined
+        ? undefined
+        : mainTitle(
+            doc,
+            Array.from({ length: page }, (_, p) => p),
+          )
+    return main && { key: main.key, shown: main.shown }
+  }
+  if (!doc.sections) return undefined
+  const counts = new Map<string, { shown: string; n: number }>()
+  let total = 0
+  for (const [k, sec] of doc.sections.entries()) {
+    if (sec.first >= chapter) break
+    const folio = wordSectionFolios(doc, k, true)[0]?.folio
+    const key = folio ? titleKey(folio.title) : ''
+    if (!key) continue
+    const c = counts.get(key) ?? { shown: norm(folio!.title), n: 0 }
+    c.n++
+    total++
+    counts.set(key, c)
+  }
+  const best = [...counts].sort((a, b) => b[1].n - a[1].n)[0]
+  return best && best[1].n > total / 2 ? { key: best[0], shown: best[1].shown } : undefined
+}
+
 /** Footers with another title than most of `pages` carry, each title once with its pages: one
  *  thesis, one title (one odd page is one change, not two). */
-function titleChanges(doc: Doc, pages: number[], thesis?: string): Problem[] {
-  const [main, ...others] = titleGroups(doc, pages, thesis)
+function titleChanges(doc: Doc, pages: number[], thesis?: string, ref?: TitleRef): Problem[] {
+  const groups = titleGroups(doc, pages, thesis)
+  // Against the title the preliminary pages carry, when these pages are a later part.
+  if (ref)
+    return groups
+      .filter((g) => g.key !== ref.key)
+      .map((g) => ({
+        type: 'changed',
+        page: g.pages[0],
+        text: `${pagesText(g.pages)}: the footer has another title, “${quote(g.shown, 40)}”, than the preliminary pages (“${quote(ref.shown, 40)}”); keep one shortened title`,
+      }))
+  const [main, ...others] = groups
   return others.map((g) => ({
     type: 'changed',
     page: g.pages[0],
@@ -249,10 +297,11 @@ export function auditPdf(
   pages: number[],
   want: (p: number) => Want,
   thesis?: string,
+  ref?: TitleRef,
 ): Problem[] {
   return [
     ...pages.flatMap((p) => judge(pdfFolio(doc, p), want(p), p)),
-    ...titleChanges(doc, pages, thesis),
+    ...titleChanges(doc, pages, thesis, ref),
   ]
 }
 

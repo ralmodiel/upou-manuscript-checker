@@ -7,6 +7,7 @@ import { titlePage } from '../structure.ts'
 import {
   DATE,
   distance,
+  garbled,
   isUpper,
   list,
   lowerWords,
@@ -14,6 +15,7 @@ import {
   quote,
   roman,
   shown,
+  titleForm,
   wordDiff,
 } from '../text.ts'
 import {
@@ -49,6 +51,8 @@ export interface TitlePage {
   coverPage?: number
   program?: Para
   author?: Para
+  /** The author's name when it stands above the degree program, against the template's order. */
+  authorAbove?: Para
   title: Para[]
   adviserLabel?: Para
   adviser?: Para
@@ -119,8 +123,20 @@ export function readTitlePage(ctx: Ctx): TitlePage {
   const permissionText = find(paras, /permission of the classification/i)
   // Between the program and "Thesis Adviser:": the author, then the title (one or more lines).
   const between = paras.slice(idx(program) + 1, adviserLabel ? idx(adviserLabel) : idx(program) + 3)
-  const author = between[0]
-  const title = between.slice(1)
+  // Between the university's name and the program there is nothing; a short line there is the
+  // author's name, put above the program (a heading such as "Title Page" stands above the university).
+  const univ = Math.max(
+    -1,
+    ...paras.map((p, k) =>
+      /^(university of the philippines|open university)\b/i.test(norm(p.text)) ? k : -1,
+    ),
+  )
+  const authorAbove =
+    univ >= 0 && idx(program) > univ + 1
+      ? paras.slice(univ + 1, idx(program)).find((p) => norm(p.text).split(' ').length <= 8)
+      : undefined
+  const author = authorAbove ?? between[0]
+  const title = authorAbove ? between : between.slice(1)
   // "Thesis Adviser:" with the name on the same line, or on the next.
   const inline =
     adviserLabel && norm(adviserLabel.text).replace(ADVISER_LABEL, '').replace(/^\s*:/, '').trim()
@@ -138,6 +154,7 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     coverPage: ctx.doc.pages?.slice(0, page).find((pg) => pg.images.length)?.n,
     program,
     author,
+    authorAbove,
     title: title.filter((p) => p !== adviser),
     adviserLabel,
     adviser: adviser && !/faculty of/i.test(adviser.text) ? adviser : undefined,
@@ -208,43 +225,63 @@ const wordPictureNear = (ctx: Ctx, label: Para) =>
 
 // ---- Title Page ----
 
-async function seal(ctx: Ctx, tp: TitlePage): Promise<Finding> {
+/** The seal check, and whether the picture is another emblem of the university (the seal with its
+ *  wordmark or a wreath: coloured, not the template's seal), which may carry the name in it. */
+async function seal(ctx: Ctx, tp: TitlePage): Promise<{ finding: Finding; emblem: boolean }> {
   const id = 'title.seal'
+  const only = (finding: Finding, emblem = false) => ({ finding, emblem })
   const { doc, s } = ctx
   const pic =
     doc.kind === 'pdf'
       ? doc.pictures.find((p) => p.para === -1 && (p.page ?? 0) === tp.page)
       : doc.pictures.find((p) => p.para >= s.title.start && p.para < s.title.end)
-  if (!pic) return fix(id, 'Add the official UP seal at the top of the title page.')
+  if (!pic) return only(fix(id, 'Add the official UP seal at the top of the title page.'))
   let pixels = await pic.pixels?.()
   const bytes = pic.bytes?.()
   if (bytes && typeof crypto !== 'undefined' && crypto.subtle) {
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes)))
     const hex = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
     if (hex === SEAL_SHA256)
-      return ok(id, 'The official UP seal from the template is on the title page.')
+      return only(ok(id, 'The official UP seal from the template is on the title page.'))
   }
   if (!pixels && bytes && ctx.env.decodeImage) pixels = await ctx.env.decodeImage(bytes)
   if (!pixels)
-    return review(
-      id,
-      'Make sure the picture on the title page is the official UP seal (copy it from the template).',
+    return only(
+      review(
+        id,
+        'Make sure the picture on the title page is the official UP seal (copy it from the template).',
+      ),
     )
   const small = shrink(pixels, 64)
   const d = hamming(dHash(small), SEAL_DHASH)
-  if (d <= 12 && colourfulness(small) > 25)
-    return ok(id, 'The official UP seal is on the title page.')
+  const colour = colourfulness(small)
+  if (d <= 12 && colour > 25) return only(ok(id, 'The official UP seal is on the title page.'))
   if (d <= 12)
-    return review(
-      id,
-      'The seal on the title page looks faded or grey. Use the full-color official UP seal from the template.',
+    return only(
+      review(
+        id,
+        'The seal on the title page looks faded or grey. Use the full-color official UP seal from the template.',
+      ),
     )
-  return fix(
-    id,
-    'Use the official UP seal: the picture on the title page does not look like it. Copy the seal from the template.',
-    {
-      where: [{ page: tp.page }],
-    },
+  // Another emblem of the university (the seal with its wordmark, a wreath) is coloured and large;
+  // whether it is the university's cannot be told from here.
+  if (colour > 25 && pixels.width >= 24 && pixels.height >= 24)
+    return only(
+      review(
+        id,
+        'The picture on the title page is not the seal of the template. If it is the UP or UPOU emblem, replace it with the official UP seal (copy it from the template).',
+        { where: [{ page: tp.page }] },
+      ),
+      true,
+    )
+  return only(
+    fix(
+      id,
+      'Use the official UP seal: the picture on the title page does not look like it. Copy the seal from the template.',
+      {
+        where: [{ page: tp.page }],
+      },
+    ),
   )
 }
 
@@ -261,13 +298,16 @@ const anchors = (work: TitlePage['work']): [string, RegExp][] => [
   [`${work} Adviser's Signature:`, /adviser'?s?\s+signature/i],
 ]
 
-function sequence(tp: TitlePage): Finding {
+function sequence(tp: TitlePage, emblem: boolean): Finding {
   const id = 'title.sequence'
   const found = anchors(tp.work).map(([name, re]) => ({
     name,
     k: tp.paras.findIndex((p) => re.test(norm(p.text))),
   }))
-  const missing = found.filter((a) => a.k < 0).map((a) => a.name)
+  // The university's name may be part of the emblem picture: not text, so not missing, but said.
+  const named = (n: string) => /^(UNIVERSITY OF THE PHILIPPINES|OPEN UNIVERSITY)$/.test(n)
+  const inPicture = emblem ? found.filter((a) => a.k < 0 && named(a.name)) : []
+  const missing = found.filter((a) => a.k < 0 && !inPicture.includes(a)).map((a) => a.name)
   const issues: string[] = []
   // The lines the issues are about, for the places.
   const lines: Para[] = []
@@ -281,12 +321,22 @@ function sequence(tp: TitlePage): Finding {
       `Remove the page before the title page (${pagesText([tp.coverPage])}): the title page comes first`,
     )
   if (missing.length) issues.push(`Missing: ${list(missing.map((m) => `“${m}”`))}`)
+  if (inPicture.length)
+    issues.push(
+      `${list(inPicture.map((a) => `“${a.name}”`))} ${inPicture.length > 1 ? 'are' : 'is'} not text on the page (perhaps part of the picture): the template has the name as text under the seal`,
+    )
   const present = found.filter((a) => a.k >= 0)
   for (let k = 1; k < present.length; k++)
     if (present[k].k < present[k - 1].k) {
       issues.push(`“${present[k].name}” should come after “${present[k - 1].name}”`)
       lines.push(tp.paras[present[k].k])
     }
+  if (tp.authorAbove) {
+    issues.push(
+      `“${quote(tp.authorAbove.text, 40)}” stands above the degree program: write the program first, then your name below it`,
+    )
+    lines.push(tp.authorAbove)
+  }
   // The author's name comes before the title; a name is short, a title is long.
   if (tp.author && tp.title.length) {
     const words = (p: Para) => norm(p.text).split(' ').length
@@ -343,6 +393,12 @@ function titleUpper(tp: TitlePage): Finding {
       {
         where: at(tp.title[0]),
       },
+    )
+  if (garbled(t))
+    return review(
+      id,
+      `The ${tp.work.toLowerCase()} title could not be read reliably (its font is encoded oddly). Check that it is in upper case.`,
+      { where: at(tp.title[0]) },
     )
   if (!isUpper(t)) {
     const words = `Not in upper case: ${list(
@@ -417,6 +473,20 @@ const MARK = /[✓✔✗✘☒☑■●√xX/üþýû-]/
 const pick = (sides: ('yes' | 'no')[]): Choice =>
   !sides.length ? 'none' : new Set(sides).size === 2 ? 'both' : sides[0]
 
+/** A mark typed beside the words ("☒ Yes or ☐ No", "Yes or No ✓"), or one of the two words deleted:
+ *  a mark left of "or" picks Yes, one right of it picks No. */
+function typedChoice(text: string): Choice {
+  const t = norm(text).replace(/[☐□]/g, ' ')
+  const yes = /\byes\b/i.exec(t)
+  const no = /\bno\b/i.exec(t)
+  if (yes && !no) return 'yes'
+  if (no && !yes) return 'no'
+  if (!yes || !no) return 'none'
+  const divider = /\bor\b/i.exec(t)?.index ?? (yes.index + no.index) / 2
+  const marks = [...t.matchAll(/[✓✔✗✘☒☑■●√]|(?<![a-z])[xX](?![a-z])/g)].map((m) => m.index)
+  return pick(marks.map((k) => (k < divider ? 'yes' : 'no')))
+}
+
 /** Which option of a permission row is marked. The template's boxes stand before each word
  *  ("☐ Yes or ☐ No"), so a mark left of "or" picks Yes and one right of it picks No. */
 function rowChoice(ctx: Ctx, row: Para): Choice {
@@ -433,16 +503,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
       ...(boxes[1] && MARK.test(boxes[1].text) ? (['no'] as const) : []),
     ])
     if (boxed !== 'none') return boxed
-    // Typed beside the words ("☒ Yes or ☐ No"), or one of the two words deleted.
-    const t = norm(cell.text).replace(/[☐□]/g, ' ')
-    const yes = /\byes\b/i.exec(t)
-    const no = /\bno\b/i.exec(t)
-    if (yes && !no) return 'yes'
-    if (no && !yes) return 'no'
-    if (!yes || !no) return 'none'
-    const divider = /\bor\b/i.exec(t)?.index ?? (yes.index + no.index) / 2
-    const marks = [...t.matchAll(/[✓✔✗✘☒☑■●√]|(?<![a-z])[xX](?![a-z])/g)].map((m) => m.index)
-    return pick(marks.map((k) => (k < divider ? 'yes' : 'no')))
+    return typedChoice(cell.text)
   }
   // PDF: a tick or cross (a one-letter word or an annotation) in this row's band.
   const page = doc.pages?.[row.page ?? -1]
@@ -453,7 +514,8 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   if (yes !== /\bno\b/i.test(line.text)) return yes ? 'yes' : 'no'
   const or = line.spans.find((s) => /^or$/i.test(s.text))
   const yesWord = line.spans.find((s) => /^yes$/i.test(s.text))
-  if (!or || !yesWord) return 'none'
+  // The words in one span ("Yes or No") or a mark inside one ("X Yes"): read the line's text.
+  if (!or || !yesWord) return typedChoice(line.text)
   // Same row: the mark's middle within half a line of the row's middle.
   const band = (b: Box) =>
     Math.abs((b.y0 + b.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size
@@ -502,7 +564,8 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     ...pictures,
     ...oneSide(filled),
   ]
-  return pick(xs.map(side))
+  const chosen = pick(xs.map(side))
+  return chosen === 'none' ? typedChoice(line.text) : chosen
 }
 
 function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
@@ -628,12 +691,24 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'permission.title'
   const r = ctx.s.permission
   if (!r) return fix(id, 'Add the University Permission Page from the template.')
-  const paras = textIn(ctx, r.heading + 1, r.end)
-  const end = paras.findIndex((p) => /^["“]?\s*I hereby grant|specifically/i.test(norm(p.text)))
+  // A page found by its wording has no heading: its first line is the title's.
+  const named = /permission page/i.test(norm(ctx.doc.paras[r.heading]?.text ?? ''))
+  const paras = textIn(ctx, r.heading + (named ? 1 : 0), r.end)
+  const end = paras.findIndex(
+    (p) =>
+      /^["“]?\s*I hereby grant|specifically/i.test(norm(p.text)) ||
+      garbled(p.text.split(/\s+/).slice(0, 8).join(' ')),
+  )
   const lines = paras
     .slice(0, end < 0 ? 1 : end)
     .filter((p) => !/^university permission page$/i.test(norm(p.text)))
   const t = norm(lines.map(shown).join(' '))
+  if (garbled(t))
+    return review(
+      id,
+      `The title on the University Permission Page could not be read reliably (its font is encoded oddly). Check that it is the ${tp.work.toLowerCase()} title as on the Title Page, in upper case.`,
+      { where: at(lines[0]) },
+    )
   if (!t || /^title$/i.test(t))
     return fix(
       id,
@@ -652,7 +727,7 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
           .map((w) => `“${w}”`),
       )}).`,
     )
-  const differs = !!main && norm(main).toLowerCase() !== t.toLowerCase()
+  const differs = !!main && titleForm(main) !== titleForm(t)
   if (details.length && !differs && !upperRule(tp))
     return review(id, `Check the case of the ${tp.work.toLowerCase()} title. ${CASE_NOTE}`, {
       details,
@@ -778,7 +853,10 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
           paras
             .slice(k, end >= k ? end + 1 : k + 1)
             .map(shown)
-            .join(' '),
+            .join(' ')
+            // A re-encoded font prints the quotes around the title as ³ and ´.
+            .replace(/(title|titled)(\s*:?\s*)³/i, '$1$2“')
+            .replace(/´(?=\s*(is hereby|which|has been|is accepted))/i, '”'),
         )
   const m = p
     ? /(?:with the title|entitled|titled)\s*:?\s*["“'‘]?(.+?)["”'’]?\s*,?\s*(?:is hereby accepted|which|has been|is accepted|$)/i.exec(
@@ -791,8 +869,14 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
       where: at(p),
     })
   const main = titleOf(tp)
+  if (garbled(t) || garbled(main))
+    return review(
+      id,
+      `The title could not be read reliably (its font is encoded oddly). Check that the Acceptance Page has the same ${tp.work.toLowerCase()} title as the Title Page.`,
+      { where: at(p) },
+    )
   const issues: string[] = []
-  if (main && norm(main).toLowerCase() !== norm(t).toLowerCase()) {
+  if (main && titleForm(main) !== titleForm(t)) {
     const d = wordDiff(main, t)
     issues.push(
       `Title Page: “${quote(main, 90)}”; Acceptance Page: “${quote(t, 90)}”${
@@ -864,7 +948,8 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
 const PREFIX = /^(dr|asst\.?\s*prof|assoc\.?\s*prof|prof|engr|atty)\b\.?/i
 // Degrees after a name, UPOU's among them (MDC, MDE, MDM, MAEd, MIS, MNSE…).
 const DEGREES =
-  'ph\\.?\\s?d|ed\\.?\\s?d|d\\.?\\s?comm|dcomm|d\\.?p\\.?a|mdc|mde|mdm|mis|mnse|maed|ma\\.?ed|m\\.?a|m\\.?s|m\\.?sc|mpa|mba|med|mph|mm|dvm|md'
+  'ph\\.?\\s?d|ed\\.?\\s?d|d\\.?\\s?comm|dcomm|d\\.?p\\.?a|mdc|mde|mdm|mis|mnse|maed|ma\\.?ed|m\\.?a|m\\.?s|m\\.?sc|mpa|mba|med|mph|mm|dvm|md|' +
+  'dr\\.?\\s?p\\.?h|d\\.?p\\.?h|dnp|psy\\.?\\s?d|j\\.?d|d\\.?b\\.?a|d\\.?sc|sc\\.?d|msn|mha|m\\.?eng|llb|llm|cpa|rn|rpm|mpm|mhrm'
 const SUFFIX = new RegExp(`,\\s*(${DEGREES})\\.?$`, 'i')
 // A space or a comma before it, so "ROMA" keeps its "MA".
 const SUFFIX_ANY = new RegExp(`(?:,\\s*|\\s+)(${DEGREES})\\.?$`, 'i')
@@ -878,10 +963,24 @@ function convention(names: Names): Finding {
   // A stray comma after the degree ("Ph.D,") is a typo (acceptance.names says so), not a style.
   const style = (raw: string) => {
     const n = raw.replace(/[,;]\s*$/, '')
-    return PREFIX.test(n) ? (SUFFIX.test(n) ? 'both' : 'title') : SUFFIX.test(n) ? 'degree' : 'none'
+    if (PREFIX.test(n)) return SUFFIX.test(n) ? 'both' : 'title'
+    if (SUFFIX.test(n)) return 'degree'
+    // Something short after a comma that is no degree this list knows (and no "Jr."): a degree
+    // of another kind, or a typo.
+    return /,\s*[^,\s][^,]{0,11}$/.test(n) && !/,\s*(jr|sr|ii|iii|iv)\.?$/i.test(n)
+      ? 'unknown'
+      : 'none'
   }
   const styles = all.map((n) => ({ ...n, style: style(n.name) }))
   const kinds = new Set(styles.map((s) => s.style))
+  const unknown = styles.filter((s) => s.style === 'unknown')
+  const known = new Set(styles.map((s) => s.style).filter((k) => k !== 'unknown'))
+  if (unknown.length && known.size <= 1 && !known.has('both'))
+    return review(
+      id,
+      `Check ${list(unknown.map((s) => `“${s.name}”`))}: the title or degree after the name is not one this checker knows. Use either titles before all names (DR. JUAN A. CRUZ) or degree abbreviations after all names (JUAN A. CRUZ, Ph.D.).`,
+      { details: styles.map((s) => s.name), where: unknown.flatMap((s) => at(s.para)) },
+    )
   if (kinds.size === 1 && !kinds.has('both'))
     return ok(
       id,
@@ -892,6 +991,7 @@ function convention(names: Names): Finding {
     degree: 'degree after the name',
     both: 'title and degree',
     none: 'neither title nor degree',
+    unknown: 'a title or degree this checker does not know',
   }
   // The places: the names that break the convention most of them follow.
   const count = (st: string) => styles.filter((s) => s.style === st).length
@@ -916,19 +1016,20 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
   const accHead = ctx.s.acceptance ? ctx.doc.paras[ctx.s.acceptance.heading] : undefined
   // Scanned pages cannot be read: their items are for the student to check, not to add.
   const scans = scannedFront(ctx)
+  const sealed = scans.includes(tp.page) ? undefined : await seal(ctx, tp)
   const unread = (part: string, why: string) =>
     CHECKLIST.find((p) => p.id === part)!.items.map((i) => review(i.id, why))
   const missing = (name: string) =>
     `No ${name} was found in the text. If it is one of the scanned pages, check this item yourself.`
   return [
-    ...(scans.includes(tp.page)
+    ...(!sealed
       ? unread(
           'title',
           'The title page is a scanned picture, so it could not be read here. Check this item yourself.',
         )
       : [
-          await seal(ctx, tp),
-          sequence(tp),
+          sealed.finding,
+          sequence(tp, sealed.emblem),
           titleUpper(tp),
           adviser(
             tp,

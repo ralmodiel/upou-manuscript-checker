@@ -15,6 +15,11 @@ const para = (text: string, pPr = '') =>
   `<w:p><w:pPr>${pPr}</w:pPr><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`
 
 function docx(...paras: string[]): Uint8Array {
+  return docxIn('<w:sectPr/>', ...paras)
+}
+
+/** A Word file whose last section has the given properties (its break type, for one). */
+function docxIn(sect: string, ...paras: string[]): Uint8Array {
   return zipSync({
     '[Content_Types].xml': strToU8(
       `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>`,
@@ -23,7 +28,7 @@ function docx(...paras: string[]): Uint8Array {
       `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}" Target="word/document.xml"/></Relationships>`,
     ),
     'word/document.xml': strToU8(
-      `<w:document xmlns:w="${W}"><w:body>${paras.join('')}<w:sectPr/></w:body></w:document>`,
+      `<w:document xmlns:w="${W}"><w:body>${paras.join('')}${sect}</w:body></w:document>`,
     ),
   })
 }
@@ -212,6 +217,123 @@ describe('check', () => {
     )
   })
 
+  it('finds chapters headed by their title alone, and still asks for the chapter label', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const text =
+      'The study looks at how community radio stations prepare their listeners for typhoons and floods.'
+    const r = await check(
+      'thesis.docx',
+      docx(
+        para('A STUDY OF COMMUNITY RADIO', c),
+        para('Abstract', `<w:pageBreakBefore/>${c}`),
+        para(text),
+        para('I. INTRODUCTION', `<w:pageBreakBefore/>${c}`),
+        para(text),
+        para('REVIEW OF RELATED LITERATURE', `<w:pageBreakBefore/>${c}`),
+        para(text),
+      ),
+      opts,
+    )
+    expect(finding(r, 'chapterStart.newPage')).toMatchObject({ status: 'ok' })
+    const number = finding(r, 'chapterStart.number')
+    expect(number.status).toBe('fix')
+    expect(number.details?.join(' ')).toMatch(
+      /“I\. INTRODUCTION”: the chapter number is missing.*“REVIEW OF RELATED LITERATURE”: the chapter number is missing \(write Chapter II/,
+    )
+  })
+
+  it('compares titles without regard to case, a line-end hyphen or the period before a quote', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'thesis.docx',
+      docx(
+        ...[
+          'UNIVERSITY OF THE PHILIPPINES',
+          'OPEN UNIVERSITY',
+          'MASTER OF DEVELOPMENT COMMUNICATION',
+          'Juan A. Cruz',
+          'A SOCIO-CULTURAL STUDY OF RADIO',
+          'Thesis Adviser:',
+          'MARIA B. SANTOS, Ph.D.',
+        ].map((t) => para(t, c)),
+        para('Acceptance Page', `<w:pageBreakBefore/>${c}`),
+        para(
+          'This paper prepared by Juan A. Cruz with the title: “A socio- cultural study of radio.” is hereby accepted by the Faculty of Information and Communication Studies, U.P. Open University.',
+        ),
+      ),
+      opts,
+    )
+    expect(finding(r, 'acceptance.title').status).toBe('ok')
+  })
+
+  it('leaves a table cell “Content” alone, and finds the degree left as “Course”, a lone NAME and DATE', async () => {
+    const cell = (t: string) =>
+      `<w:tbl><w:tr><w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`
+    const ok = await check('thesis.docx', thesis(cell('Content'), para('Body text.')), opts)
+    expect(finding(ok, 'extra.placeholders').status).toBe('ok')
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('accepted in partial fulfillment of the requirements for the degree Course.'),
+        para('NAME'),
+        para('Juan A. Cruz, DATE'),
+      ),
+      opts,
+    )
+    const f = finding(r, 'extra.placeholders')
+    expect(f.status).toBe('fix')
+    expect(f.details?.join(' ')).toMatch(/Course.*NAME.*DATE/)
+  })
+
+  it('asks for a second look, not a correction, at a degree it does not know', async () => {
+    const r = await check(
+      'thesis.docx',
+      docx(
+        para('Acceptance Page', '<w:jc w:val="center"/>'),
+        para(
+          'This paper prepared by Juan A. Cruz with the title: “A study” is hereby accepted by the Faculty.',
+        ),
+        para('MARIA B. SANTOS, DrPH'),
+        para('Chair, Thesis Committee'),
+        para('JOSE C. REYES, Ph.D.'),
+        para('Member, Thesis Committee'),
+        para('ANA D. LIM, rDrPH'),
+        para('Member, Thesis Committee'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'acceptance.convention').status).toBe('review')
+    expect(finding(r, 'acceptance.convention').message).toMatch(/ANA D\. LIM, rDrPH/)
+  })
+
+  it('fails a chapter in a continuous section, and appendices that begin at B', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'thesis.docx',
+      docxIn(
+        '<w:sectPr><w:type w:val="continuous"/></w:sectPr>',
+        para('A STUDY OF COMMUNITY RADIO', c),
+        para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+        para('INTRODUCTION', c),
+        para('Body text of the first chapter.', '<w:sectPr/>'),
+        para('CHAPTER II', c),
+        para('REVIEW OF RELATED LITERATURE', c),
+      ),
+      opts,
+    )
+    expect(finding(r, 'chapterStart.newPage').status).toBe('fix')
+    const back = await check(
+      'thesis.docx',
+      thesis(
+        para('APPENDICES', c),
+        para('APPENDIX B', `<w:pageBreakBefore/>${c}`),
+        para('Survey Form', c),
+      ),
+      opts,
+    )
+    expect(finding(back, 'appendices.labels').status).toBe('fix')
+  })
+
   it('stays fast on long runs of spaces and tabs', async () => {
     // These once made two patterns backtrack for minutes, freezing the page.
     const t0 = performance.now()
@@ -262,6 +384,35 @@ describe('PDF reader', () => {
     )
     expect(doc.paras.filter((p) => /Running Title/.test(p.text))).toEqual([])
     expect(doc.paras.filter((p) => p.inTable).map((p) => p.text)).toEqual(['Cell one\tCell two'])
+  })
+
+  it('reads a bare page number under double-spaced text, higher than the bottom inch, as the footer', async () => {
+    const { readPdf } = await import('./pdf.ts')
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    // Lines that differ from page to page, or they read as a running foot.
+    const WORDS =
+      'ant bee cat dog eel fox gnu hen ibis jay koi lynx mole newt owl pig quail rat seal toad urchin vole wasp yak'.split(
+        ' ',
+      )
+    for (let n = 0; n < 3; n++) {
+      const page = doc.addPage([595, 842])
+      // Lines 27.6 pt apart, the last 107 pt from the foot; the number 79 pt up, one more line down.
+      for (let k = 0; k < 24; k++)
+        page.drawText(
+          `Body text of the chapter, ${WORDS[k]} and ${WORDS[(k + 7 * n) % 24]}, across.`,
+          {
+            x: 72,
+            y: 106.6 + 27.6 * k,
+            size: 12,
+            font,
+          },
+        )
+      page.drawText(String(n + 1), { x: 510, y: 79, size: 12, font })
+    }
+    const read = await readPdf(await doc.save(), await import('pdfjs-dist/legacy/build/pdf.mjs'))
+    expect(read.pages!.map((p) => p.footer)).toEqual(['1', '2', '3'])
+    expect(read.paras.filter((p) => /^\d$/.test(p.text))).toEqual([])
   })
 
   it('reports a picture in a chapter with no caption beside it', async () => {
