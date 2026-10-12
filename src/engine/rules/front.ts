@@ -25,6 +25,7 @@ import {
   pdfFolio,
   titleKey,
   wordFolioAt,
+  type Problem,
   type Want,
 } from './numbering.ts'
 
@@ -708,7 +709,8 @@ function dateOf(p: Para | undefined, id: string, where: string): Finding {
         `Write the month of the date of submission in full (15 October 2026): “${quote(p.text, 40)}”.`,
         { where: at(p) },
       )
-    return fix(
+    // (the checklist asks only that the date be indicated: the form of it is the template's, not a rule)
+    return review(
       id,
       `Write the date of submission as Day Month Year (15 October 2026) on the ${where}: “${quote(p.text, 40)}”.`,
       { where: at(p) },
@@ -981,7 +983,16 @@ function folioCheck(
       want !== 'none' && want.value !== undefined
         ? { ...want, value: page - titlePage(doc, ctx.s) + 1 }
         : want
-    const problems = judge(folio, here, page)
+    // A short title printed whole has no shortening to mark with an ellipsis: for the student to
+    // look at, not a fault.
+    const shortWhole = (p: Problem) =>
+      p.type === 'ellipsis' &&
+      !!full &&
+      full.split(/\s+/).length <= 8 &&
+      !!folio &&
+      titleKey(folio.raw.replace(/\s*[ivxlcdm\d]+$/i, '')) === titleKey(full)
+    const found = judge(folio, here, page)
+    const problems = found.filter((p) => !shortWhole(p))
     // One shortened title throughout: this page's against the one most pages before Chapter I carry.
     if (want !== 'none' && folio?.title && folio.number !== undefined) {
       const ch = ctx.s.chapters[0]
@@ -997,8 +1008,20 @@ function folioCheck(
           text: `${pagesText([page])}: the footer has another title, “${quote(folio.title, 40)}”, than the other preliminary pages (“${quote(main.shown, 40)}”); keep one shortened title`,
         })
     }
+    if (!problems.length && found.some(shortWhole))
+      return review(
+        id,
+        `The footer of the ${name} holds the whole title, which is short; the template shows the shortened title, an ellipsis (…) and the number. Check that yours does.`,
+        { where: [{ page }] },
+      )
     if (!problems.length)
       return ok(id, want === 'none' ? `No page number on the ${name}.` : `${name}: “${folio?.raw}”`)
+    if (problems.every((p) => p.type === 'overlap'))
+      return review(
+        id,
+        `The footer of the ${name} prints over itself (the title over its page number), so it could not be read. Check it yourself.`,
+        { where: [{ page }] },
+      )
     const whole =
       !!full && !!titleKey(full) && titleKey(folio?.title ?? '').includes(titleKey(full))
     return fix(
@@ -1147,7 +1170,14 @@ function permissionSignature(ctx: Ctx): Finding {
   const statuses: Finding['status'][] = []
   const typed = [...above.map((p) => norm(p.text)), lead.trim()]
   const placeholder = typed.some((t) => /\bname and date$/i.test(t))
-  if (placeholder || !typed.some((t) => DATE.test(t))) {
+  // A name or a date whose digits came out of the font as control characters.
+  const unreadable = typed.some((t) => [...t].some((c) => c.charCodeAt(0) < 32 && c !== '	'))
+  if (!placeholder && !typed.some((t) => DATE.test(t)) && unreadable) {
+    issues.push(
+      'The name or the date above the label could not be read reliably (its font is encoded oddly). Check that your name and the date of submission are there.',
+    )
+    statuses.push('review')
+  } else if (placeholder || !typed.some((t) => DATE.test(t))) {
     issues.push(
       // The template's "and Date" kept after the student's own name.
       !placeholder && typed.some((t) => /\band date$/i.test(t))
@@ -1448,6 +1478,28 @@ function convention(names: Names): Finding {
     none: 'neither title nor degree',
     unknown: 'a title or degree this checker does not know',
   }
+  // Where the mix is not a clear one, the student looks: a name with neither title nor degree
+  // among the rest (a person may have none to show), a rank (Prof.) beside a Dean's degree, a Dean
+  // with title and degree beside titles (the Dean's line comes from the template).
+  const peers = styles.filter((x) => x.para !== names.dean?.para)
+  const rank = (n: string) => /^(asst|assistant|assoc|associate)?\.?\s*prof/i.test(n)
+  const bare = styles.filter((x) => x.style === 'none')
+  const others = new Set(styles.filter((x) => x.style !== 'none').map((x) => x.style))
+  const soft =
+    (bare.length > 0 && others.size === 1 && !others.has('both')) ||
+    (!!names.dean &&
+      peers.length > 0 &&
+      peers.every((x) => x.style === 'title') &&
+      (kinds.has('both') || peers.every((x) => rank(x.name))))
+  if (soft)
+    return review(
+      id,
+      'Check the names on the Acceptance Page for uniformity: use either titles before all names (DR. JUAN A. CRUZ) or degree abbreviations after all names (JUAN A. CRUZ, Ph.D.). A name with neither, or a Dean whose line is fixed by the template, may be right as it is.',
+      {
+        details: styles.map((x) => `${x.name}: ${describe[x.style as keyof typeof describe]}`),
+        where: styles.flatMap((x) => at(x.para)),
+      },
+    )
   // The places: the names that break the convention most of them follow.
   const count = (st: string) => styles.filter((s) => s.style === st).length
   const most = [...kinds].reduce((x, y) => (count(y) > count(x) ? y : x))
@@ -1525,6 +1577,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
             permHead,
             { kind: 'roman', value: 2 },
             'University Permission Page',
+            titleOf(tp),
           ),
         ]),
     ...((!accHead && scans.length) || scans.includes(accHead?.page ?? -1)
@@ -1544,6 +1597,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
             accHead,
             { kind: 'roman', value: 3 },
             'Acceptance Page',
+            titleOf(tp),
           ),
         ]),
   ]

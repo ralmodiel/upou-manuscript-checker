@@ -2,13 +2,14 @@
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, spread, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, isTocLine } from '../structure.ts'
-import { norm, plural, quote } from '../text.ts'
+import { garbled, norm, plural, quote } from '../text.ts'
 import { pagesText } from './numbering.ts'
 
 // Double spacing is 2 lines; 24 pt on 12 pt type (1.74) still reads as double, 1.5 lines does not.
 export const DOUBLE = 1.7
 // A bullet may be typed in a symbol font ("o", a black circle) or come out as a private-use letter.
-const LIST = /^(\(?\d{1,2}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·–—⚫⚪○◆◇■□➢➤➔✓✔-]|o|[a-z](?=\s[-–—]\s))\s/i
+const LIST =
+  /^(\(?\d{1,2}[.)]|[IVXLivxl]{1,5}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·–—⚫⚪○◆◇■□➢➤➔✓✔-]|o|[a-z](?=\s[-–—]\s))\s/i
 const symbolBullet = (t: string) => {
   const c = t.trimStart().charCodeAt(0)
   return c >= 0xf000 && c <= 0xf0ff
@@ -157,11 +158,76 @@ export const isList = (p: Para) => !!p.list || LIST.test(norm(p.text)) || symbol
 
 const where = (ps: Para[]) => spread(ps.map((p) => ({ page: p.page, quote: quote(p.text, 60) })))
 
+/** PDF: paragraphs that read as justified because the text was cut into paragraphs at each short
+ *  line. Where the paragraphs open with an indent, lines below a short line that start at the margin,
+ *  with no gap, and go on its sentence (a run-in heading, a line short of the margin) are the same
+ *  paragraph: all its lines together are as ragged as a left-aligned paragraph's. */
+function runOns(ctx: Ctx, checked: Para[]): Para[] {
+  const { doc } = ctx
+  if (doc.kind !== 'pdf') return []
+  const indented = checked.filter((p) => (p.indent?.firstLine ?? 0) >= 15).length
+  if (indented < 0.5 * checked.length) return []
+  const out: Para[] = []
+  const joined = new Set<number>()
+  for (const p of checked) {
+    if (joined.has(p.i) || !p.lines) continue
+    const pg = doc.pages?.[p.lines[0].page]
+    const edge = pg?.margins
+    if (!edge) continue
+    const chain = [p]
+    for (let q = doc.paras[p.i + 1]; q; q = doc.paras[q.i + 1]) {
+      const prev = chain.at(-1)!.lines!
+      const last = prev.at(-1)!
+      const top = q.lines?.[0]
+      const pitch = prev.length > 1 ? last.y - prev.at(-2)!.y : 2 * last.size
+      if (
+        !top ||
+        top.page !== last.page ||
+        Math.abs(top.x0 - edge.left) > 3 ||
+        Math.abs(top.size - last.size) > 0.6 ||
+        top.y - last.y > 1.4 * pitch ||
+        last.x1 >= edge.right - 5 ||
+        !(/^[“"'‘(]?\p{Ll}/u.test(norm(q.text)) || !/[.?!:;”"’)]\s*$/.test(last.text)) ||
+        isList(q) ||
+        isHeadingish(q) ||
+        q.inTable ||
+        q.align === 'center'
+      )
+        break
+      chain.push(q)
+      joined.add(q.i)
+    }
+    if (chain.length < 2 || garbled(chain.map((q) => q.text).join(' '))) continue
+    const body = chain.flatMap((q) => q.lines!).slice(0, -1)
+    // (two lines or more short of the margin, and a seventh or more of all)
+    const short = body.filter((l) => l.x1 < edge.right - 5).length
+    // (lines that mostly end at one point of their own are set to a width of their own: a quotation)
+    const own = Math.max(
+      ...body.map((a) => body.filter((l) => Math.abs(l.x1 - a.x1) <= 1.5).length),
+    )
+    if (short >= 2 && short / body.length > 0.15 && own < 0.5 * body.length) out.push(p)
+  }
+  return out
+}
+
+/** PDF: two lines, no indent and no full stop at the end: a subheading that wraps, not a paragraph. */
+const titleLines = (ctx: Ctx, p: Para) =>
+  ctx.doc.kind === 'pdf' &&
+  (p.lines?.length ?? 0) === 2 &&
+  (p.indent?.firstLine ?? 0) < 8 &&
+  norm(p.text).length < 200 &&
+  !/[.!?:;,”"’)\]]$/.test(norm(p.text))
+
 /** A finding for justification over the given paragraphs; `name` says where ("the chapters"). */
 export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Finding {
   // An indented quotation is often left-aligned.
   const checked = paras.filter(
-    (p) => multiLine(ctx, p) && !isList(p) && p.align !== 'center' && !blockQuote(ctx, p),
+    (p) =>
+      multiLine(ctx, p) &&
+      !isList(p) &&
+      p.align !== 'center' &&
+      !blockQuote(ctx, p) &&
+      !titleLines(ctx, p),
   )
   if (ctx.doc.kind === 'doc')
     return review(
@@ -169,7 +235,8 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
       `Check that the body text of ${name} is justified (an old .doc file does not say).`,
     )
   if (!checked.length) return na(id, `No body text found in ${name}.`)
-  const bad = checked.filter((p) => p.align !== 'justify')
+  const run = runOns(ctx, checked)
+  const bad = checked.filter((p) => p.align !== 'justify' || run.includes(p))
   if (!bad.length)
     return ok(
       id,
@@ -183,8 +250,14 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
   const short = (p: Para) =>
     (p.lines ?? []).filter((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 2.5)
   // Three lines or more and not one reaching the margin: left-aligned, whatever the line breaks.
-  const ragged = (p: Para) => (p.lines?.length ?? 0) >= 3 && short(p).length === p.lines!.length
-  const status = bad.length >= 2 || share >= 0.1 || bad.some(ragged) ? fix : review
+  // (or four lines or more, with two of them more than a few points short)
+  const raggedP = (p: Para) =>
+    ((p.lines?.length ?? 0) >= 3 && short(p).length === p.lines!.length) ||
+    ((p.lines?.length ?? 0) >= 4 &&
+      p
+        .lines!.slice(0, -1)
+        .filter((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 8).length >= 2)
+  const status = bad.length >= 2 || share >= 0.1 || bad.some(raggedP) ? fix : review
   // One paragraph with one short line before its last: left-aligned, or a line break typed there.
   const one = bad.length === 1 ? short(bad[0]).filter((l) => l !== bad[0].lines?.at(-1)) : []
   if (one.length === 1)

@@ -15,6 +15,8 @@ export interface Folio {
   field?: boolean
   /** The number has "p." or "page" before it. */
   label?: boolean
+  /** Two items of the footer print over one another (a title over its number): not readable. */
+  overlap?: boolean
 }
 
 const PLACEHOLDER = /shortened (thesis |dissertation |manuscript |project )?title here/i
@@ -135,6 +137,7 @@ export interface Problem {
     | 'long'
     | 'changed'
     | 'label'
+    | 'overlap'
     | 'unread'
   page?: number
   text: string
@@ -168,6 +171,15 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
         type: 'missing',
         page,
         text: `${at}no page number${expected ? ` (it should be ${expected})` : ''}`,
+      },
+    ]
+  // Print over print: what the footer says is not for us to read.
+  if (folio.overlap)
+    return [
+      {
+        type: 'overlap',
+        page,
+        text: `${at}the footer's title and page number print over one another`,
       },
     ]
   const out: Problem[] = []
@@ -395,6 +407,25 @@ function wrappedFolio(lines: Line[], words: Set<string>, brokenOnly = false): Fo
   return undefined
 }
 
+/** Two items of a footer line that stand on one another: different text over more than half the
+ *  narrower one (a stray row of dots over a number, or the same text printed twice, is no clash). */
+function overlaps(lines: Line[]): boolean {
+  return lines.some((l) =>
+    l.spans.some((a, i) =>
+      l.spans.slice(i + 1).some((b) => {
+        const over = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)
+        return (
+          over > 3 &&
+          over > 0.5 * Math.min(a.x1 - a.x0, b.x1 - b.x0) &&
+          norm(a.text) !== norm(b.text) &&
+          /[\p{L}\p{N}]/u.test(a.text) &&
+          /[\p{L}\p{N}]/u.test(b.text)
+        )
+      }),
+    ),
+  )
+}
+
 /** The page's footer, or a page number printed at the top of the page instead. */
 export function pdfFolio(doc: Doc, page: number): Folio | undefined {
   const pg = doc.pages?.[page]
@@ -404,6 +435,8 @@ export function pdfFolio(doc: Doc, page: number): Folio | undefined {
   // (a footer ending in a number may still have it broken over two lines: "vii" and "i")
   if (foot && (pg?.footerLines.length ?? 0) > 1)
     foot = wrappedFolio(pg!.footerLines, words, foot.number !== undefined) ?? foot
+  // Items of the footer that print over one another (the number over the end of the title).
+  if (foot && overlaps(pg!.footerLines)) foot = { ...foot, overlap: true }
   // (a line of text taken for a footer does not hide a page number set at the top)
   return foot?.number !== undefined ? foot : top?.value !== undefined ? top : foot
 }
@@ -437,12 +470,22 @@ export function auditPdf(
   ref?: TitleRef,
 ): Problem[] {
   const unread = noTextPages(doc)
+  // A wholly blank page (no text, no picture, no footer) is the blank-pages item's.
+  const inked = new Set(doc.paras.flatMap((q) => (q.lines ?? []).map((l) => l.page)))
+  const blank = (p: number) =>
+    !inked.has(p) &&
+    !doc.pages?.[p]?.images.length &&
+    !doc.pages?.[p]?.footer &&
+    !doc.pages?.[p]?.header &&
+    !unread.has(p)
   return [
-    ...pages.flatMap((p) =>
-      unread.has(p)
-        ? [{ type: 'unread' as const, page: p, text: `${pagesText([p])}: no text layer` }]
-        : judge(pdfFolio(doc, p), want(p), p),
-    ),
+    ...pages
+      .filter((p) => !blank(p))
+      .flatMap((p) =>
+        unread.has(p)
+          ? [{ type: 'unread' as const, page: p, text: `${pagesText([p])}: no text layer` }]
+          : judge(pdfFolio(doc, p), want(p), p),
+      ),
     ...titleChanges(doc, pages, thesis, ref),
   ]
 }
@@ -528,6 +571,7 @@ const LABEL: Record<Problem['type'], string> = {
   long: 'A long title, not a shortened one, on',
   changed: 'The title in the footer changes on',
   label: 'The number has “p.” or “page” before it on',
+  overlap: 'The footer prints over itself, so it could not be read, on',
   unread: 'No text layer (the page number could not be read) on',
 }
 

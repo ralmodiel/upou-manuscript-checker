@@ -84,7 +84,7 @@ describe('check', () => {
     expect(finding(r, 'title.title').message).toMatch(/special project title/)
   })
 
-  it('takes “Research Adviser:” as the label, a lower-case title and a date not in Day Month Year as errors', async () => {
+  it('takes “Research Adviser:” as the label and a lower-case title as an error, a date not in Day Month Year for the student to look at', async () => {
     const c = '<w:jc w:val="center"/>'
     const page = (title: string, date: string) =>
       check(
@@ -112,7 +112,7 @@ describe('check', () => {
     expect(finding(good, 'title.date').status).toBe('ok')
     const bad = await page('a study of community radio', 'October 15, 2026')
     expect(finding(bad, 'title.title').status).toBe('fix')
-    expect(finding(bad, 'title.date').status).toBe('fix')
+    expect(finding(bad, 'title.date').status).toBe('review')
   })
 
   it('reports template text left in', async () => {
@@ -666,6 +666,58 @@ describe('check', () => {
     expect(finding(r, 'acceptance.title')).toMatchObject({ status: 'ok' })
     expect(finding(r, 'acceptance.convention').message).toMatch(/All names use titles/)
     expect(finding(r, 'extra.placeholders').details?.join(' ')).toMatch(/Name and Date/)
+  })
+
+  it('leaves bare committee names, or ranks beside the Dean’s degree, to the student', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const names = (...lines: string[]) =>
+      check(
+        'thesis.docx',
+        docx(
+          ...[
+            'UNIVERSITY OF THE PHILIPPINES',
+            'MASTER OF EDUCATION',
+            'Juan A. Cruz',
+            'A STUDY OF RADIO',
+          ].map((t) => para(t, c)),
+          para('Acceptance Page', '<w:pageBreakBefore/>' + c),
+          para(
+            'This thesis of Juan A. Cruz title: “A study of radio” is hereby accepted by the Faculty.',
+          ),
+          ...lines.map((t) => para(t)),
+        ),
+        opts,
+      )
+    // Bare names, the Dean's line with a degree after it: the Dean's line is the template's.
+    const bare = await names(
+      'MARIA B. SANTOS',
+      'Adviser',
+      'ANA D. LIM',
+      'Member',
+      'JOSE R. REYES, DProfSt',
+      'Dean',
+    )
+    expect(finding(bare, 'acceptance.convention').status).toBe('review')
+    // Titles of rank on the committee, a degree after the Dean's name.
+    const rank = await names(
+      'ASST. PROF. MARIA B. SANTOS',
+      'Adviser',
+      'ASSOC. PROF. ANA D. LIM',
+      'Member',
+      'JOSE R. REYES, DProfSt',
+      'Dean',
+    )
+    expect(finding(rank, 'acceptance.convention').status).toBe('review')
+    // “Dr.” with a degree after another name is a real mix.
+    const mix = await names(
+      'DR. MARIA B. SANTOS',
+      'Adviser',
+      'DR. ANA D. LIM',
+      'Member',
+      'JOSE R. REYES, Ph.D.',
+      'Dean',
+    )
+    expect(finding(mix, 'acceptance.convention').status).toBe('fix')
   })
 
   it('accepts the list headings written “LISTS OF FIGURES” or “List of Table”, with a note', async () => {

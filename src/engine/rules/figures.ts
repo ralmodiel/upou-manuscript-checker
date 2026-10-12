@@ -24,7 +24,36 @@ const LABEL =
 /** "Table 1 (continued)": a long table carried over to the next page, not a caption of its own. */
 const CONTINUED = /^(figure|table)\s+\S+\s*\(?cont(inued|['’]d|\.)?\)?\.?$/i
 /** A PDF paragraph set in a font whose name says nothing: its bold and italics are unknown. */
-const faceUnknown = (p: Para) => p.runs.some((r) => r.unknown && r.text.trim())
+// (or in a typeface of its own that is never bold anywhere: it may have no bold to show)
+let singleWeight = new Set<string>()
+const faceUnknown = (p: Para) =>
+  p.runs.some(
+    (r) => r.text.trim() && (r.unknown || (r.font !== undefined && singleWeight.has(r.font))),
+  )
+/** Typefaces of the document that are not one of the common ones and have no bold run at all. */
+function singleWeights(ctx: Ctx): Set<string> {
+  const fonts = new Map<string, boolean>()
+  const uses = new Map<string, number>()
+  let all = 0
+  for (const p of ctx.doc.paras)
+    for (const r of p.runs)
+      if (r.text.trim() && r.font) {
+        fonts.set(r.font, !!fonts.get(r.font) || !!r.bold)
+        uses.set(r.font, (uses.get(r.font) ?? 0) + 1)
+        all++
+      }
+  // (a typeface of a few words here and there, not the one the text is set in)
+  return new Set(
+    [...fonts]
+      .filter(
+        ([f, bold]) =>
+          !bold && !COMMON_FACE.test(f) && ctx.doc.kind === 'pdf' && uses.get(f)! < 0.25 * all,
+      )
+      .map(([f]) => f),
+  )
+}
+const COMMON_FACE =
+  /times|arial|calibri|cambria|helvetica|georgia|garamond|verdana|tahoma|courier|palatino|century|book antiqua|liberation|nimbus|dejavu|noto|open sans|roboto|lato|segoe|trebuchet|aptos|carlito|caladea|symbol|wingdings|cmr|latin modern|computer modern/i
 const italic = (p: Para) => {
   if (p.plain || faceUnknown(p)) return true
   let all = 0
@@ -39,7 +68,7 @@ const italic = (p: Para) => {
 /** The label part ("Table 1.") in bold. */
 const labelBold = (p: Para) => {
   if (p.plain || faceUnknown(p)) return true
-  const label = LABEL.exec(norm(p.text))
+  const label = LABEL.exec(norm(p.text).replace(/^[(](.*)[)]$/, '$1'))
   if (!label) return false
   const head = norm(p.text).slice(0, norm(p.text).length - label[3].length)
   let seen = ''
@@ -97,6 +126,32 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
       next?.images.some((b) => wide(b) && (!nextText || b.y1 <= nextText.y))
     )
       return 'after'
+    // A number closing its page, its title opening the next with the picture below the title.
+    const lead = title && doc.paras[title.i]
+    if (
+      page.paras.at(-1) === p.i &&
+      title &&
+      next?.paras[0] === title.i &&
+      (lead?.lines?.length ?? 0) <= 3 &&
+      next.images.some(
+        (b) =>
+          wide(b) && b.y0 >= lead!.lines![0].y && b.y0 - lead!.lines!.at(-1)!.y <= 4 * line.size,
+      )
+    )
+      return 'after'
+    // A figure drawn in vectors (boxes and arrows) under the caption is its figure too.
+    if (
+      kind === 'figure' &&
+      page.marks.filter(
+        (m) =>
+          m.kind === 'path' &&
+          m.y0 >= end.y - 2 &&
+          m.x1 - m.x0 > 20 &&
+          m.y1 - m.y0 > 10 &&
+          m.x1 - m.x0 < 0.95 * page.width,
+      ).length >= 4
+    )
+      return 'after'
     // A caption opening its page, and a picture closing the page before.
     const prevPage = doc.pages?.[n - 1]
     const prevText = doc.paras[p.i - 1]?.lines?.findLast((l) => l.page === n - 1)
@@ -123,6 +178,7 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
 
 export function findCaptions(ctx: Ctx): Caption[] {
   const { doc } = ctx
+  singleWeight = singleWeights(ctx)
   const [start, end] = bodyRange(ctx)
   const out: Caption[] = []
   const seen = new Map<string, number>()
@@ -138,7 +194,8 @@ export function findCaptions(ctx: Ctx): Caption[] {
   for (let k = start; k < end; k++) {
     const p = doc.paras[k]
     const t = norm(p.text)
-    const m = LABEL.exec(t)
+    // (a label set in brackets under its picture: "(Figure 3)")
+    const m = LABEL.exec(t) ?? (/^[(].*[)]$/.test(t) ? LABEL.exec(t.slice(1, -1)) : null)
     if (
       !m ||
       p.inTable ||
@@ -149,18 +206,36 @@ export function findCaptions(ctx: Ctx): Caption[] {
       (t.length > (labelBold(p) ? 400 : 250) &&
         !/^[A-Za-z.]+\s*[A-Z]?\d[\d.a-z -]*?\s?[.:]\s/i.test(t)) ||
       (p.page !== undefined && listed.has(p.page)) ||
+      // (a long paragraph opened like the body's own, with an indent, is running text)
+      (t.length > 400 &&
+        (p.indent?.firstLine ?? 0) >= 15 &&
+        p.align === 'justify' &&
+        !labelBold(p)) ||
       // (a bare label in the small type of a table's cell or a diagram is no caption)
       // (unless it is in bold and its title stands right under it: a writer's smaller caption type)
       (!m[3] &&
         !!p.lines?.[0] &&
         p.lines[0].size < size - 1 &&
         !(
-          bolded(p) &&
+          (bolded(p) || faceUnknown(p)) &&
           /^fig/i.test(t) &&
           doc.paras[k + 1]?.page === p.page &&
           !doc.paras[k + 1].inTable &&
           !doc.paras[k + 1].text.includes('\t') &&
           norm(doc.paras[k + 1].text).split(' ').length >= 3
+        ) &&
+        // (or its title, in the same small type and at the same margin, with a picture below)
+        !(
+          /^fig/i.test(t) &&
+          doc.paras[k + 1]?.page === p.page &&
+          !doc.paras[k + 1].inTable &&
+          !doc.paras[k + 1].text.includes('\t') &&
+          norm(doc.paras[k + 1].text).split(' ').length >= 2 &&
+          Math.abs((doc.paras[k + 1].lines?.[0].size ?? 0) - p.lines[0].size) <= 0.6 &&
+          Math.abs((doc.paras[k + 1].lines?.[0].x0 ?? 0) - p.lines![0].x0) <= 3 &&
+          !!doc.pages?.[p.page ?? -1]?.images.some(
+            (b) => b.x1 - b.x0 > 100 && b.y0 >= p.lines![0].y - 2,
+          )
         )) ||
       (!m[3] && inShape(ctx, p)) ||
       /^(fig(ure)?\.?|table|chart)\s*\d+[A-Za-z]{2,}/i.test(t)
@@ -170,7 +245,12 @@ export function findCaptions(ctx: Ctx): Caption[] {
     const rest = m[3]
     // "Table 1 shows that…" and "Table 1, the…" are sentences about the table, not its caption;
     // nor is a continued table's.
-    if ((rest && /^\p{Ll}/u.test(rest) && !bolded(p)) || /^[,;)]/.test(rest) || CONTINUED.test(t))
+    if (
+      (rest && /^\p{Ll}/u.test(rest) && !bolded(p)) ||
+      /^[,;)]/.test(rest) ||
+      CONTINUED.test(t) ||
+      /^\(?cont(inued|['’]d|\.)?\)?(\s|$)/i.test(rest)
+    )
       continue
     const kind: Caption['kind'] = /^table/i.test(m[1]) ? 'table' : 'figure'
     let title: Para | undefined
@@ -306,10 +386,19 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
           m.kind === 'path' &&
           m.x1 - m.x0 < 0.7 * pg.width &&
           m.x0 <= b.x0 + 2 &&
-          m.x1 >= b.x1 - 2 &&
+          m.x1 >= b.x1 - 6 &&
           m.y0 <= b.y0 + 2 &&
           m.y1 >= b.y1 - 2 &&
-          m.y1 - m.y0 < 1.6 * (b.y1 - b.y0),
+          (m.y1 - m.y0 < 1.6 * (b.y1 - b.y0) ||
+            // (or a cell of a ruled table: boxes standing side by side)
+            pg.marks.some(
+              (n) =>
+                n.kind === 'path' &&
+                n !== m &&
+                (Math.abs(n.x1 - m.x0) <= 1 || Math.abs(n.x0 - m.x1) <= 1) &&
+                n.y0 <= m.y1 - 2 &&
+                n.y1 >= m.y0 + 2,
+            )),
       )
     const big = pg.images.filter(
       (b) =>
@@ -318,10 +407,20 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
         b.y0 < 0.88 * pg.height &&
         !cell(b),
     )
+    // A number closing the page before, its title (a few lines) opening this one, the picture
+    // below the title.
+    const lead = doc.paras[pg.paras[0]]
+    const titled =
+      !!lead?.lines &&
+      lead.lines.length <= 3 &&
+      caps.some((c) => c.para.i === pages[pg.n - 1]?.paras.at(-1) && !c.inline && !!c.title)
+    const leadEnd = titled ? lead.lines!.at(-1)!.y + 4 * lead.lines![0].size : -Infinity
     const lonely = big.some(
       (b) =>
         !(
-          b.y1 <= (tops.get(pg.n) ?? Infinity) && captioned(pg.n - 1, pages[pg.n - 1]?.paras.at(-1))
+          (b.y1 <= (tops.get(pg.n) ?? Infinity) ||
+            (b.y0 >= (tops.get(pg.n) ?? Infinity) && b.y0 <= leadEnd)) &&
+          captioned(pg.n - 1, pages[pg.n - 1]?.paras.at(-1))
         ) &&
         !(
           b.y0 >= (bottoms.get(pg.n) ?? -Infinity) && captioned(pg.n + 1, pages[pg.n + 1]?.paras[0])

@@ -124,6 +124,11 @@ const key = (e: Entry) =>
     .replace(/[^a-z ]/g, '')
     .trim()
 
+/** An entry read through a font that came out as control characters: its words cannot be judged. */
+const scrambled = (e: Entry) =>
+  [...e.text.slice(0, 40)].filter((c) => c.charCodeAt(0) < 32 && c !== '\t' && c !== '\n').length >=
+  2
+
 function order(ctx: Ctx, refs: Entry[]): Finding {
   const id = 'references.order'
   if (!ctx.s.references) return fix(id, 'Add the reference list under the heading “References”.')
@@ -135,6 +140,12 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
     )
   const pairs: string[] = []
   const misplaced: Entry[] = []
+  let unsureEtAl = false
+  const flagEtAl = () => {
+    unsureEtAl = true
+    return false
+  }
+  const etal = (e: Entry) => /\bet\.? al\b/i.test(e.text.split(/\(\s*(?:1[89]|20)\d\d/)[0])
   // The entries with a sort key (one without must not hide a pair), less a work listed again, as
   // it is or with its title's end changed: that one is to be removed (references.apa says so), not
   // moved.
@@ -143,6 +154,10 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
   const unreadable: Entry[] = []
   const keyed = refs.filter((e) => {
     if (!key(e)) return false
+    if (scrambled(e)) {
+      unreadable.push(e)
+      return false
+    }
     // (a digit in the name, "W3Schools": where it goes among the letters is for the writer)
     if (
       /\p{L}[\]\\^{}|~¶³´@#$%*+=<>_]\p{L}/u.test(e.text.split(/[,(]/)[0]) ||
@@ -241,7 +256,9 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
       y1 &&
       ks[k - 1] === ks[k] &&
       y0.who !== y1.who &&
-      namesBefore(y1.names, y0.names)
+      namesBefore(y1.names, y0.names) &&
+      // ("et al." cuts the authors short: such a list goes by year, not by the names)
+      (etal(e) || etal(prev!) ? flagEtAl() : true)
     ) {
       pairs.push(
         `${at}“${quote(e.text, 45)}” should come before “${quote(prev!.text, 45)}”: works with the same first author go by the next author's surname`,
@@ -268,6 +285,11 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
         `${plural(unreadable.length, 'reference')} could not be placed, the author's name being unreadable (${list(unreadable.slice(0, 3).map((e) => `“${quote(e.text, 25)}”`))}): check ${unreadable.length === 1 ? 'its' : 'their'} place yourself.`,
       ]
     : []
+  if (!pairs.length && !lead.length && unsureEtAl)
+    return review(
+      id,
+      'Check the order of the entries whose authors are cut short with “et al.”: APA lists every author (up to 20), and the list goes by the second author’s surname then.',
+    )
   if (!pairs.length && !lead.length)
     return unreadable.length
       ? review(
@@ -468,7 +490,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     statuses.push('review')
   }
   // The template's sample entries are said above: these look at the student's own.
-  const own = refs.filter((e) => !SAMPLE.test(e.text))
+  const own = refs.filter((e) => !SAMPLE.test(e.text) && !scrambled(e))
   const noYear = own.filter((e) => !YEAR.test(e.text))
   // A year mistyped in the parentheses ("(20214") or written outside them is certain; no year at
   // all may be an entry read in two pieces.

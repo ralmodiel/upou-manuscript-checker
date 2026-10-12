@@ -243,6 +243,18 @@ function number(ctx: Ctx): Finding {
   )
 }
 
+/** The runs of a heading "I. INTRODUCTION" after its number and full stop. */
+function afterNumber(p: Para) {
+  let skip =
+    /^\s*(\d{1,2}|[IVXLCivxlc]+)\s*[.)]\s+/.exec(p.runs.map((r) => r.text).join(''))?.[0].length ??
+    0
+  return p.runs.flatMap((r) => {
+    const cut = Math.min(skip, r.text.length)
+    skip -= cut
+    return cut >= r.text.length ? [] : [{ ...r, text: r.text.slice(cut) }]
+  })
+}
+
 function title(ctx: Ctx): Finding {
   const id = 'chapterStart.title'
   const { chapters } = ctx.s
@@ -263,11 +275,13 @@ function title(ctx: Ctx): Finding {
       const t = shown(p).replace(/^\s*(\d{1,2}|[IVXLCivxlc]+)\s*[.)]\s+/, '')
       const before = issues.length
       if (!isUpper(t)) issues.push(`${name}: write the title in upper case`)
-      const tf = typeface(p, `${name} title`, scale)
+      // (the title's own type: not that of the numeral before it)
+      const tp = { ...p, runs: afterNumber(p) }
+      const tf = typeface(tp, `${name} title`, scale)
       issues.push(...tf.issues)
       if (tf.scaled) scaled.push(name)
       if (issues.length > before) where.push(...at(p))
-      if (faceUnknown(p)) unsure.push(name)
+      if (faceUnknown(tp)) unsure.push(name)
       if (c.inlineTitle) inline.push(name)
       continue
     }
@@ -407,6 +421,8 @@ const headingLike = (p: Para) => {
     !/^\p{Ll}/u.test(t) &&
     !/_{3,}|\[[^\]]*\]/.test(t) &&
     (p.lines?.length ?? 1) <= 2 &&
+    // (two lines of a term and its meaning, "SUPPORT - Send a message…", are a list item)
+    !((p.lines?.length ?? 1) === 2 && /\s[-–—]\s\p{L}/u.test(t)) &&
     !p.inTable &&
     !p.text.includes('\t')
   )
@@ -479,7 +495,10 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   const dedication = s.prelims.find((x) => x.key === 'dedication')
   // Which side of its table or figure this document sets a caption: below it (closing it) or above
   // it, as far as the captions whose object could be placed show.
-  const captionAbove = (kind: Caption['kind']) => {
+  // A caption whose own table or figure could be placed is judged by that.
+  const captionAbove = (kind: Caption['kind'], para?: Para) => {
+    const own = captions.find((c) => c.para === para)?.object
+    if (own && own !== 'unknown') return own === 'after'
     const placed = captions.filter((c) => c.kind === kind && c.object !== 'unknown')
     return (
       placed.filter((c) => c.object === 'after').length >
@@ -490,7 +509,7 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     if (dedication && p.i > dedication.heading && p.i < dedication.end) continue
     // Numbered lines of a transcript, in an appendix, are lines of speech, not paragraphs.
     if (
-      /^\d{1,3}\s+\p{Ll}/u.test(norm(p.text)) &&
+      /^\d{1,3}\s+(\p{Ll}|\p{Lu}\w{0,3}\s?:)/u.test(norm(p.text)) &&
       s.appendices.some((a) => p.i > a.heading && p.i < a.end)
     )
       continue
@@ -520,6 +539,8 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       !/^\p{Ll}/u.test(t) &&
       !/[.:;,!?"”’'\]]$/.test(t) &&
       p.runs.filter((r) => r.text.trim()).every((r) => r.italic)
+    // A line that is a whole sentence (a paragraph's first line, a list item) is no heading.
+    const sentence = !caption && lines.length === 1 && t.length >= 50 && /[.!?]["”’)]?$/.test(t)
     // Pictures in the text area (not a logo in the header or footer), above or below the heading.
     const pics = pg.images.filter((b) => b.y1 > 0.12 * pg.height && b.y0 < 0.88 * pg.height)
     const above = pics.some((b) => b.y1 <= lines[0].y)
@@ -539,6 +560,7 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         caption &&
         !captionAbove(
           /^table/i.test(norm(before && continued ? before.text : p.text)) ? 'table' : 'figure',
+          continued ? before : p,
         )
       ) &&
       end.page === p.page &&
@@ -549,7 +571,7 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       !((caption || label) && (above || belowTable))
     ) {
       details.push(
-        `${place(pg.n, p)}: the heading “${quote(p.text, 40)}” is the last line of the page`,
+        `${place(pg.n, p)}: ${caption ? 'the caption' : sentence ? 'the line' : 'the heading'} “${quote(p.text, 40)}” is the last line of the page`,
       )
       where.push({ page: pg.n, quote: quote(p.text, 40) })
       continue
@@ -557,9 +579,8 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     // A caption (or its number alone, then its title) closing the page, its picture or table
     // opening the next one.
     if (caption && !continued && end.page === p.page && !above && !belowTable) {
-      const title = /^(table|fig(ure)?\.?|chart)\s*\S*\d\S*$/i.test(norm(p.text))
-        ? doc.paras[p.i + 1]
-        : undefined
+      const bare = /^(table|fig(ure)?\.?|chart)\s*\S*\d\S*$/i.test(norm(p.text))
+      const title = bare ? doc.paras[p.i + 1] : undefined
       const tail = title && title.page === p.page && !row(title) ? title : p
       const after = doc.paras[tail.i + 1]
       const last = tail.lines?.at(-1)
@@ -572,7 +593,18 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         (!after || after.page !== p.page) &&
         !pics.some((b) => b.y0 >= last.y - 2) &&
         !!upper &&
-        (upper.images.some((b) => b.x1 - b.x0 > 40 && (topY === undefined || b.y1 <= topY + 2)) ||
+        (upper.images.some(
+          (b) =>
+            b.x1 - b.x0 > 40 &&
+            (topY === undefined ||
+              b.y1 <= topY + 2 ||
+              // (a bare number: its title opens the next page, the picture follows the title)
+              (bare &&
+                !row(top) &&
+                (top!.lines?.length ?? 0) <= 3 &&
+                b.y0 >= topY &&
+                b.y0 - top!.lines!.at(-1)!.y <= 4 * top!.lines![0].size)),
+        ) ||
           row(top))
       ) {
         details.push(
@@ -612,6 +644,34 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         continue
       }
     }
+    // The first item of a sub-list (a question's first option) alone at the foot of the page, the
+    // other items on the next: set in from the line above it, and the next page opens with an item
+    // at the same indent.
+    const above1 = before?.lines?.at(-1)
+    const after1 = next?.lines?.[0]
+    if (
+      lines.length === 1 &&
+      isList(p) &&
+      !p.inTable &&
+      !!before &&
+      isList(before) &&
+      before.page === p.page &&
+      above1 &&
+      lines[0].x0 > above1.x0 + 8 &&
+      next &&
+      next.page === (p.page ?? -2) + 1 &&
+      isList(next) &&
+      after1 &&
+      Math.abs(after1.x0 - lines[0].x0) <= 3 &&
+      end.page === p.page &&
+      pg.paras.at(-1) === p.i
+    ) {
+      details.push(
+        `${place(pg.n, p)}: the item “${quote(p.text, 40)}” is alone at the bottom of the page, the rest of its list on the next page`,
+      )
+      where.push({ page: pg.n, quote: quote(p.text, 40) })
+      continue
+    }
     const pages = [...new Set(lines.map((l) => l.page))]
     if (pages.length === 2 && !p.inTable && p.align !== 'center') {
       const onFirst = lines.filter((l) => l.page === pages[0]).length
@@ -631,7 +691,17 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         (/^\p{Ll}/u.test(norm(p.text)) && !isList(p)) ||
         caption ||
         /^(https?:\/\/|www\.)/i.test(norm(p.text))
-      if ((onFirst === 1 && !stray) || (onNext === 1 && closes && !goesOn)) {
+      // A first line that stops short, with room left for the next line's first word, is a whole
+      // item (a list item, a note) that the lines below, set in at the same indent, do not go on.
+      const l0 = lines[0]
+      const l1 = lines[onFirst]
+      const word = norm(l1.text).split(' ')[0]
+      const room = (pg.margins?.right ?? Infinity) - l0.x1
+      const complete =
+        onFirst === 1 &&
+        isList(p) &&
+        room > ((l1.x1 - l1.x0) / Math.max(1, l1.text.length)) * word.length
+      if (!complete && ((onFirst === 1 && !stray) || (onNext === 1 && closes && !goesOn))) {
         details.push(
           onFirst === 1
             ? `${place(pages[0], p)}: one line of the paragraph “${quote(p.text, 35)}” is left at the bottom of the page`
@@ -699,10 +769,10 @@ export function bodyNumbers(
         'Chapter I’s first page is page 1 (though not shown), so the page after it is page 2.',
       )
     // Only pages with no text layer left: nothing there could be read.
-    if (problems.every((p) => p.type === 'unread'))
+    if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
       return review(
         id,
-        `${pagesText(problems.map((p) => p.page!))} have no text layer (a picture or drawn letters), so their page numbers could not be read. Check them yourself.`,
+        `${pagesText(problems.map((p) => p.page!))} ${problems.every((p) => p.type === 'overlap') ? 'have a footer that prints over itself' : 'have no text layer (a picture or drawn letters)'}, so their page numbers could not be read. Check them yourself.`,
         { where: [{ page: problems[0].page }] },
       )
     return fix(id, msg, { details, where: [{ page: problems[0].page }] })

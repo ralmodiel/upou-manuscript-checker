@@ -38,6 +38,10 @@ interface Span {
   unknown?: boolean
 }
 
+// Typefaces that come in a bold and an italic of their own: a document set in one of them with
+// nothing bold has nothing bold.
+const STANDARD_FACE =
+  /times|arial|calibri|cambria|helvetica|georgia|garamond|verdana|tahoma|courier|palatino|century|book antiqua|liberation|nimbus|dejavu|noto|open sans|roboto|lato|segoe|trebuchet|aptos|carlito|caladea|symbol|wingdings|cmr|latin modern|computer modern/i
 // ("font000000002c3bae3e": a name a converter made up)
 const OPAQUE_FONT = /^(CIDFont\+)?(F|Font|g_d\d+_f)\d+$|^font[0-9a-f]{8,}$/i
 const BOLD = /bold|black|heavy|semibold|demibold/i
@@ -302,9 +306,17 @@ export async function readPdf(
       for (const item of text.items) {
         if (!('str' in item) || !item.str) continue
         const [a, b, c, d, e, f] = item.transform as Matrix
+        // Words set slanted (a font with no italic, slanted by the writer's program) read in line.
+        const slanted =
+          Math.abs(b) <= 0.01 &&
+          a > 0 &&
+          Math.abs(c) > 0.01 &&
+          Math.abs(c) <= 0.5 * Math.abs(d) &&
+          (item.str.trim().length > 1 ||
+            (/^[\p{L}\p{N}]$/u.test(item.str.trim()) && !/^[xXoO]$/.test(item.str.trim())))
         // Rotated text (a turned table, a chart label) is not part of the running text. A mark
         // set at an angle (a slanted "/" in a tick box) is still a mark.
-        if (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0) {
+        if (!slanted && (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0)) {
           if (item.str.trim().length === 1) {
             const [rx, ry] = toView(e, f)
             const rs = Math.hypot(a, b) * Math.abs(vp.transform[3] || 1)
@@ -323,6 +335,7 @@ export async function readPdf(
         const size = Math.abs(d) * Math.abs(vp.transform[3] || 1)
         const font = fontOf(item.fontName)
         const span: Span = { text: item.str, x0, x1, y, size, ...font }
+        if (slanted && !font.unknown) span.italic = true
         spans.push(span)
         if (item.str.trim().length === 1)
           glyphs.push({ x0, x1, y0: y - size * 0.8, y1: y + size * 0.2, text: item.str.trim() })
@@ -350,7 +363,29 @@ export async function readPdf(
           )
         : ''
       const lines = toLines(spans, n)
-      allLines.push(lines)
+      // White text on white paper (a hidden line left in the file) is not read: with no coloured
+      // shape under it, which would make it a caption on a dark box.
+      const whites = colored.filter((c) => c.color === '#ffffff').map((c) => flat(c.text))
+      const shapes = marks.filter(
+        (m) =>
+          m.kind === 'path' &&
+          m.fill &&
+          !/^#f[0-9a-f]f[0-9a-f]f[0-9a-f]$/i.test(m.fill) &&
+          m.x1 - m.x0 < 0.95 * vp.width,
+      )
+      allLines.push(
+        whites.length
+          ? lines.filter(
+              (l) =>
+                flat(l.text).length < 4 ||
+                !whites.includes(flat(l.text)) ||
+                shapes.some(
+                  (m) =>
+                    m.x0 <= l.x0 + 2 && m.x1 >= l.x1 - 2 && m.y0 <= l.y - l.size && m.y1 >= l.y,
+                ),
+            )
+          : lines,
+      )
       const own = linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored
       // Coloured text quoted as the page's lines read it, spaces and all.
       const said = own.length
@@ -428,6 +463,22 @@ export async function readPdf(
     await task.destroy()
   }
 
+  // One typeface in all the text, with nothing bold at all (a handwriting font from a converter
+  // that keeps one weight): which words are bold or in italics cannot be told from its name.
+  const runsAll = allLines.flatMap((ls) => ls.flatMap((l) => l.runs.filter((r) => r.text.trim())))
+  const families = new Set(runsAll.map((r) => r.font))
+  const [family] = [...families]
+  if (
+    families.size === 1 &&
+    family &&
+    runsAll.length >= 50 &&
+    !runsAll.some((r) => r.bold || r.unknown) &&
+    !STANDARD_FACE.test(family)
+  )
+    for (const r of runsAll) {
+      r.unknown = true
+      r.italic = false
+    }
   // Headers and footers, once every page is read: a running title can only be told by its repeats.
   const running = runningLines(allLines, pages)
   // Where most pages have a foot to go by, the bottom inch is read from it: only the lines joined
@@ -500,8 +551,13 @@ function toLines(spans: Span[], page: number): Line[] {
     g0.sort((a, b) => a.x0 - b.x0)
     // A text drawn twice (a second layer of the same words, cut into pieces in another place):
     // what lies within another piece's width and is part of its words is read once.
-    const g = g0.filter((s, k) => {
-      if (s.text.trim().length < 4) return true
+    const dropped = g0.filter((s, k) => {
+      // (a short word printed again at the very same place)
+      if (s.text.trim().length < 4)
+        return !g0.some(
+          (q, j) =>
+            j < k && q.text === s.text && Math.abs(q.x0 - s.x0) <= 1.5 && Math.abs(q.y - s.y) <= 1,
+        )
       return !g0.some(
         (q, j) =>
           j !== k &&
@@ -510,6 +566,16 @@ function toLines(spans: Span[], page: number): Line[] {
           s.x0 >= q.x0 - 2 &&
           s.x1 <= q.x1 + 2,
       )
+    })
+    // Another layer's piece that starts over the end of a span and runs a little beyond it:
+    // the words it repeats are read once.
+    const g = dropped.map((s, k) => {
+      const q = dropped[k - 1]
+      if (!q || s.x0 >= q.x1 - 2 || s.x1 <= q.x1) return s
+      for (let n = Math.min(q.text.length, s.text.length - 1); n >= 2; n--)
+        if (q.text.endsWith(s.text.slice(0, n)) && s.x0 >= q.x1 - (n + 2) * 0.6 * s.size)
+          return { ...s, text: s.text.slice(n), x0: q.x1 }
+      return s
     })
     const ink = g.filter((s) => s.text.trim())
     if (!ink.length) continue
@@ -593,6 +659,8 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
       const side = l.y > 0.8 * h ? 'f' : l.y < 0.12 * h ? 'h' : ''
       const k = l.text
         .replace(/(…|\.{2,}|\s)\s*([ivxlcdm]+|\d+)\s*$/i, '')
+        // (a number run into the last word: "Learning118")
+        .replace(/(?<=\p{L})\d+\s*$/u, '')
         .replace(/\d+/g, '#')
         .replace(/\s+/g, ' ')
         .trim()
@@ -641,6 +709,20 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
     )
       out.add(x.l)
   }
+  // The same footer wrapped another way on a few pages (a portrait page among landscape ones):
+  // lines of the foot made of words the running footer's lines carry, in a row.
+  const feet = info.filter((x) => x.side === 'f' && out.has(x.l)).map((x) => x.k)
+  const whole = [...new Set(feet)].join(' ')
+  if (whole.length >= 40)
+    for (const x of info)
+      if (
+        x.side === 'f' &&
+        !out.has(x.l) &&
+        x.k.length >= 20 &&
+        whole.includes(x.k) &&
+        info.some((y) => out.has(y.l) && y.side === 'f' && Math.abs(y.l.size - x.l.size) < 0.6)
+      )
+        out.add(x.l)
   return out
 }
 
@@ -719,7 +801,11 @@ function splitBands(
       footer.push(l)
     // A bare page number set higher than the bottom inch (an A4 page's number 1.1 in up) and last
     // on the page, even right under double-spaced text.
-    else if (!below && l.y > height - 100 && /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text))
+    else if (
+      !below &&
+      (l.y > height - 100 || (l.y > height - 130 && (!above || l.y - above.y >= 18))) &&
+      /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text)
+    )
       footer.push(l)
     // A bare page number at the top right, first on its page.
     else if (
@@ -1043,6 +1129,16 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
             !/(^|[\s,])\p{Lu}\.,?$|,$/u.test(prev.text)) &&
           Math.abs(c.x0 - prev.x0) <= 3 &&
           (hangX === undefined || Math.abs(prev.x0 - hangX) <= 3)
+        // A line that looks like an entry's first, set out to the left of the hanging indent the
+        // line above stands in, which stopped short: the next entry.
+        const entryAfterTail =
+          lastHanging &&
+          hangX !== undefined &&
+          draft.length === 1 &&
+          prev.x0 > hangX + 18 &&
+          Math.abs(c.x0 - hangX) <= 3 &&
+          !atEdge(prev, pm.right) &&
+          ENTRY.test(c.text)
         // On a page of justified text, a line stopping short of the margin after lines that all ran
         // full is a paragraph's last (or one before a line break), even if the next word is long;
         // so is a lone such line when the next neither runs on at the margin nor is centred under
@@ -1083,6 +1179,7 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
             !sameSize ||
             !aligned ||
             newEntry ||
+            entryAfterTail ||
             opens(c, prev) ||
             CAPTION_START.test(c.text) ||
             kindOf(c, m) !== 'left' ||
@@ -1124,6 +1221,7 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
               opens(c, prev) ||
               offCont ||
               newEntry ||
+              entryAfterTail ||
               (draft.length === 1 && prev.x0 > c.x0 + 72) ||
               // A line wholly in bold against one that is not: a heading ends or begins there.
               (boldness(prev) === 1) !== (boldness(c) === 1)

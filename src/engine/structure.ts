@@ -253,7 +253,8 @@ export function findStructure(doc: Doc): Structure {
     }
     // (appendices may stand before the references, so the front matter having been read is enough)
     if (s.chapters.length || s.references || s.prelims.length) {
-      if (/^(appendices|appendixes|annexes)$/i.test(t)) {
+      // (a numbered section "VIII. APPENDICES" too)
+      if (/^(?:(?:[ivxlc]+|\d{1,2})\s*[.)]\s*)?(appendices|appendixes|annexes)$/i.test(t)) {
         s.appendicesHeading ??= p.i
         continue
       }

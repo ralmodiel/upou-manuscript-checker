@@ -67,7 +67,7 @@ const MONTH =
   '(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\\.?'
 /** A written date: 15 October 2026, October 15, 2026 (or 15,2026), 15/10/2026, 2026-10-15. */
 export const DATE = new RegExp(
-  `\\b(\\d{1,2}\\s+${MONTH}(\\s*,\\s*|\\s+)\\d{4}|${MONTH}\\s+\\d{1,2}(\\s*,\\s*|\\s+)\\d{4}|${MONTH}\\s+\\d{4}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})\\b`,
+  `(?<![A-Za-z0-9])(\\d{1,2}\\s+${MONTH}(\\s*,\\s*|\\s+)\\d{4}|${MONTH}\\s+\\d{1,2}(\\s*,\\s*|\\s+)\\d{4}|${MONTH}\\s+\\d{4}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})(?![A-Za-z0-9])`,
   'i',
 )
 
@@ -111,6 +111,8 @@ export function garbled(s: string): boolean {
   const words = s.split(/\s+/).filter((w) => w.replace(/[^\p{L}]/gu, '').length >= 3)
   const odd = words.filter((w) => /\p{Ll}\p{Lu}/u.test(w.replace(/^(Mc|Mac)/, '')))
   if (odd.length >= 3 && odd.length >= 0.25 * words.length) return true
+  // Two words with capitals standing twice inside them ("FemiQiVm"), a few words in all.
+  if (odd.filter((w) => (w.match(/\p{Ll}(?=\p{Lu})/gu) ?? []).length >= 2).length >= 2) return true
   // Letters shifted along the alphabet's code (a font's glyph numbers read as characters) leave
   // hardly a vowel in a stretch of text; words of every language have them.
   const letters = s.match(/\p{L}/gu) ?? []
