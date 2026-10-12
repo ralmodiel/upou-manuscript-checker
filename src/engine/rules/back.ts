@@ -108,10 +108,15 @@ const startsEntry = (t: string) => {
 }
 
 /** Sort key: the first author's surname (or group author), letter by letter. */
-const key = (e: Entry) =>
+const key = (e: Entry, ignoreThe = false) =>
   e.text
     .replace(/^(\d+[.)]|\[\d+\])\s*/, '')
+    // (initials before the surname, as IEEE writes it: "J. P. Reyes")
+    .replace(/^(?:\p{Lu}\.\s+){1,4}(?=\p{Lu}\p{Ll})/u, '')
+    .replace(/^the\s+/i, (the) => (ignoreThe ? '' : the))
     .split(/[,(]/)[0]
+    // (a surname with its initials and no comma: "Santos R.A.E", "Cruz PM")
+    .replace(/(?<=\p{L}{2})\s+(?:\p{Lu}\.?){1,4}$/u, '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -131,7 +136,29 @@ const scrambled = (e: Entry) =>
   [...e.text.slice(0, 40)].filter((c) => c.charCodeAt(0) < 32 && c !== '\t' && c !== '\n').length >=
   2
 
-function order(ctx: Ctx, refs: Entry[]): Finding {
+/** The order, read both ways when entries open with "The" (APA puts a group author under its
+ *  first significant word, but not every style does): a verdict that depends on it is for the
+ *  student to check. */
+function orderOf(ctx: Ctx, refs: Entry[]): Finding {
+  const a = order(ctx, refs)
+  if (!refs.some((e) => /^(\d+[.)]|\[\d+\])?\s*the\s/i.test(e.text))) return a
+  const b = order(ctx, refs, true)
+  if (a.status === 'fix' && b.status === 'fix')
+    // (a pair that only one reading makes, with a "The" entry in it, is left out)
+    return {
+      ...a,
+      details: a.details?.filter((d) => !/“The /.test(d) || !!b.details?.includes(d)),
+    }
+  if (a.status === b.status) return a
+  if (a.status === 'review' || b.status === 'review') return a.status === 'review' ? a : b
+  return review(
+    a.id,
+    'Check where the entries that begin with “The” stand: APA lists a group author by its first significant word, so “The Health Foundation” goes under H. The rest of the list is in order.',
+    { details: (a.status === 'fix' ? a : b).details, where: (a.status === 'fix' ? a : b).where },
+  )
+}
+
+function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
   const id = 'references.order'
   if (!ctx.s.references) return fix(id, 'Add the reference list under the heading “References”.')
   if (refs.length < 2) return na(id, 'Fewer than two references found.')
@@ -155,7 +182,7 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
   // An author's name with a stray sign in it (a letter lost to a font's encoding) cannot be placed.
   const unreadable: Entry[] = []
   const keyed = refs.filter((e) => {
-    if (!key(e)) return false
+    if (!key(e, ignoreThe)) return false
     if (scrambled(e)) {
       unreadable.push(e)
       return false
@@ -175,7 +202,7 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
     works.set(`${y.who}|${y.year}`, [...titles, y.title])
     return true
   })
-  const ks = keyed.map(key)
+  const ks = keyed.map((e) => key(e, ignoreThe))
   const tight = ks.map((k) => k.replace(/ /g, ''))
   // Entry i sorts before entry j, word by word and letter by letter alike ("Sun Group", "SunCorp").
   const sooner = (i: number, j: number) =>
@@ -320,7 +347,8 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
 /** APA: one first author's works go by the second author's surname, then the third…; one author
  *  alone comes first ("nothing precedes something"). */
 function namesBefore(x: string[], y: string[]): boolean {
-  if (x.length < 2 && y.length < 2) return false
+  // (names that could not be read in one of them: another style of writing)
+  if ((x.length < 2 && y.length < 2) || !x.length || !y.length) return false
   for (let k = 0; k < Math.min(x.length, y.length); k++)
     if (x[k] !== y[k]) return x[k].localeCompare(y[k], 'en') < 0
   return x.length < y.length
@@ -895,7 +923,7 @@ export function backRules(ctx: Ctx): Finding[] {
   // Appendices may come before the references: each part then runs to the other's start.
   const first = s.references && apStart !== undefined && apStart < s.references.start
   return [
-    order(ctx, refs),
+    orderOf(ctx, refs),
     apa(ctx, refs, groups),
     s.references
       ? bodyNumbers(

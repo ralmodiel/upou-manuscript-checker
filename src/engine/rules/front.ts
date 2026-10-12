@@ -134,7 +134,8 @@ const ADVISER_LABEL = new RegExp(
 )
 // "Permission of the classification…", or the older template's "Permission is given for the
 // following people…".
-const PERMISSION_TEXT = /permission of the classification|permission is given for the following/i
+const PERMISSION_TEXT =
+  /permission of the classification|permission is given (?:for|to) the following/i
 const SIGNATURE_OF = new RegExp(`\\b(?:${ROLE})'?s?\\s+signature`, 'i')
 const SIGNATURE_BARE = new RegExp(`\\b(?:${ROLE})\\s+signature`, 'i')
 // Another program's wording: "Signature of Special Problem Adviser".
@@ -829,16 +830,30 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   const on = (s: Choice) => pics.filter((b) => side(b.x0) === s)
   const ink = (s: Choice) => Math.max(0, ...on(s).map((b) => b.ink ?? 0))
   const [left, right] = [on('yes').length, on('no').length]
+  // (a ticked box swapped in is a taller picture than the empty one beside it)
+  const tall = (s: Choice) => Math.max(0, ...on(s).map((b) => b.y1 - b.y0))
+  const taller: Choice | undefined =
+    left === 1 &&
+    right === 1 &&
+    // (a box filled in is much darker: that one is the mark, not the taller)
+    Math.abs(ink('yes') - ink('no')) < 0.4 &&
+    Math.abs(tall('yes') - tall('no')) > 0.2 * tall('no')
+      ? tall('yes') > tall('no')
+        ? 'yes'
+        : 'no'
+      : undefined
   const marked: Choice | undefined =
     left !== right
       ? left > right
         ? 'yes'
         : 'no'
-      : Math.abs(ink('yes') - ink('no')) > 0.02
-        ? ink('yes') > ink('no')
-          ? 'yes'
-          : 'no'
-        : undefined
+      : taller
+        ? taller
+        : Math.abs(ink('yes') - ink('no')) > 0.02
+          ? ink('yes') > ink('no')
+            ? 'yes'
+            : 'no'
+          : undefined
   const pictures = marked ? on(marked).map((b) => b.x0) : []
   // (a box's own edges are thin filled strips: a box filled in is as tall as the text)
   const filled = page.marks
@@ -866,6 +881,24 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
       width(m) <= 1.6 * line.size &&
       Math.abs(width(m) - (m.y1 - m.y0)) <= 0.25 * line.size,
   )
+  // A box with two or more strokes inside it (an X drawn in, the lines of a cross) is crossed.
+  const crossed = boxes.filter(
+    (b) =>
+      page.marks.filter(
+        (m) =>
+          m.kind === 'path' &&
+          !m.fill &&
+          m !== b &&
+          m.x0 >= b.x0 - 1 &&
+          m.x1 <= b.x1 + 1 &&
+          m.y0 >= b.y0 - 1 &&
+          m.y1 <= b.y1 + 1 &&
+          // (a stroke across the box, not a hairline or a second outline drawn over it)
+          m.x1 - m.x0 >= 0.3 * width(b) &&
+          m.y1 - m.y0 >= 0.3 * (b.y1 - b.y0) &&
+          (m.x1 - m.x0 < width(b) - 1 || m.y1 - m.y0 < b.y1 - b.y0 - 0.5),
+      ).length >= 2,
+  )
   const struck = boxes.filter(
     (m, k) =>
       boxes.filter((n) => Math.abs(n.x0 - m.x0) <= 2 && Math.abs(n.y0 - m.y0) <= 2).length >= 3 &&
@@ -885,7 +918,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     .map((m) => m.x0)
   const slash = page.glyphs.filter((g) => band(g) && g.x0 > from && g.text === '/').map((g) => g.x0)
   const evidence = [
-    [...oneSide(filled), ...struck.map((m) => m.x0)],
+    [...oneSide(filled), ...struck.map((m) => m.x0), ...crossed.map((m) => m.x0)],
     typed,
     fields,
     pictures,
@@ -1403,7 +1436,11 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
 function acceptanceNames(ctx: Ctx, names: Names): Finding {
   const id = 'acceptance.names'
   if (!ctx.s.acceptance) return fix(id, 'Add the Acceptance Page from the template.')
-  const all = [...names.committee, ...(names.dean ? [names.dean] : [])]
+  // (a name typed above a caption "NAME" that was left in: extra.placeholders says so)
+  const all: { name: string; para: Para }[] = [
+    ...names.committee.map((n) => ({ name: n.real || n.name, para: n.para })),
+    ...(names.dean ? [names.dean] : []),
+  ]
   const blank = all.filter((n) => !n.name || /^name$/i.test(n.name))
   // No name in the text, but a picture where the names and signatures would stand: for the student.
   const acc = ctx.s.acceptance

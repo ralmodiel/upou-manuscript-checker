@@ -274,6 +274,8 @@ function title(ctx: Ctx): Finding {
   // Titles written on their number's line ("I. INTRODUCTION"): the chapter number item says so.
   const inline: string[] = []
   const scaled: string[] = []
+  // Titles whose last letters stand alone on the line below ("INTRODUCTIO" / "N").
+  const broken: string[] = []
   const scale = reducedScale(ctx)
   for (const c of chapters) {
     const name = chapterName(c)
@@ -321,7 +323,28 @@ function title(ctx: Ctx): Finding {
     if (tf.scaled) scaled.push(name)
     if (issues.length > before) where.push(...at(p))
     if (faceUnknown(p)) unsure.push(name)
+    const tail = c.titlePara === c.heading ? undefined : paras[c.titlePara + 1]
+    if (
+      ctx.doc.kind === 'pdf' &&
+      !!tail &&
+      tail.page === p.page &&
+      /^\p{Lu}{1,2}$/u.test(norm(tail.text)) &&
+      /\p{Lu}{4}$/u.test(norm(p.text)) &&
+      (tail.lines?.[0]?.y ?? 0) - (p.lines?.at(-1)?.y ?? 0) <= 2.5 * (p.lines?.[0]?.size ?? 12)
+    ) {
+      broken.push(name)
+      where.push(...at(p))
+    }
   }
+  if (!issues.length && broken.length)
+    return review(
+      id,
+      'The last letters of a chapter title stand alone on the next line, as if a word were broken in two. Check that each chapter title is set on one line.',
+      {
+        details: broken.slice(0, 8).map((n) => `${n}: the title breaks a word across two lines`),
+        where: where.slice(0, 5),
+      },
+    )
   if (!issues.length && inline.length)
     return review(
       id,
@@ -646,8 +669,15 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         row(rest) &&
         rows.filter((l) => l.page === pg.n).at(-1)!.y - rows[0].y <= 72
       ) {
+        // (the rows left here, against the rows that go on below)
+        let m = k
+        while (doc.paras[m]?.page === pg.n + 1 && row(doc.paras[m])) m++
+        const here = rows.filter((l) => l.page === pg.n).length
+        const there = doc.paras.slice(k, m).reduce((n, q) => n + (q.lines?.length ?? 0), 0)
         details.push(
-          `${place(pg.n, p)}: the title “${quote(p.text, 40)}” is at the bottom of the page, with most of its table on the next page`,
+          there >= here
+            ? `${place(pg.n, p)}: the title “${quote(p.text, 40)}” is at the bottom of the page, with most of its table on the next page`
+            : `${place(pg.n, p)}: the table “${quote(p.text, 40)}” is split over the page break, only its first rows are on this page`,
         )
         where.push({ page: pg.n, quote: quote(p.text, 40) })
         continue
@@ -692,12 +722,34 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         !after || after.page !== pages[1] || after.x0 <= lines[0].x0 + 3 || headingLike(next)
       // The next paragraph opening with a small letter goes on with this one (its lines were
       // told apart by a line that stopped a little short): more than one line is carried over.
+      // (or an indented paragraph whose last line is followed, at the top of the next page, by a
+      // paragraph with no indent: the lines of one paragraph, told apart by a short line)
+      const l1x = lines[onFirst].x0
       const goesOn =
-        !!next && next.page === pages[1] && /^\p{Ll}/u.test(norm(next.text)) && !isList(next)
+        !!next &&
+        next.page === pages[1] &&
+        !isList(next) &&
+        (/^\p{Ll}/u.test(norm(next.text)) ||
+          (!headingLike(next) &&
+            !next.inTable &&
+            !!next.lines &&
+            lines[0].x0 > l1x + 8 &&
+            next.lines[0].x0 <= l1x + 3 &&
+            next.lines[0].y - lines.at(-1)!.y <= 2.4 * lines.at(-1)!.size))
       // A paragraph opening mid-sentence (its first line was told from the line above), a
       // caption, and a link wrapped onto a line of its own are not paragraphs left short.
+      // (the paragraph above stops on a comma: this one goes on from it)
+      const fragment =
+        !!before?.lines &&
+        before.lines.length >= 2 &&
+        before.page === p.page &&
+        !isList(p) &&
+        !headingLike(before) &&
+        !before.inTable &&
+        /[,;]$/.test(norm(before.text))
       const stray =
         (/^\p{Ll}/u.test(norm(p.text)) && !isList(p)) ||
+        fragment ||
         caption ||
         /^(https?:\/\/|www\.)/i.test(norm(p.text))
       // A first line that stops short, with room left for the next line's first word, is a whole
@@ -710,13 +762,23 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         onFirst === 1 &&
         isList(p) &&
         room > ((l1.x1 - l1.x0) / Math.max(1, l1.text.length)) * word.length
-      if (!complete && ((onFirst === 1 && !stray) || (onNext === 1 && closes && !goesOn))) {
+      // (a line near the top of its page is no foot of it, nor one near the foot its top: pages of
+      // headings only, set over a picture)
+      const atFoot = onFirst === 1 && !stray && lines[0].y > 0.5 * pg.height
+      const atTop =
+        onNext === 1 &&
+        closes &&
+        !goesOn &&
+        !fragment &&
+        lines[onFirst - 1].y > 0.5 * pg.height &&
+        lines[onFirst].y < 0.5 * pg.height
+      if (!complete && (atFoot || atTop)) {
         details.push(
-          onFirst === 1
+          atFoot
             ? `${place(pages[0], p)}: one line of the paragraph “${quote(p.text, 35)}” is left at the bottom of the page`
             : `${place(pages[1], p)}: the last line of the paragraph “${quote(p.text, 35)}” (from ${pagesText([pages[0]])}) stands alone at the top of the page`,
         )
-        where.push({ page: pages[onFirst === 1 ? 0 : 1], quote: quote(p.text, 40) })
+        where.push({ page: pages[atFoot ? 0 : 1], quote: quote(p.text, 40) })
       }
     }
   }

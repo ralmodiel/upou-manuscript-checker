@@ -100,8 +100,13 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
     if (kind === 'table') {
       const row = (q: Para) => q.text.includes('\t')
       if (doc.paras.slice(from, from + 3).some(row)) return 'after'
-      if (doc.paras.slice(Math.max(0, p.i - 3), p.i).some((q) => q.page === p.page && row(q)))
-        return 'before'
+      // (rows above it, with no running text between: a paragraph of three lines or more ends them)
+      for (let k = p.i - 1; k >= Math.max(0, p.i - 3); k--) {
+        const q = doc.paras[k]
+        if (q.page !== p.page) break
+        if (row(q)) return 'before'
+        if ((q.lines?.length ?? 0) >= 3) break
+      }
     }
     const n = p.page ?? -1
     const page = doc.pages?.[n]

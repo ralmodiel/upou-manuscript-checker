@@ -56,7 +56,20 @@ const tableRow = (p: Para) => Math.abs(p.indent?.firstLine ?? 0) >= 100
  *  colon, then its meaning ("IRD. Industrial Research Department"). */
 const glossary = (p: Para) =>
   (p.lines ?? []).filter((l) => /^[A-Z][A-Za-z0-9&/-]{1,12}\s*[.:=–—-]\s+\p{Lu}/u.test(l.text))
+    .length >= 2 ||
+  // (or a term, a dash and its meaning in lower case, on several lines: one-line entries)
+  (p.lines ?? []).filter((l) => /^\p{Lu}[\p{L}\p{N}'’/&() ]{1,40}?\s[-–—]\s+\S/u.test(l.text))
     .length >= 2
+
+/** A table's row (a label with figures beside it, the rest of the label possibly on the next line):
+ *  two figures side by side, one with decimals. */
+const wrappedRow = (p: Para) => {
+  const rows = (p.lines ?? []).filter((l) =>
+    /(?<!\S)\d+(\.\d+)?\*{0,3}\s+\d+\.\d+\*{0,3}(?!\S)/.test(l.text),
+  ).length
+  // (a few lines of a row, or several rows)
+  return rows >= 2 || (rows === 1 && p.lines!.length <= 4)
+}
 
 /** A row of figures read as a paragraph (an item, then its mean and its deviation). */
 const figureRow = (t: string) => t.length < 200 && /\d+([.,]\d+)?\s+\(?\d+([.,]\d+)?\)?\s*$/.test(t)
@@ -120,6 +133,7 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !tableRow(p) &&
       !transcript(t) &&
       !glossary(p) &&
+      !wrappedRow(p) &&
       !figureRow(t) &&
       !inShape(ctx, p) &&
       !/^key\s?words?\s*:/i.test(t) &&

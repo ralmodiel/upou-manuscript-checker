@@ -742,10 +742,11 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
     for (const x of info)
       if (
         x.side === 'f' &&
+        x.d < 100 &&
         !out.has(x.l) &&
         x.k.length >= 20 &&
         whole.includes(x.k) &&
-        info.some((y) => out.has(y.l) && y.side === 'f' && Math.abs(y.l.size - x.l.size) < 0.6)
+        info.some((y) => out.has(y.l) && y.side === 'f' && Math.abs(y.l.size - x.l.size) < 1.2)
       )
         out.add(x.l)
   return out
@@ -792,7 +793,14 @@ function splitBands(
     // A foot of its own kind (a title page's, set once): the last line and the lines tight above
     // it, apart from the text over them.
     const last = lines.at(-1)
-    if (last && !foot.has(last) && last.y > height - 60 && !OUTSIDE.test(last.text.trim())) {
+    // (a label ending in a colon, "Signature:", is a title page's text, not its foot)
+    if (
+      last &&
+      !foot.has(last) &&
+      last.y > height - 60 &&
+      !OUTSIDE.test(last.text.trim()) &&
+      !/:\s*$/.test(last.text)
+    ) {
       const block = [last]
       for (let k = lines.length - 2; k >= 0; k--) {
         const l = lines[k]
@@ -821,6 +829,8 @@ function splitBands(
         : l.y > height - 72 &&
           // (a caption or a note low on the page is not a foot)
           !OUTSIDE.test(l.text.trim()) &&
+          // (a line that goes on from the one above, in lower case, is the text's last line)
+          !(l.y <= height - 50 && /^\p{Ll}/u.test(l.text.trim()) && !looksLikeNumber(l.text)) &&
           (!above || l.y - above.y >= 18 || looksLikeNumber(l.text) || l.y > height - 50)
     )
       footer.push(l)
