@@ -82,10 +82,10 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
     a: (
       <>
         <p>
-          Yes. It is in beta testing, and although it was built diligently and meticulously with
-          the help of AI, it reads files the way a program does, not the way a person does. It can
-          miss a problem or flag one that is not there, especially with unusual layouts, text boxes,
-          or scanned pages.
+          Yes. It is in beta testing, and although it was built diligently and meticulously with the
+          help of AI, it reads files the way a program does, not the way a person does. It can miss
+          a problem or flag one that is not there, especially with unusual layouts, text boxes, or
+          scanned pages.
         </p>
         <p>
           No AI reads your file: the checks are rules written into this site, and they run the same
