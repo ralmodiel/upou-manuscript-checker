@@ -12,10 +12,12 @@ import {
   list,
   lowerWords,
   norm,
+  plural,
   quote,
   roman,
   shown,
   titleForm,
+  titleLoose,
   wordDiff,
 } from '../text.ts'
 import {
@@ -237,9 +239,19 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     univ >= 0 && idx(program) > univ + 1
       ? paras.slice(univ + 1, idx(program)).find((p) => norm(p.text).split(' ').length <= 8)
       : undefined
-  const author = authorAbove ?? between[0]
+  // A copy without the author's name has the title's first line where the name stands: a line the
+  // permission page repeats at its top is the title's.
+  const top = (ctx.doc.pages?.slice(page + 1, page + 2) ?? [])
+    .flatMap((pg) => pg.paras.slice(0, 4))
+    .map((i) => norm(ctx.doc.paras[i].text).toUpperCase())
+    .join(' ')
+  const noAuthor =
+    !authorAbove &&
+    !!between[1] &&
+    top.includes(norm(between[0].text + ' ' + between[1].text).toUpperCase())
+  const author = authorAbove ?? (noAuthor ? undefined : between[0])
   // The student number and the academic year are lines of the page, not of the title.
-  const title = (authorAbove ? between : between.slice(1)).filter(
+  const title = (authorAbove || noAuthor ? between : between.slice(1)).filter(
     (p) =>
       !STUDENT_NUMBER.test(norm(p.text)) && !ACADEMIC_YEAR.test(norm(p.text)) && !labelled.has(p),
   )
@@ -991,7 +1003,19 @@ function folioCheck(
       full.split(/\s+/).length <= 8 &&
       !!folio &&
       titleKey(folio.raw.replace(/\s*[ivxlcdm\d]+$/i, '')) === titleKey(full)
-    const found = judge(folio, here, page)
+    // A title page that runs over to a second sheet shows no number on it either.
+    const permPage = ctx.s.permission ? (doc.paras[ctx.s.permission.heading].page ?? 0) : 0
+    const more =
+      want === 'none'
+        ? Array.from(
+            { length: Math.max(0, Math.min(permPage, page + 3) - page - 1) },
+            (_, k) => page + 1 + k,
+          )
+        : []
+    const found = [
+      ...judge(folio, here, page),
+      ...more.flatMap((q) => judge(pdfFolio(doc, q), want, q)),
+    ]
     const problems = found.filter((p) => !shortWhole(p))
     // One shortened title throughout: this page's against the one most pages before Chapter I carry.
     if (want !== 'none' && folio?.title && folio.number !== undefined) {
@@ -1105,6 +1129,12 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
       )}).`,
     )
   const differs = !!main && titleForm(main) !== titleForm(t)
+  if (differs && isUpper(t) && titleLoose(main) === titleLoose(t))
+    return review(
+      id,
+      'The title differs from the Title Page in punctuation or hyphens only. Check that it is the same title.',
+      { where: at(lines[0]) },
+    )
   if (details.length && !differs && !upperRule(tp))
     return review(id, `Check the case of the ${tp.work.toLowerCase()} title. ${CASE_NOTE}`, {
       details,
@@ -1239,10 +1269,22 @@ function readNames(ctx: Ctx): Names {
     if (ROLE_LINE.test(t)) {
       // (the sentence of the page above a role with no name: the name was taken out)
       const alone = paras[k - 2] && TITLE_ONLY.test(norm(paras[k - 2].text))
+      // (the name typed above an empty underlined line: the line is the paragraph before the role)
+      const typed = /^[_\s]*$/.test(prev.text) ? paras[k - 2] : undefined
+      const typedName =
+        typed &&
+        norm(typed.text).split(' ').length <= 10 &&
+        !ROLE_LINE.test(norm(typed.text)) &&
+        !/^(dean|faculty|date|name|this )/i.test(norm(typed.text)) &&
+        !/(accepted|prepared|title)/i.test(typed.text) &&
+        !/^[_\s]*$/.test(typed.text)
+          ? cleanName(shown(typed)).replace(/^_+/, '')
+          : ''
       const name =
         norm(prev.text).split(' ').length > 12 || ROLE_LINE.test(norm(prev.text))
           ? ''
-          : (alone ? norm(paras[k - 2].text) + ' ' : '') + cleanName(shown(prev)).replace(/^_+/, '')
+          : typedName ||
+            (alone ? norm(paras[k - 2].text) + ' ' : '') + cleanName(shown(prev)).replace(/^_+/, '')
       // "NAME" set over the line, the name itself above it.
       const above = paras[k - 2]
       const real =
@@ -1260,7 +1302,7 @@ function readNames(ctx: Ctx): Names {
         name:
           (paras[k - 2] && TITLE_ONLY.test(norm(paras[k - 2].text))
             ? norm(paras[k - 2].text) + ' '
-            : '') + cleanName(shown(prev)),
+            : '') + cleanName(shown(prev)).replace(/^_+/, ''),
         para: prev,
       }
   })
@@ -1319,6 +1361,16 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
       `The title could not be read reliably (its font is encoded oddly). Check that the Acceptance Page has the same ${tp.work.toLowerCase()} title as the Title Page.`,
       { where: at(p) },
     )
+  // Differences in punctuation, a hyphen or a space only: for the student to look at.
+  if (main && titleForm(main) !== titleForm(t) && titleLoose(main) === titleLoose(t))
+    return review(
+      id,
+      `The title differs from the Title Page in punctuation or hyphens only. Check that the Acceptance Page has the same title.`,
+      {
+        details: [`Title Page: “${quote(main, 90)}”; Acceptance Page: “${quote(t, 90)}”.`],
+        where: at(p),
+      },
+    )
   const issues: string[] = []
   if (main && titleForm(main) !== titleForm(t)) {
     const d = wordDiff(main, t)
@@ -1368,7 +1420,15 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
   if (!all.length || blank.length)
     return fix(id, "Complete the advisory committee's and the Dean's names.", {
       details: blank.length
-        ? [`${blank.length} name line${blank.length > 1 ? 's still say' : ' still says'} “NAME”.`]
+        ? [
+            `${plural(blank.length, 'name line')} ${
+              blank.every((n) => n.name)
+                ? `still say${blank.length > 1 ? '' : 's'} “NAME”`
+                : blank.some((n) => n.name)
+                  ? 'are blank or still say “NAME”'
+                  : `${blank.length > 1 ? 'are' : 'is'} blank`
+            }.`,
+          ]
         : undefined,
       where: at(blank[0]?.para),
     })

@@ -247,7 +247,10 @@ export function findStructure(doc: Doc): Structure {
       }
     }
     // A glossary after the references is not part of the list.
-    if (s.references && GLOSSARY.test(t)) {
+    // (the title of an appendix, on the line under its label, is no glossary after the list)
+    const lastAp = s.appendices.at(-1)
+    const titled = !!lastAp && !paras.slice(lastAp.heading + 1, p.i).some((q) => q.text.trim())
+    if (s.references && GLOSSARY.test(t) && !titled) {
       stops.push(p.i)
       continue
     }

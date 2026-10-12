@@ -751,6 +751,14 @@ function labels(ctx: Ctx): Finding {
     )
     statuses.push('review')
   }
+  // "APPENDIX A" for one and "Appendix B" for another: the same label in two cases.
+  const written = new Set(aps.map((a) => /^[a-z]+/i.exec(a.label)?.[0]).filter(Boolean) as string[])
+  if (written.size > 1 && new Set([...written].map((w) => w.toLowerCase())).size === 1) {
+    issues.push(
+      `The appendix labels are not all written alike (${list(aps.slice(0, 6).map((a) => a.label))}): use one form, as the template does (Appendix A, Appendix B…).`,
+    )
+    statuses.push('review')
+  }
   // Pages that are pictures with no text, among the appendices: a label may be in one of them.
   const picturePages =
     doc.kind === 'pdf'

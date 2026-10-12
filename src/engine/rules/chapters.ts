@@ -47,8 +47,17 @@ function typeface(p: Para, what: string, scale?: number): { issues: string[]; sc
   if (!bolded(p) && !faceUnknown(p)) out.push(`${what} is not bold`)
   const fonts = [...new Set(runs.map((r) => r.font).filter((f) => f && !isArial(f)))]
   if (fonts.length) out.push(`${what} is in ${fonts.join(', ')}, not Arial`)
+  // Small capitals (a 12 pt capital, then the rest of the word in capitals about 0.7 of that size)
+  // are 12 pt type.
+  const caps = runs.every((r) => r.text === r.text.toUpperCase())
+  const smallCaps = (z?: number) =>
+    caps && z !== undefined && z >= 0.65 * 12 && z <= 0.76 * 12 && runs.some((r) => r.size === 12)
   const off = [
-    ...new Set(runs.map((r) => r.size).filter((z) => z !== undefined && Math.abs(z - 12) > 0.3)),
+    ...new Set(
+      runs
+        .map((r) => r.size)
+        .filter((z) => z !== undefined && Math.abs(z - 12) > 0.3 && !smallCaps(z)),
+    ),
   ]
   const sizes = off.filter((z) => scale === undefined || Math.abs(z! - scale) > 0.3)
   if (sizes.length) out.push(`${what} is ${sizes.join(', ')} pt, not 12 pt`)

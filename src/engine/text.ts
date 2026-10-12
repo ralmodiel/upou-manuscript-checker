@@ -128,6 +128,13 @@ export const titleForm = (s: string) =>
     .replace(/\s*-\s+/g, '-')
     .replace(/^[\s"'.,;:!?…]+|[\s"'.,;:!?…]+$/g, '')
 
+/** Words only: two titles equal here differ in punctuation or hyphens alone. */
+export const titleLoose = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+
 /** Words that differ between two versions of a title (case and punctuation aside; words of two
  *  letters or fewer left out, as they say little). */
 export function wordDiff(a: string, b: string): { onlyA: string[]; onlyB: string[] } {
