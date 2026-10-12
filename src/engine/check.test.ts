@@ -84,6 +84,37 @@ describe('check', () => {
     expect(finding(r, 'title.title').message).toMatch(/special project title/)
   })
 
+  it('takes “Research Adviser:” as the label, a lower-case title and a date not in Day Month Year as errors', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const page = (title: string, date: string) =>
+      check(
+        'project.docx',
+        docx(
+          ...[
+            'UNIVERSITY OF THE PHILIPPINES',
+            'OPEN UNIVERSITY',
+            'MASTER OF DISTANCE EDUCATION',
+            'Juan A. Cruz',
+            title,
+            'Research Adviser:',
+            'MARIA B. SANTOS, Ph.D.',
+            'Faculty of Education',
+            date,
+          ].map((t) => para(t, c)),
+          para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+          para('INTRODUCTION', c),
+        ),
+        opts,
+      )
+    const good = await page('A Study of Community Radio', '15 October 2026')
+    expect(finding(good, 'title.sequence').details?.join(' ') ?? '').not.toMatch(/Adviser:/)
+    expect(finding(good, 'title.adviser').message).not.toMatch(/write your/i)
+    expect(finding(good, 'title.date').status).toBe('ok')
+    const bad = await page('a study of community radio', 'October 15, 2026')
+    expect(finding(bad, 'title.title').status).toBe('fix')
+    expect(finding(bad, 'title.date').status).toBe('fix')
+  })
+
   it('reports template text left in', async () => {
     const r = await check('thesis.docx', thesis(para('Xxxxxxxxxxxxxxxx xxxxxxx.')), opts)
     expect(finding(r, 'extra.placeholders').status).toBe('fix')

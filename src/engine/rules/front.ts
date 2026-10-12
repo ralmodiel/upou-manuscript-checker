@@ -73,7 +73,11 @@ const TABLE_ROW = /^(invention|publication|confidential|free)\s*\(/i
 // title page names it before "Adviser:" and gives the degree ("Master in …", "Diploma in …" too).
 const WORK =
   'thesis|dissertation|special problem|special project|capstone project|capstone|research paper|project paper|project'
-const ADVISER_LABEL = new RegExp(`^(${WORK}) advis[eo]r\\b(?!'?s?\\s*signature)`, 'i')
+// Other programs name it otherwise ("Research Adviser:"): up to three words, then a colon.
+const ADVISER_LABEL = new RegExp(
+  `^(?:(?:${WORK}) advis[eo]r\\b|(?:[a-z]+ ){0,2}[a-z]+ advis[eo]r\\s*:)(?!'?s?\\s*signature)`,
+  'i',
+)
 const PROGRAM =
   /^(associate|bachelor|master|doctor) (of|in)\b|^(diploma|graduate certificate|professional teaching certificate|certificate) in\b/i
 // UPOU's three faculties.
@@ -89,7 +93,9 @@ const CASE_NOTE =
 const titleCase = (s: string) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase())
 /** The manuscript as the adviser label names it, else as the degree suggests. */
 function workOf(label?: Para, program?: Para): string {
-  const named = new RegExp(`^(${WORK})\\b`, 'i').exec(norm(label?.text ?? ''))?.[1]
+  const named = new RegExp(`^(${WORK}|(?:[a-z]+ ){0,2}[a-z]+(?= advis[eo]r\\s*:))\\b`, 'i').exec(
+    norm(label?.text ?? ''),
+  )?.[1]
   if (named) return titleCase(named)
   const degree = norm(program?.text ?? '')
   if (/^doctor (of|in)/i.test(degree)) return 'Dissertation'
@@ -406,15 +412,20 @@ function titleUpper(tp: TitlePage): Finding {
         .slice(0, 8)
         .map((w) => `“${w}”`),
     )}`
-    if (!upperRule(tp))
+    // All lower case is neither of the two styles, in any program.
+    if (!upperRule(tp) && t !== t.toLowerCase())
       return review(id, `Check the case of the ${tp.work.toLowerCase()} title. ${CASE_NOTE}`, {
         details: [words],
         where: at(tp.title[0]),
       })
-    return fix(id, `Write the ${tp.work.toLowerCase()} title in upper case.`, {
-      details: [words],
-      where: at(tp.title[0]),
-    })
+    return fix(
+      id,
+      `Write the ${tp.work.toLowerCase()} title in ${upperRule(tp) ? 'upper case' : 'title case or upper case, as your template shows'}.`,
+      {
+        details: [words],
+        where: at(tp.title[0]),
+      },
+    )
   }
   return ok(id, `Title (in upper case): “${quote(t, 120)}”`)
 }
@@ -459,7 +470,24 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
 function dateOf(p: Para | undefined, id: string, where: string): Finding {
   if (!p || /day\s+month\s+year/i.test(p.text))
     return fix(id, `Indicate the date of submission on the ${where}.`, { where: at(p) })
-  if (DATE.test(p.text)) return ok(id, `Date of submission: ${norm(p.text)}`)
+  if (DATE.test(p.text)) {
+    // The template reads "Day Month Year" (15 October 2026): "October 15, 2026" and "10/15/2026"
+    // are other forms; an abbreviated month is probably the same form, so the student checks it.
+    const dmy =
+      /\b\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december),?\s+\d{4}\b/i
+    if (dmy.test(p.text)) return ok(id, `Date of submission: ${norm(p.text)}`)
+    if (/\b\d{1,2}\s+[a-z]{3,4}\.?,?\s+\d{4}\b/i.test(p.text))
+      return review(
+        id,
+        `Write the month of the date of submission in full (15 October 2026): “${quote(p.text, 40)}”.`,
+        { where: at(p) },
+      )
+    return fix(
+      id,
+      `Write the date of submission as Day Month Year (15 October 2026) on the ${where}: “${quote(p.text, 40)}”.`,
+      { where: at(p) },
+    )
+  }
   return review(
     id,
     `Write the date of submission (Day Month Year) on the ${where}; “${quote(p.text, 40)}” is not a date.`,
@@ -613,6 +641,14 @@ function signature(ctx: Ctx, label: Para | undefined, id: string, page: string):
       `Check that the signature field beside “${quote(label.text, 40)}” is signed: an empty field looks the same here.`,
       { where: at(label) },
     )
+  // A name typed after "Signature:" may be meant as the signature (a script font): not for us to rule.
+  const typed = /signature\s*:\s*(\p{L}.*)$/iu.test(norm(label.text))
+  if (ctx.doc.kind === 'pdf' && typed)
+    return review(
+      id,
+      `A name is typed beside “${quote(label.text, 40)}”, with no signature picture. Check that it is your own signature, as the template asks.`,
+      { where: at(label) },
+    )
   return ctx.doc.kind === 'pdf'
     ? fix(id, `Affix your signature on the ${page}.`, { where: at(label) })
     : review(
@@ -764,10 +800,19 @@ function permissionStatement(ctx: Ctx): Finding {
     })
   if (allow || grant)
     return ok(id, `Uses only “${allow ? 'I specifically allow…' : 'Specifically, I grant…'}”.`)
-  return review(
-    id,
-    'The permission statement (“Specifically, I grant…”) was not found. Use the wording of the template.',
+  const msg =
+    'The permission statement (“Specifically, I grant…”) was not found. Use the wording of the template.'
+  // Readable text with no word of a grant or allowance at all: the statement is missing, not reworded.
+  const readable = paras.length >= 3 && !paras.some((p) => garbled(p.text))
+  if (
+    readable &&
+    !paras.some(
+      (p) =>
+        !/^["“]?\s*I hereby grant/i.test(norm(p.text)) && /grant|allow|specifically/i.test(p.text),
+    )
   )
+    return fix(id, msg, { where: at(paras[0]) })
+  return review(id, msg)
 }
 
 function permissionSignature(ctx: Ctx): Finding {
@@ -939,6 +984,17 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       id,
       "Check that the Dean's line names your faculty's current Dean, and the spelling of each name below: spelling cannot be checked here.",
       { details: all.map((n) => n.name), where: at(dean.para) },
+    )
+  // No line says "Dean" anywhere on the page: the Dean's block is missing.
+  const r = ctx.s.acceptance
+  if (r && !textIn(ctx, r.start, r.end).some((p) => /\bdean\b/i.test(p.text)))
+    return fix(
+      id,
+      "Add the Dean's name and the line “Dean” with the faculty, as in the template.",
+      {
+        details: all.map((n) => n.name),
+        where: at(all[all.length - 1].para),
+      },
     )
   return review(id, 'Check the spelling of each name below: spelling cannot be checked here.', {
     details: all.map((n) => n.name),

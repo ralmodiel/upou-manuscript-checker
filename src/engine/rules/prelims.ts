@@ -163,6 +163,19 @@ function numbers(ctx: Ctx): Finding {
         type: 'value',
         text: `${at}: page numbers restart at i; continue them from the page before`,
       })
+    else if (sec.start && sec.start > 1 && sec.newPage && k > 0) {
+      // A restart in the middle of the front matter must pick up after the pages before it, which
+      // begin where a page break or section opens one (title, permission and acceptance pages).
+      const before = doc.paras
+        .slice(0, sec.first)
+        .filter((p) => p.newPage || p.renderedBreak === 'before').length
+      const earlier = doc.sections.slice(1, k).some((x) => x.start !== undefined)
+      if (before > 0 && !earlier && sec.start !== before + 1)
+        problems.push({
+          type: 'value',
+          text: `${at}: page numbers start at ${roman(sec.start)}; continue them from the page before (${roman(before + 1)})`,
+        })
+    }
   }
   if (!problems.length)
     return ok(

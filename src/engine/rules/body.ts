@@ -181,7 +181,14 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
   }
   const kinds = [...new Set(bad.map((p) => spacingName(p.spacing!)))]
   const share = bad.length / checked.length
-  return (bad.length >= 2 || share >= 0.1 ? fix : review)(
+  // One paragraph is enough when it is running text set single: three lines or more, not a list.
+  const solid = bad.some(
+    (p) =>
+      p.spacing! < 1.2 &&
+      !isList(p) &&
+      (ctx.doc.kind === 'pdf' ? (p.lines?.length ?? 0) >= 3 : norm(p.text).length >= 300),
+  )
+  return (bad.length >= 2 || share >= 0.1 || solid ? fix : review)(
     id,
     `Double-space the body text of ${name} (Line spacing: Double).`,
     {

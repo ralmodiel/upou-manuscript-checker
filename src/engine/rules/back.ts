@@ -359,6 +359,32 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push('fix')
   }
+  // A few entries with no hanging indent among entries that have one (a Word file states it even
+  // for a one-line entry, but on one line nobody sees it: that is for the student to check; a PDF
+  // shows it on long ones only, and the entry must start where the others do: a piece of a split
+  // entry starts further in).
+  const bare = (ctx.doc.kind === 'pdf' ? multi : refs.map((e) => e.paras[0])).filter(
+    (p) => (p.indent?.firstLine ?? 0) > -6,
+  )
+  if (
+    ctx.doc.kind !== 'doc' &&
+    bare.length &&
+    hanging.length &&
+    hanging.length / multi.length >= 0.8
+  ) {
+    const xs = hanging.map((p) => p.lines?.[0]?.x0 ?? NaN).sort((a, b) => a - b)
+    const x = xs[xs.length >> 1]
+    const sure =
+      ctx.doc.kind === 'pdf'
+        ? bare.every((p) => Math.abs((p.lines?.[0]?.x0 ?? NaN) - x) < 3)
+        : bare.some((p) => multi.includes(p))
+    issues.push(
+      `Use a hanging indent of 0.5 inch (Paragraph > Special: Hanging) on ${entriesText(
+        refs.filter((e) => bare.includes(e.paras[0])),
+      )}: no hanging indent, unlike the other references.`,
+    )
+    statuses.push(sure ? 'fix' : 'review')
+  }
   const spaced = refs.map((e) => e.paras[0]).filter((p) => p.spacing !== undefined)
   const single = spaced.filter((p) => p.spacing! < DOUBLE)
   if (spaced.length && single.length / spaced.length > 0.2) {
@@ -547,6 +573,17 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push('review')
   }
+  // APA's list names the authors (up to 20); "et al." belongs to the in-text citation.
+  const etal = own.filter((e) => {
+    const cut = YEAR.exec(e.text)?.index ?? e.text.indexOf('(')
+    return cut > 0 && /\bet\s+al\b/i.test(e.text.slice(0, cut))
+  })
+  if (etal.length) {
+    issues.push(
+      `Name the authors in the entry instead of “et al.” (APA lists up to 20): ${entriesText(etal)}.`,
+    )
+    statuses.push('fix')
+  }
   // APA cites personal communications in the text only.
   const personal = own.filter((e) => /\bpersonal communication\b/i.test(e.text))
   if (personal.length) {
@@ -560,7 +597,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
       id,
       ctx.doc.kind === 'doc'
         ? `Check that the ${plural(refs.length, 'reference')} have hanging indents and double spacing (an old .doc file does not say); each has its year.`
-        : `Check the rest of the APA setup (each entry's parts, italics, DOIs) against the APA page linked here: the ${plural(refs.length, 'reference')} have hanging indents, double spacing and a year each.`,
+        : `Check the rest of the APA setup (each entry's parts, italics, DOIs) against the APA page linked here: the ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '; a hanging indent shows on entries of two lines or more only' : ', and hanging indents'}.`,
     )
   const status = worst(statuses)
   return {
