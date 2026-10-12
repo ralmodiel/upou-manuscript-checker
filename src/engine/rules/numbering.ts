@@ -1,7 +1,7 @@
 // Page numbers ("folios"): the shortened title, an ellipsis, then i, ii... before Chapter I and
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
-import type { Doc, HeaderFooter, NumberFormat, Section } from '../model.ts'
+import type { Doc, HeaderFooter, Line, NumberFormat, Section } from '../model.ts'
 import { fromRoman, garbled, norm, quote, roman } from '../text.ts'
 
 export interface Folio {
@@ -104,8 +104,11 @@ export interface Problem {
     | 'ellipsis'
     | 'long'
     | 'changed'
+    | 'unread'
   page?: number
   text: string
+  /** The number shown less the number expected (a wrong page number). */
+  diff?: number
   /** A long title's length in words (on its own problem and on a missing ellipsis after it). */
   words?: number
 }
@@ -152,7 +155,12 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
       text: `${at}shows ${shows}; use ${want.kind === 'roman' ? 'Roman' : 'Arabic'} numerals${expected ? ` (${expected})` : ''}`,
     })
   else if (expected !== undefined && folio.value !== undefined && folio.value !== want.value)
-    out.push({ type: 'value', page, text: `${at}shows ${folio.number}; it should be ${expected}` })
+    out.push({
+      type: 'value',
+      page,
+      text: `${at}shows ${folio.number}; it should be ${expected}`,
+      diff: folio.value - (want.value ?? 0),
+    })
   const words = folio.title.split(/\s+/).filter(Boolean).length
   if (PLACEHOLDER.test(folio.title))
     out.push({ type: 'placeholder', page, text: `${at}still says “Shortened title here”` })
@@ -284,11 +292,61 @@ function titleChanges(doc: Doc, pages: number[], thesis?: string, ref?: TitleRef
 
 // ---- PDF ----
 
+/** A number standing by itself: a span of its own, or a line of its own. */
+const NUMBER = /^([ivxlcdm]+|\d+)$/i
+
+/** A footer of several lines whose number is not at the end of the last: the title wrapped below
+ *  a number that ends its first line, or a number alone on a line above the title. The title is
+ *  then the other lines' text, read in order, and the number the one found. */
+function wrappedFolio(lines: Line[]): Folio | undefined {
+  for (const [k, l] of lines.entries()) {
+    const last = l.spans.at(-1)
+    const before = l.spans.at(-2)
+    // A span of its own, set apart from the words before it (or printed over their end), as a
+    // field is: a roman numeral ending a title ("Part II") is spaced like a word.
+    const alone = l.spans.length === 1 && NUMBER.test(l.text.trim())
+    const gap = last && before ? last.x0 - before.x1 : 0
+    const apart = !!last && !!before && (gap >= 0.4 * l.size || gap < -0.2 * l.size)
+    if (!alone && !(apart && NUMBER.test(last!.text) && k < lines.length - 1)) continue
+    const number = alone ? l.text.trim() : last!.text
+    if (!/^\d+$/.test(number) && fromRoman(number) === undefined) continue
+    const rest = lines.map((x, j) =>
+      j !== k ? x.text : alone ? '' : x.text.slice(0, x.text.lastIndexOf(number)),
+    )
+    const f = parseFolio(`${rest.filter((t) => t.trim()).join(' ')} ${number}`)
+    return f?.number === number ? f : undefined
+  }
+  return undefined
+}
+
 /** The page's footer, or a page number printed at the top of the page instead. */
 export function pdfFolio(doc: Doc, page: number): Folio | undefined {
   const pg = doc.pages?.[page]
   const top = parseFolio(pg?.header ?? '')
-  return parseFolio(pg?.footer ?? '') ?? (top?.value !== undefined ? top : undefined)
+  let foot = parseFolio(pg?.footer ?? '')
+  if (foot && foot.number === undefined && (pg?.footerLines.length ?? 0) > 1)
+    foot = wrappedFolio(pg!.footerLines) ?? foot
+  return foot ?? (top?.value !== undefined ? top : undefined)
+}
+
+/** PDF pages with no text layer: their writing is a picture or drawn outlines, so nothing on
+ *  them (a page number, a caption) can be read. */
+export function noTextPages(doc: Doc): Set<number> {
+  const inked = new Set(doc.paras.flatMap((p) => (p.lines ?? []).map((l) => l.page)))
+  return new Set(
+    (doc.pages ?? [])
+      .filter(
+        (pg) =>
+          !inked.has(pg.n) &&
+          // A picture over most of the page (a scan), or outlines of letters (many small filled
+          // shapes); not a figure on a page of its own.
+          (pg.images.some((b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.7 * pg.width * pg.height) ||
+            pg.marks.filter(
+              (m) => m.kind === 'path' && m.x1 - m.x0 < 40 && m.y1 - m.y0 < 40 && !!m.fill,
+            ).length >= 30),
+      )
+      .map((pg) => pg.n),
+  )
 }
 
 /** Checks a run of PDF pages; `want` gives what each page should show. */
@@ -299,8 +357,13 @@ export function auditPdf(
   thesis?: string,
   ref?: TitleRef,
 ): Problem[] {
+  const unread = noTextPages(doc)
   return [
-    ...pages.flatMap((p) => judge(pdfFolio(doc, p), want(p), p)),
+    ...pages.flatMap((p) =>
+      unread.has(p)
+        ? [{ type: 'unread' as const, page: p, text: `${pagesText([p])}: no text layer` }]
+        : judge(pdfFolio(doc, p), want(p), p),
+    ),
     ...titleChanges(doc, pages, thesis, ref),
   ]
 }
@@ -385,6 +448,7 @@ const LABEL: Record<Problem['type'], string> = {
   ellipsis: 'No ellipsis (…) after the shortened title on',
   long: 'A long title, not a shortened one, on',
   changed: 'The title in the footer changes on',
+  unread: 'No text layer (the page number could not be read) on',
 }
 
 /** Problems grouped by kind, one line each ("No page number on pp. 4–6, e.g. …"). */
@@ -393,6 +457,23 @@ export function summarize(problems: Problem[]): string[] {
   return types.flatMap((type) => {
     const ps = problems.filter((p) => p.type === type)
     const pages = ps.flatMap((p) => (p.page === undefined ? [] : [p.page]))
+    // Numbers all off by the same amount, page after page (one page numbered twice, or skipped,
+    // throws every page after it off): said once.
+    if (type === 'value' && ps.length > 3 && ps.every((p) => p.diff !== undefined)) {
+      const runs: Problem[][] = []
+      for (const p of ps) {
+        const run = runs.at(-1)
+        const last = run?.at(-1)
+        if (run && last && last.diff === p.diff && p.page === last.page! + 1) run.push(p)
+        else runs.push([p])
+      }
+      if (runs.length <= 3)
+        return runs.map((run) =>
+          run.length === 1
+            ? run[0].text
+            : `${pagesText(run.map((p) => p.page!))}: the page numbers are ${Math.abs(run[0].diff!)} ${run[0].diff! < 0 ? 'behind' : 'ahead'} (${run[0].text})`,
+        )
+    }
     if (type === 'value' || type === 'changed' || pages.length < 3) {
       // "p. 5: …" keeps its small p; a sentence starts with a capital.
       const shown = ps

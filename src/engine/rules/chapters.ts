@@ -3,14 +3,15 @@ import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
-import { bodyParas, CAPTION, doubleSpaced, isList, justified } from './body.ts'
-import { thesisTitle } from './front.ts'
+import { bodyParas, CAPTION, doubleSpaced, isList, justified, textSize } from './body.ts'
+import { readTitlePage, thesisTitle } from './front.ts'
 import {
   auditPdf,
   clip,
   judge,
   more,
   pagesText,
+  noTextPages,
   pdfFolio,
   prelimTitle,
   sectionStarts,
@@ -23,12 +24,15 @@ import {
 
 const isArial = (font?: string) => !font || /arial|arimo|liberation sans|helvetica/i.test(font)
 
+/** A PDF paragraph set in a font whose name says nothing: its bold and typeface are unknown. */
+const faceUnknown = (p: Para) => p.runs.some((r) => r.unknown && r.text.trim())
+
 /** Bold, Arial and 12 pt over the paragraph's text: the problems found. */
 function typeface(p: Para, what: string): string[] {
   if (p.plain) return []
   const runs = p.runs.filter((r) => r.text.trim())
   const out: string[] = []
-  if (!bolded(p)) out.push(`${what} is not bold`)
+  if (!bolded(p) && !faceUnknown(p)) out.push(`${what} is not bold`)
   const fonts = [...new Set(runs.map((r) => r.font).filter((f) => f && !isArial(f)))]
   if (fonts.length) out.push(`${what} is in ${fonts.join(', ')}, not Arial`)
   const sizes = [
@@ -36,6 +40,16 @@ function typeface(p: Para, what: string): string[] {
   ]
   if (sizes.length) out.push(`${what} is ${sizes.join(', ')} pt, not 12 pt`)
   return out
+}
+
+/** A special problem sets its sections "I. INTRODUCTION", "II. …" in some programs: the MDC
+ *  thesis template’s “Chapter I” label is then for the student to weigh, not to correct. */
+const numberedSections = (ctx: Ctx) => {
+  try {
+    return /^special problem$/i.test(readTitlePage(ctx).work)
+  } catch {
+    return false
+  }
 }
 
 const chapterName = (c: Chapter) =>
@@ -138,6 +152,9 @@ function number(ctx: Ctx): Finding {
     )
   const issues: string[] = []
   const wrong: Para[] = []
+  const unsure: string[] = []
+  const soft: string[] = []
+  const special = numberedSections(ctx)
   for (const c of chapters) {
     const p = paras[c.heading]
     const word = /^chapter/i.exec(norm(p.text))?.[0] ?? 'Chapter'
@@ -145,7 +162,7 @@ function number(ctx: Ctx): Finding {
     const right = `Chapter ${(c.number ? roman(c.number) : c.numeral).toUpperCase()}`
     const before = issues.length
     if (c.unlabelled) {
-      issues.push(
+      ;(special ? soft : issues).push(
         `${chapterName(c)}: the chapter number is missing (write ${right} on its own line, with the title below it)`,
       )
       wrong.push(p)
@@ -157,11 +174,33 @@ function number(ctx: Ctx): Finding {
       issues.push(`“${c.label}”: write it in title case (${right})`)
     for (const t of typeface(p, `“${c.label}”`)) issues.push(t)
     if (issues.length > before) wrong.push(p)
+    if (faceUnknown(p)) unsure.push(chapterName(c))
   }
   const nums = chapters.map((c) => c.number ?? 0)
-  if (nums.some((x, k) => x !== k + 1))
-    issues.push(
-      `Chapter numbers should run I, II, III… in order (found ${chapters.map((c) => c.numeral).join(', ')})`,
+  // A chapter that may stand on pages with no text layer (a picture, drawn letters) between two
+  // that were read is not missing, only unread.
+  const unread = noTextPages(ctx.doc)
+  const hidden = unread.size > 0 && ctx.doc.kind === 'pdf'
+  if (nums.some((x, k) => x !== k + 1)) {
+    if (hidden && nums.every((x, k) => k === 0 || x > nums[k - 1])) {
+      if (!unsure.length)
+        unsure.push(`the chapters (some pages have no text layer, so a chapter may be among them)`)
+    } else
+      issues.push(
+        `Chapter numbers should run I, II, III… in order (found ${chapters.map((c) => c.numeral).join(', ')})`,
+      )
+  }
+  if (!issues.length && soft.length)
+    return review(
+      id,
+      'The sections are numbered “I.”, “II.”… with no “Chapter” label. The thesis template labels each chapter (“Chapter I”, with its title on the next line); check with your program whether a special problem does too.',
+      { details: soft.slice(0, 8), where: wrong.slice(0, 5).flatMap(at) },
+    )
+  if (!issues.length && unsure.length)
+    return review(
+      id,
+      `Check that ${list(unsure)} ${unsure.length > 1 ? 'are' : 'is'} bold, Arial 12 pt: the fonts of this PDF are not named in it, so they could not be read.`,
+      { where: unsure.length ? [{ page: paras[chapters[0].heading].page }] : undefined },
     )
   if (!issues.length)
     return ctx.doc.kind === 'doc'
@@ -186,6 +225,9 @@ function title(ctx: Ctx): Finding {
   const paras = ctx.doc.paras
   const issues: string[] = []
   const where: ReturnType<typeof at> = []
+  const unsure: string[] = []
+  const soft: string[] = []
+  const special = numberedSections(ctx)
   for (const c of chapters) {
     const name = chapterName(c)
     if (c.unlabelled && !c.inlineTitle) {
@@ -196,10 +238,11 @@ function title(ctx: Ctx): Finding {
       if (!isUpper(t)) issues.push(`${name}: write the title in upper case`)
       for (const x of typeface(p, `${name} title`)) issues.push(x)
       if (issues.length > before) where.push(...at(p))
+      if (faceUnknown(p)) unsure.push(name)
       continue
     }
     if (c.inlineTitle) {
-      issues.push(
+      ;(special && c.unlabelled ? soft : issues).push(
         `${name}: enter the chapter title (“${quote(c.inlineTitle, 40)}”) into the next line, below the chapter number`,
       )
       where.push(...at(paras[c.heading]))
@@ -222,7 +265,19 @@ function title(ctx: Ctx): Finding {
       )
     for (const x of typeface(p, `${name} title`)) issues.push(x)
     if (issues.length > before) where.push(...at(p))
+    if (faceUnknown(p)) unsure.push(name)
   }
+  if (!issues.length && soft.length)
+    return review(
+      id,
+      'The sections are numbered “I.”, “II.”… with the title on the same line. The thesis template puts the title on its own line below the “Chapter I” label; check with your program whether a special problem does too.',
+      { details: soft.slice(0, 8), where: where.slice(0, 5) },
+    )
+  if (!issues.length && unsure.length)
+    return review(
+      id,
+      `Check that the titles of ${list(unsure)} are bold, Arial 12 pt: the fonts of this PDF are not named in it, so they could not be read.`,
+    )
   if (!issues.length)
     return ctx.doc.kind === 'doc'
       ? review(
@@ -295,6 +350,10 @@ const headingLike = (p: Para) => {
     /\p{L}.*\p{L}/u.test(t) &&
     t.length <= 100 &&
     !/[.:;,]$/.test(t) &&
+    // A heading opens with a capital or a number: a line starting with a small letter ends a
+    // sentence (the last line of a quotation); a form's blank or placeholder is no heading.
+    !/^\p{Ll}/u.test(t) &&
+    !/_{3,}|\[[^\]]*\]/.test(t) &&
     (p.lines?.length ?? 1) <= 2 &&
     !p.inTable &&
     !p.text.includes('\t')
@@ -361,13 +420,22 @@ function hanging(ctx: Ctx): Finding {
     doc.paras.filter((q) => !headingLike(q)).flatMap((q) => (q.lines ?? []).map((l) => l.page)),
   )
   const row = (q?: Para) => !!q && (!!q.inTable || q.text.includes('\t'))
+  const bodySize = textSize(paras)
   for (const p of paras) {
     const lines = p.lines ?? []
     const next = doc.paras[p.i + 1]
     const pg = doc.pages?.[p.page ?? -1]
     const end = lines.at(-1)
-    if (!pg || !end) continue
-    const caption = CAPTION.test(norm(p.text))
+    // Text set smaller than the running text (the labels of a chart, a note) is no heading.
+    if (!pg || !end || lines[0].size < bodySize - 1) continue
+    // A caption's second line (the first says "Figure 4.", the next gives the title).
+    const before = doc.paras[p.i - 1]
+    const continued =
+      !!before?.lines &&
+      before.page === p.page &&
+      CAPTION.test(norm(before.text)) &&
+      lines[0].y - before.lines.at(-1)!.y <= 1.8 * lines[0].size
+    const caption = CAPTION.test(norm(p.text)) || continued
     // A one-line label in italics: a term defined below it, or one of APA's lower headings (not a
     // quoted line, nor one closing with its source "[S1.1]").
     const t = norm(p.text)
@@ -377,6 +445,7 @@ function hanging(ctx: Ctx): Finding {
       t.length <= 60 &&
       /\p{L}.*\p{L}/u.test(t) &&
       !/^["“‘'[(]/.test(t) &&
+      !/^\p{Ll}/u.test(t) &&
       !/[.:;,!?"”’'\]]$/.test(t) &&
       p.runs.filter((r) => r.text.trim()).every((r) => r.italic)
     // Pictures in the text area (not a logo in the header or footer), above or below the heading.
@@ -451,7 +520,13 @@ function hanging(ctx: Ctx): Finding {
     // alone on a page.
     const x0 = lines[0].x0
     const item = (q?: Para): q is Para =>
-      !!q && q.lines?.length === 1 && isList(q) && !bolded(q) && Math.abs(q.lines[0].x0 - x0) <= 3
+      !!q &&
+      q.lines?.length === 1 &&
+      isList(q) &&
+      !bolded(q) &&
+      // (two bullets on a line: the cells of a table)
+      !/[•●▪◦].*[•●▪◦]/.test(q.text) &&
+      Math.abs(q.lines[0].x0 - x0) <= 3
     // The last thing on its page (no picture under it), the list going on at the next page.
     if (item(p) && item(next) && next.page === pg.n + 1 && !pics.some((b) => b.y0 >= end.y - 2)) {
       // Items set further in (sub-items) belong to the same list.
@@ -471,7 +546,9 @@ function hanging(ctx: Ctx): Finding {
       }
       const one =
         count(next.i, 1, pg.n + 1) === 1 ? next : count(p.i, -1, pg.n) === 1 ? p : undefined
-      if (one) {
+      // A sentence that goes on under the item (the options of a question, then the rest of it).
+      const resumes = one === next && /^\p{Ll}/u.test(norm(doc.paras[next.i + 1]?.text ?? ''))
+      if (one && !resumes) {
         details.push(
           `${place(one.page!, one)}: the list item “${quote(one.text, 35)}” ${one === next ? 'stands alone at the top of the page' : 'is left alone at the bottom of the page'}`,
         )
@@ -535,6 +612,13 @@ export function bodyNumbers(
     if (problems.some((p) => p.type === 'value'))
       details.push(
         'Chapter I’s first page is page 1 (though not shown), so the page after it is page 2.',
+      )
+    // Only pages with no text layer left: nothing there could be read.
+    if (problems.every((p) => p.type === 'unread'))
+      return review(
+        id,
+        `${pagesText(problems.map((p) => p.page!))} have no text layer (a picture or drawn letters), so their page numbers could not be read. Check them yourself.`,
+        { where: [{ page: problems[0].page }] },
       )
     return fix(id, msg, { details, where: [{ page: problems[0].page }] })
   }

@@ -52,10 +52,20 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
           : at > edge + 12
             ? false
             : undefined
+    // A line at an entry's first-line edge that is neither a name nor a work with its year, after
+    // an entry that is not finished (no closing full stop, page or link), goes on with it: the
+    // writer's second line stands at the margin too.
+    const goesOn =
+      placed === true &&
+      !startsEntry(t) &&
+      !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t) &&
+      !!out.length &&
+      unfinished(out.at(-1)!.text)
     const opens =
       !out.length ||
       (placed !== false && PARTICLE.test(t)) ||
-      (!/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
+      (!goesOn &&
+        !/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
         (placed ?? (startsEntry(t) || /^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t))))
     if (opens) out.push({ paras: [p], text: t })
     else {
@@ -65,6 +75,11 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
   }
   return { list: out, groups }
 }
+
+/** An entry's text that stops where a reference does not: on a word, a comma or an ampersand, not
+ *  on a full stop, a closing bracket, a page or year, or a link. */
+const unfinished = (t: string) =>
+  /[\p{L},&:;–-]\d?$/u.test(t) && !/(https?:\/\/|www\.|doi)\S*$/i.test(t)
 
 /** A year in parentheses soon after the authors, not after other numbers (a journal's volume and
  *  pages on a wrapped line, with the next entry beginning further on). */
@@ -331,11 +346,21 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     issues.push('Replace the sample references from the template with your own.')
     statuses.push('fix')
   }
+  // An entry of two lines or more; in a PDF, also one whose second line is a paragraph of its own
+  // set no further in than the first (no hanging indent).
   const multi = refs
+    .filter((e) => {
+      const p = e.paras[0]
+      if (ctx.doc.kind !== 'pdf') return norm(p.text).length > 100
+      return (
+        (p.lines?.length ?? 0) >= 2 ||
+        (e.paras.length > 1 &&
+          e.paras
+            .slice(1)
+            .every((q) => (q.lines?.[0]?.x0 ?? Infinity) <= (p.lines?.[0]?.x0 ?? 0) + 3))
+      )
+    })
     .map((e) => e.paras[0])
-    .filter((p) =>
-      ctx.doc.kind === 'pdf' ? (p.lines?.length ?? 0) >= 2 : norm(p.text).length > 100,
-    )
   const hanging = multi.filter((p) => (p.indent?.firstLine ?? 0) <= -18)
   if (ctx.doc.kind !== 'doc' && multi.length && hanging.length / multi.length < 0.8) {
     // Set in less than a quarter inch is a hanging indent too small, not none.
@@ -651,6 +676,13 @@ function labels(ctx: Ctx): Finding {
   const issues: string[] = []
   const statuses: Finding['status'][] = []
   const marks = aps.map((a) => a.mark ?? '')
+  const words = new Set(aps.map((a) => (/^annex/i.test(a.label) ? 'Annex' : 'Appendix')))
+  if (words.size > 1) {
+    issues.push(
+      `Label every appendix alike, “Appendix A”, “Appendix B”…, not “Annex” for some: ${list(aps.slice(0, 6).map((a) => a.label))}.`,
+    )
+    statuses.push('fix')
+  }
   if (aps.length > 1 && marks.some((m) => !m)) {
     issues.push('Give each appendix its letter (Appendix A, Appendix B…).')
     statuses.push('fix')
@@ -757,6 +789,8 @@ export function backRules(ctx: Ctx): Finding[] {
   const { s, doc } = ctx
   const { list: refs, groups } = entries(ctx)
   const apStart = s.appendicesHeading ?? s.appendices[0]?.start
+  // Appendices may come before the references: each part then runs to the other's start.
+  const first = s.references && apStart !== undefined && apStart < s.references.start
   return [
     order(ctx, refs),
     apa(ctx, refs, groups),
@@ -765,7 +799,7 @@ export function backRules(ctx: Ctx): Finding[] {
           ctx,
           'references.pageNumbers',
           s.references.start,
-          apStart ?? doc.paras.length,
+          apStart !== undefined && !first ? apStart : doc.paras.length,
           'reference pages',
         )
       : fix(
@@ -775,6 +809,12 @@ export function backRules(ctx: Ctx): Finding[] {
     labels(ctx),
     apStart === undefined
       ? na('appendices.pageNumbers', 'No appendices found.')
-      : bodyNumbers(ctx, 'appendices.pageNumbers', apStart, doc.paras.length, 'appendix pages'),
+      : bodyNumbers(
+          ctx,
+          'appendices.pageNumbers',
+          apStart,
+          first ? s.references!.start : doc.paras.length,
+          'appendix pages',
+        ),
   ]
 }

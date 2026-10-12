@@ -365,6 +365,171 @@ describe('check', () => {
     expect(finding(back, 'appendices.labels').status).toBe('fix')
   })
 
+  it('reads a bare “Adviser:”, a Faculty-in-Charge and the older permission wording', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const page = (label: string, signature: string, program: string) =>
+      check(
+        'project.docx',
+        docx(
+          ...[
+            'UNIVERSITY OF THE PHILIPPINES',
+            'OPEN UNIVERSITY',
+            program,
+            'Juan A. Cruz',
+            'A Study of Community Radio',
+            label,
+            'MARIA B. SANTOS, Ph.D.',
+            'Faculty of Management and Development Studies',
+            '12 May 2026',
+            'Permission is given for the following people to have access to this academic work:',
+            'Invention (I) Yes or No',
+            'Publication (P) Yes or No',
+            'Confidential (C) Yes or No',
+            'Free (F) Yes or No',
+            "Student's signature:",
+            signature,
+          ].map((t) => para(t, c)),
+          para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+          para('INTRODUCTION', c),
+        ),
+        opts,
+      )
+    for (const label of ['Adviser:', 'Special Problem Faculty-in-Charge:']) {
+      const r = await page(label, "Adviser's signature:", 'MASTER OF EDUCATION')
+      expect(finding(r, 'title.adviser').message).not.toMatch(/write your/i)
+      expect(finding(r, 'title.sequence')).toMatchObject({ status: 'ok' })
+    }
+    // A label without its apostrophe: the template's wording, for the student to weigh outside
+    // the MDC, to correct in it.
+    const bare = await page('Adviser:', 'Adviser signature:', 'MASTER OF EDUCATION')
+    expect(finding(bare, 'title.sequence')).toMatchObject({ status: 'review' })
+    const mdc = await page('Adviser:', 'Adviser signature:', 'MASTER OF DEVELOPMENT COMMUNICATION')
+    expect(finding(mdc, 'title.sequence')).toMatchObject({ status: 'fix' })
+  })
+
+  it('takes Ms., Mr. and Asst. Professor as titles, ignores “(candidate)” and a title’s closing quote ends it', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'thesis.docx',
+      docx(
+        ...[
+          'UNIVERSITY OF THE PHILIPPINES',
+          'OPEN UNIVERSITY',
+          'MASTER OF EDUCATION',
+          'Juan A. Cruz',
+          'A STUDY OF RADIO',
+          'Thesis Adviser:',
+          'Ms. Maria B. Santos',
+        ].map((t) => para(t, c)),
+        para('Acceptance Page', `<w:pageBreakBefore/>${c}`),
+        para(
+          'The graduate thesis attached hereto, entitled “A study of radio,” prepared and submitted by Juan A. Cruz, in partial fulfilment of the requirements for the degree, is hereby accepted.',
+        ),
+        para('Ms. Maria B. Santos'),
+        para('Adviser'),
+        para('ASST. PROFESSOR Ana D. Lim'),
+        para('Member'),
+        para('Mr. Jose C. Reyes (candidate)'),
+        para('Member'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'acceptance.title')).toMatchObject({ status: 'ok' })
+    expect(finding(r, 'acceptance.convention').message).toMatch(/All names use titles/)
+  })
+
+  it('does not take a lettered section for a chapter, nor a special problem’s sections for an error', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const text =
+      'The study looks at how community radio stations prepare their listeners for typhoons and floods.'
+    const body = [
+      para('Abstract', `<w:pageBreakBefore/>${c}`),
+      para('Keywords: community radio'),
+      para('I. INTRODUCTION', `<w:pageBreakBefore/>${c}`),
+      para(text),
+      para('C. REVIEW OF LITERATURE', `<w:pageBreakBefore/>${c}`),
+      para(text),
+      para('II. METHODOLOGY', `<w:pageBreakBefore/>${c}`),
+      para(text),
+    ]
+    const title = (label: string) =>
+      [
+        'UNIVERSITY OF THE PHILIPPINES',
+        'OPEN UNIVERSITY',
+        'MASTER OF EDUCATION',
+        'Juan A. Cruz',
+        'A STUDY OF RADIO',
+        label,
+        'MARIA B. SANTOS, Ph.D.',
+      ].map((t) => para(t, c))
+    const thesisPaper = await check('x.docx', docx(...title('Thesis Adviser:'), ...body), opts)
+    const number = finding(thesisPaper, 'chapterStart.number')
+    expect(number.status).toBe('fix')
+    expect(number.details?.join(' ')).not.toMatch(/“C\./)
+    expect(number.details?.join(' ')).toMatch(/“II\. METHODOLOGY”.*Chapter II/)
+    const special = await check(
+      'x.docx',
+      docx(...title('Special Problem Faculty-in-Charge:'), ...body),
+      opts,
+    )
+    expect(finding(special, 'chapterStart.number').status).toBe('review')
+    expect(finding(special, 'chapterStart.title').status).toBe('review')
+  })
+
+  it('numbers figures by chapter (2.1, 2.2, then 3), takes “Chart S1:” and finds Annex among Appendix', async () => {
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('Figure 1. First'),
+        para('Figure 2.1. Second'),
+        para('Figure 2.2. Third'),
+        para('Figure 3. Fourth'),
+        para('Chart S1: Fifth'),
+        para('Table 3 .1 Sixth'),
+        para('APPENDICES', '<w:jc w:val="center"/>'),
+        para('ANNEX A', '<w:pageBreakBefore/><w:jc w:val="center"/>'),
+        para('Survey Form', '<w:jc w:val="center"/>'),
+        para('APPENDIX B', '<w:pageBreakBefore/><w:jc w:val="center"/>'),
+        para('Interview Guide', '<w:jc w:val="center"/>'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'figures.apa').details?.join(' ') ?? '').not.toMatch(/in order/)
+    const labels = finding(r, 'appendices.labels')
+    expect(labels.status).toBe('fix')
+    expect(labels.details?.join(' ') + labels.message).toMatch(/Annex/)
+    const jumbled = await check(
+      'thesis.docx',
+      thesis(para('Figure 1. First'), para('Figure 3. Second'), para('Figure 4. Third')),
+      opts,
+    )
+    expect(finding(jumbled, 'figures.apa').details?.join(' ')).toMatch(/not numbered in order/)
+  })
+
+  it('leaves a missing biographical sketch and dedication to the student outside the MDC', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const book = (program: string) =>
+      check(
+        'thesis.docx',
+        docx(
+          ...['UNIVERSITY OF THE PHILIPPINES', 'OPEN UNIVERSITY', program, 'Juan A. Cruz'].map(
+            (t) => para(t, c),
+          ),
+          para('Acknowledgment', `<w:pageBreakBefore/>${c}`),
+          para('Table of Contents', `<w:pageBreakBefore/>${c}`),
+          para('Abstract', `<w:pageBreakBefore/>${c}`),
+          para('Keywords: community radio'),
+          para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+          para('INTRODUCTION', c),
+        ),
+        opts,
+      )
+    expect(finding(await book('MASTER OF EDUCATION'), 'prelims.present').status).toBe('review')
+    expect(
+      finding(await book('MASTER OF DEVELOPMENT COMMUNICATION'), 'prelims.present').status,
+    ).toBe('fix')
+  })
+
   it('stays fast on long runs of spaces and tabs', async () => {
     // These once made two patterns backtrack for minutes, freezing the page.
     const t0 = performance.now()

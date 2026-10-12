@@ -65,13 +65,14 @@ const PRELIMS: [PrelimKey, RegExp][] = [
   ['toc', /^(table of contents?|contents)$/i],
   ['tables', /^list of tables( and (figures|illustrations))?$/i],
   ['figures', /^list of (figures|illustrations)$|^list of tables and (figures|illustrations)$/i],
-  ['abstract', /^abstract$/i],
+  ['abstract', /^(research |executive )?abstract$/i],
 ]
 
-const LIST_HEADING = /^list of (tables|figures|illustrations)( and (figures|illustrations))?$/i
+export const LIST_HEADING =
+  /^list of (tables|figures|illustrations)( and (figures|illustrations))?$/i
 
 /** A table of contents line: a title, then a page number after a tab, dot leaders or spaces. */
-const TOC_ENTRY = /(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+)\s*$/i
+const TOC_ENTRY = /(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+(\s*[-–]\s*\d+)?)\s*$/i
 /** A table-of-contents line: text, then a leader or gap, then a page number at the end. Only the
  *  tail is tested: the pattern is anchored there, and a long run of spaces would otherwise make it
  *  backtrack for minutes. */
@@ -122,10 +123,21 @@ export function nextText(paras: Para[], i: number, end = paras.length): number |
 /** The title page's first line (anchored: the permission page grants rights to the university). */
 const UP = /^university of the philippines\b/i
 
+/** The title page's first line: the university's name, with no more than a short heading above
+ *  it on its page (a cover page may set the name down the page, under the title). */
+const isTitleHead = (doc: Doc, p: Para) => {
+  if (!UP.test(norm(p.text))) return false
+  if (p.page === undefined) return true
+  let words = 0
+  for (let k = p.i - 1; k >= 0 && doc.paras[k].page === p.page; k--)
+    words += norm(doc.paras[k].text).split(' ').filter(Boolean).length
+  return words <= 6
+}
+
 /** The title page's 0-based page (PDF): the page whose text opens with the university's name, or
  *  the first text after a cover page; else page 0 (a title page scanned as a picture). */
 export const titlePage = (doc: Doc, s: Structure) => {
-  const head = doc.paras.slice(s.title.start, s.title.end).find((p) => UP.test(norm(p.text)))
+  const head = doc.paras.slice(s.title.start, s.title.end).find((p) => isTitleHead(doc, p))
   return (head ?? (s.title.start > 0 ? doc.paras[s.title.start] : undefined))?.page ?? 0
 }
 
@@ -145,10 +157,16 @@ export function findStructure(doc: Doc): Structure {
     appendices: [],
   }
 
+  const lists = listPages(doc)
   for (const p of paras) {
     const t = headingText(p)
+    // Entries of the contents and the lists (a chapter's, the references', an appendix's) are
+    // lines of a list, not headings.
+    const entry = p.page !== undefined && lists.has(p.page)
     // The lists of tables and figures may stand on the contents page in plain capitals.
-    const plainList = LIST_HEADING.test(t) && isUpper(t) && !p.inTable && !isTocLine(p.text)
+    // (a list's heading may stand in the middle of a page, in plain type)
+    const plainList =
+      LIST_HEADING.test(t) && norm(p.text).length < 45 && !p.inTable && !isTocLine(p.text)
     if (!isHeadingish(p) && !plainList) continue
     if (!s.permission && /^(university )?permission page$/i.test(t)) {
       s.permission = { heading: p.i, start: p.i, end: paras.length }
@@ -163,7 +181,7 @@ export function findStructure(doc: Doc): Structure {
       for (const key of keys) s.prelims.push({ key, heading: p.i, start: p.i, end: paras.length })
       continue
     }
-    const ch = CHAPTER.exec(t)
+    const ch = entry ? null : CHAPTER.exec(t)
     // A contents line that wrapped ends in its page number; a real chapter label is bold, centred
     // or styled as a heading, or at least short and opening a page.
     const styled = bolded(p) || p.align === 'center' || /heading|title/i.test(p.style ?? '')
@@ -182,13 +200,15 @@ export function findStructure(doc: Doc): Structure {
       })
       continue
     }
+    if (entry) continue
     if (!s.references && (s.chapters.length || s.prelims.length)) {
       if (/^(references?|reference list|bibliography|literature cited|works cited)$/i.test(t)) {
         s.references = { heading: p.i, start: p.i, end: paras.length }
         continue
       }
     }
-    if (s.chapters.length || s.references) {
+    // (appendices may stand before the references, so the front matter having been read is enough)
+    if (s.chapters.length || s.references || s.prelims.length) {
       if (/^(appendices|appendixes|annexes)$/i.test(t)) {
         s.appendicesHeading ??= p.i
         continue
@@ -248,7 +268,7 @@ export function findStructure(doc: Doc): Structure {
     s.title.end = next > 0 ? next : paras.length
   }
   // A cover page before the title page is not part of it: the title page opens with the university.
-  const up = paras.findIndex((p) => p.i < s.title.end && UP.test(norm(p.text)))
+  const up = paras.findIndex((p) => p.i < s.title.end && isTitleHead(doc, p))
   if (up > 0) s.title.start = pageStart(doc, up)
 
   for (const ch of s.chapters) {
@@ -268,6 +288,27 @@ export function findStructure(doc: Doc): Structure {
       ch.titlePara = k
   }
   return s
+}
+
+/** PDF pages of the contents and of the lists of tables and figures: from the page of such a
+ *  heading, the pages that go on with entries (a title, then a page number). */
+function listPages(doc: Doc): Set<number> {
+  const entries = new Map<number, number>()
+  for (const p of doc.paras)
+    if (p.page !== undefined && isTocLine(p.text))
+      entries.set(p.page, (entries.get(p.page) ?? 0) + 1)
+  const out = new Set<number>()
+  for (const p of doc.paras) {
+    const t = headingText(p)
+    const list = PRELIMS.some(
+      ([k, re]) => (k === 'toc' || k === 'tables' || k === 'figures') && re.test(t),
+    )
+    if (p.page === undefined || !(list || LIST_HEADING.test(t)) || !(isHeadingish(p) || isUpper(t)))
+      continue
+    out.add(p.page)
+    for (let pg = p.page; (entries.get(pg) ?? 0) >= 3; pg++) out.add(pg)
+  }
+  return out
 }
 
 /** Chapters headed by their title alone, after the front matter and before the first labelled
@@ -298,7 +339,8 @@ function findUnlabelled(doc: Doc, s: Structure) {
     // A title in capitals, as the template sets chapter titles (a subheading in title case is
     // not one), after its numeral in sequence or opening a page.
     const given = m ? (/^\d+$/.test(m[1]) ? +m[1] : fromRoman(m[1])) : undefined
-    const number = given ?? found.length + 1
+    // A numeral must be the next in sequence ("C." heads a lettered section, not chapter 100).
+    const number = found.length + 1
     const named = CHAPTER_TITLE.test(title.toLowerCase())
     if (!isUpper(title) || !(m ? given === number && (opens || named) : opens && named)) continue
     // Contents entries have the next entries after them, not text.

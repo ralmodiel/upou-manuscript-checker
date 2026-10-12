@@ -3,7 +3,7 @@ import type { Para } from '../model.ts'
 import { fix, ok, review, type Ctx, type Finding } from '../report.ts'
 import { nextText } from '../structure.ts'
 import { list, norm, quote } from '../text.ts'
-import { pagesText } from './numbering.ts'
+import { noTextPages, pagesText } from './numbering.ts'
 
 // Template text no other check reports.
 const PLACEHOLDERS: [RegExp, string][] = [
@@ -11,8 +11,11 @@ const PLACEHOLDERS: [RegExp, string][] = [
   [/insert figure here/i, '“--- INSERT FIGURE HERE ---”'],
   [/^author'?s name$/i, '“AUTHOR’S NAME”'],
   [/^(column \d+\s*)+$/i, 'the sample table (“Column 1”, “Content”)'],
-  // The course's name left as the word "Course".
-  [/for the degree,?\s*course\.?$/i, '“Course” in place of the degree on the Acceptance Page'],
+  // The degree's name left as the word "Course" (or "Program").
+  [
+    /for the degree,?\s*(course|program)\.?$/i,
+    '“Course” or “Program” in place of the degree on the Acceptance Page',
+  ],
 ]
 // Capitals as the template has them; a table's heading or cell is not one.
 const LONE: [RegExp, string][] = [
@@ -74,8 +77,9 @@ function blankPages(ctx: Ctx): Finding {
   if (doc.kind === 'pdf') {
     // A page holding only the end of a paragraph begun on the page before is not blank.
     const inked = new Set(doc.paras.flatMap((p) => (p.lines ?? []).map((l) => l.page)))
+    const drawn = noTextPages(doc)
     const blank = (doc.pages ?? [])
-      .filter((pg) => !inked.has(pg.n) && !pg.images.length)
+      .filter((pg) => !inked.has(pg.n) && !pg.images.length && !drawn.has(pg.n))
       .map((pg) => pg.n)
     if (!blank.length) return ok(id, 'No blank pages.')
     return fix(

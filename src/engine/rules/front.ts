@@ -60,11 +60,47 @@ export interface TitlePage {
   date?: Para
   permissionText?: Para
   rows: Para[]
+  /** The permission table is a picture (PDF): no row is text, so none could be read. */
+  tablePicture?: boolean
   studentSig?: Para
   adviserSig?: Para
   /** What the manuscript is ("Thesis", "Dissertation", "Special Problem"…): the words before
    *  "Adviser", else what the degree suggests. */
   work: string
+  /** The adviser's label as the page words it ("Thesis Adviser", "Adviser", "Special Problem
+   *  Faculty-in-Charge"), else what the template would say. */
+  role: string
+}
+
+/** A student number under the author's name ("MDE 2020-12345"). */
+const STUDENT_NUMBER = /^(?:[A-Z]{1,6}[ -]?)?\d{4}[- ]\d{3,6}$/
+/** A year line under the title ("ACADEMIC YEAR 2023-2024"). */
+const ACADEMIC_YEAR = /^academic year\b/i
+
+/** A PDF paragraph whose lines stand over 1.8 lines apart (a degree program, then the author's
+ *  name, set one under the other in a block) is several paragraphs. */
+function splitApart(paras: Para[]): Para[] {
+  return paras.flatMap((p) => {
+    const ls = p.lines
+    if (!ls || ls.length < 2) return [p]
+    const cuts = [0]
+    for (let k = 1; k < ls.length; k++)
+      if (ls[k].page === ls[k - 1].page && ls[k].y - ls[k - 1].y > 1.8 * ls[k].size) cuts.push(k)
+    if (cuts.length === 1) return [p]
+    cuts.push(ls.length)
+    return cuts.slice(0, -1).map((c, j) => {
+      const part = ls.slice(c, cuts[j + 1])
+      return {
+        ...p,
+        text: part.map((l) => l.text).join(' '),
+        runs: part.flatMap((l, k) => [
+          ...(k ? [{ text: ' ' }] : []),
+          ...l.runs.map((r) => ({ ...r })),
+        ]),
+        lines: part,
+      }
+    })
+  })
 }
 
 const TABLE_ROW = /^(invention|publication|confidential|free)\s*\(/i
@@ -73,11 +109,19 @@ const TABLE_ROW = /^(invention|publication|confidential|free)\s*\(/i
 // title page names it before "Adviser:" and gives the degree ("Master in …", "Diploma in …" too).
 const WORK =
   'thesis|dissertation|special problem|special project|capstone project|capstone|research paper|project paper|project'
-// Other programs name it otherwise ("Research Adviser:"): up to three words, then a colon.
+// A special problem's adviser is its "Faculty-in-Charge".
+const ROLE = 'advis[eo]r|faculty[- ]in[- ]charge'
+// Other programs name it otherwise ("Research Adviser:", or only "Adviser:"): up to two words
+// before it, then a colon.
 const ADVISER_LABEL = new RegExp(
-  `^(?:(?:${WORK}) advis[eo]r\\b|(?:[a-z]+ ){0,2}[a-z]+ advis[eo]r\\s*:)(?!'?s?\\s*signature)`,
+  `^(?:(?:${WORK}) (?:${ROLE})\\b|(?:[a-z]+[ -]){0,2}(?:${ROLE})\\s*:)(?!'?s?\\s*signature)`,
   'i',
 )
+// "Permission of the classification…", or the older template's "Permission is given for the
+// following people…".
+const PERMISSION_TEXT = /permission of the classification|permission is given for the following/i
+const SIGNATURE_OF = new RegExp(`(?:${ROLE})'?s?\\s+signature`, 'i')
+const SIGNATURE_BARE = new RegExp(`(?:${ROLE})\\s+signature`, 'i')
 const PROGRAM =
   /^(associate|bachelor|master|doctor) (of|in)\b|^(diploma|graduate certificate|professional teaching certificate|certificate) in\b/i
 // UPOU's three faculties.
@@ -119,16 +163,19 @@ export function readTitlePage(ctx: Ctx): TitlePage {
   const { start, end } = ctx.s.title
   const page = titlePage(ctx.doc, ctx.s)
   // A scanned title page has no text: what comes after it is not the title page.
-  const paras = scannedFront(ctx).includes(page) ? [] : textIn(ctx, start, end)
+  const paras = scannedFront(ctx).includes(page) ? [] : splitApart(textIn(ctx, start, end))
   const idx = (p?: Para) => (p ? paras.indexOf(p) : -1)
   const program =
     find(paras, PROGRAM) ?? find(paras, /(associate|bachelor|master|doctor) (of|in)|program/i)
   const adviserLabel = find(paras, ADVISER_LABEL)
   const work = workOf(adviserLabel, program)
   const faculty = paras.find((p, k) => k > idx(adviserLabel) && FACULTY.test(norm(p.text)))
-  const permissionText = find(paras, /permission of the classification/i)
+  const permissionText = find(paras, PERMISSION_TEXT)
+  // The major under the degree program, in parentheses on a line of its own, belongs to it.
+  let from = idx(program) + 1
+  while (paras[from] && /^\(.*\)$/.test(norm(paras[from].text))) from++
   // Between the program and "Thesis Adviser:": the author, then the title (one or more lines).
-  const between = paras.slice(idx(program) + 1, adviserLabel ? idx(adviserLabel) : idx(program) + 3)
+  const between = paras.slice(from, adviserLabel ? idx(adviserLabel) : from + 2)
   // Between the university's name and the program there is nothing; a short line there is the
   // author's name, put above the program (a heading such as "Title Page" stands above the university).
   const univ = Math.max(
@@ -142,11 +189,15 @@ export function readTitlePage(ctx: Ctx): TitlePage {
       ? paras.slice(univ + 1, idx(program)).find((p) => norm(p.text).split(' ').length <= 8)
       : undefined
   const author = authorAbove ?? between[0]
-  const title = authorAbove ? between : between.slice(1)
+  // The student number and the academic year are lines of the page, not of the title.
+  const title = (authorAbove ? between : between.slice(1)).filter(
+    (p) => !STUDENT_NUMBER.test(norm(p.text)) && !ACADEMIC_YEAR.test(norm(p.text)),
+  )
   // "Thesis Adviser:" with the name on the same line, or on the next.
   const inline =
     adviserLabel && norm(adviserLabel.text).replace(ADVISER_LABEL, '').replace(/^\s*:/, '').trim()
   const adviser = adviserLabel ? (inline ? adviserLabel : paras[idx(adviserLabel) + 1]) : undefined
+  const rows = paras.filter((p) => TABLE_ROW.test(norm(p.text)))
   const afterFaculty = faculty
     ? paras.slice(idx(faculty) + 1, permissionText ? idx(permissionText) : idx(faculty) + 3)
     : []
@@ -167,10 +218,18 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     faculty,
     date: date && date !== permissionText ? date : undefined,
     permissionText,
-    rows: paras.filter((p) => TABLE_ROW.test(norm(p.text))),
+    rows,
+    tablePicture:
+      rows.length < 4 &&
+      !!ctx.doc.pages?.[page]?.images.some(
+        (b) => b.x1 - b.x0 >= 0.5 * ctx.doc.pages![page].width && b.y1 - b.y0 >= 40,
+      ),
     studentSig: find(paras, /^student'?s?\s+signature/i),
-    adviserSig: find(paras, /adviser'?s?\s+signature/i),
+    adviserSig: find(paras, SIGNATURE_OF),
     work,
+    role: adviserLabel
+      ? (ADVISER_LABEL.exec(norm(adviserLabel.text))?.[0] ?? '').replace(/\s*:$/, '')
+      : `${work} Adviser`,
   }
 }
 
@@ -195,16 +254,26 @@ function cleanName(s: string) {
 /** A name without titles and degrees, for comparing spellings. */
 const bareName = (s: string) =>
   cleanName(s)
-    .replace(/^((dr|asst|assoc|prof|engr|atty|mr|ms|mrs)\.?\s+)+/i, '')
+    .replace(/^_+/, '')
+    .replace(
+      /^((dr|(asst|assistant|assoc|associate)\.?\s*prof(essor)?|prof(essor)?|engr|atty|mr|ms|mrs|hon)\.?\s+)+/i,
+      '',
+    )
     .replace(SUFFIX_ANY, '')
     .replace(/,\s*$/, '')
     .toUpperCase()
+/** The words of a name that carry its spelling: no initials, "Jr." or punctuation. */
+const spelling = (s: string) =>
+  bareName(s)
+    .split(/[\s,.]+/)
+    .filter((w) => w.length > 1 && !/^(JR|SR)$/.test(w))
+    .join(' ')
 
 // ---- Pictures and marks near a label ----
 
 /** What signature-like sits around a label line on a PDF page: a mark (a picture, ink, a stamp,
  *  a drawn signature) or only a signature field, which may be signed or empty. */
-function pdfMarkNear(ctx: Ctx, label: Para): 'mark' | 'field' | undefined {
+function pdfMarkNear(ctx: Ctx, label: Para, floor?: number): 'mark' | 'field' | undefined {
   const page = ctx.doc.pages?.[label.page ?? -1]
   const line = label.lines?.[0]
   if (!page || !line) return undefined
@@ -214,12 +283,28 @@ function pdfMarkNear(ctx: Ctx, label: Para): 'mark' | 'field' | undefined {
     y0: line.y - 4 * line.size,
     y1: line.y + 2.5 * line.size,
   }
-  const inside = (b: Box) => b.x1 > zone.x0 && b.x0 < zone.x1 && b.y1 > zone.y0 && b.y0 < zone.y1
-  // A signature is wider than a letter and taller than a rule: tick boxes drawn as pictures are not.
-  const big = (b: Box) => b.x1 - b.x0 >= 2 * line.size && b.y1 - b.y0 >= 0.5 * line.size
+  // The permission table's rows (and the ticks drawn on them) are above the signature: nothing
+  // centred at or above the last row is the signature.
+  const below = (b: Box) => floor === undefined || (b.y0 + b.y1) / 2 > floor + 3
+  const inside = (b: Box) =>
+    b.x1 > zone.x0 && b.x0 < zone.x1 && b.y1 > zone.y0 && b.y0 < zone.y1 && below(b)
+  // A signature is wider than a letter and taller than a rule: tick boxes drawn as pictures are
+  // not. Nor is a picture of the permission table (most of the page across).
+  const wide = (b: Box) => b.x1 - b.x0 >= 2 * line.size
+  const big = (b: Box) =>
+    wide(b) && b.y1 - b.y0 >= 0.5 * line.size && b.x1 - b.x0 < 0.6 * page.width
   if (page.images.some((b) => inside(b) && big(b))) return 'mark'
   const near = page.marks.filter(inside)
-  if (near.some((m) => (m.kind === 'path' ? (m.count ?? 0) > 120 : !/^Widget:/.test(m.kind))))
+  // Ink, stamps and text boxes count; so do drawn strokes as large as a signature: neither a rule
+  // nor a white box laid over a signature taken out, nor a frame across the page. A line
+  // annotation is a tick or an arrow, a popup the note of another annotation.
+  const scrawl = (m: (typeof near)[number]) =>
+    wide(m) &&
+    m.x1 - m.x0 < 0.6 * page.width &&
+    m.y1 - m.y0 >= 1.5 * line.size &&
+    m.y1 - m.y0 < 10 * line.size &&
+    m.fill !== '#ffffff'
+  if (near.some((m) => (m.kind === 'path' ? scrawl(m) : !/^Widget:|^Line$|^Popup$/.test(m.kind))))
     return 'mark'
   // pdf.js does not tell a signed signature field from an empty one.
   return near.some((m) => m.kind === 'Widget:Sig') ? 'field' : undefined
@@ -292,28 +377,36 @@ async function seal(ctx: Ctx, tp: TitlePage): Promise<{ finding: Finding; emblem
 }
 
 /** The title page's parts in the template's order, named as the manuscript has them. */
-const anchors = (work: TitlePage['work']): [string, RegExp][] => [
+const anchors = (role: TitlePage['role']): [string, RegExp][] => [
   ['UNIVERSITY OF THE PHILIPPINES', /university of the philippines/i],
   ['OPEN UNIVERSITY', /open university/i],
   ['the degree program (BACHELOR OF …, MASTER OF …, DOCTOR OF …)', PROGRAM],
-  [`${work} Adviser:`, ADVISER_LABEL],
+  [`${role}:`, ADVISER_LABEL],
   ['the Faculty (Faculty of …)', FACULTY],
-  ['Permission of the classification…', /permission of the classification/i],
+  ['Permission of the classification…', PERMISSION_TEXT],
   ['the permission codes (Invention, Publication, Confidential, Free)', /^invention\s*\(/i],
   ["Student's Signature:", /student'?s?\s+signature/i],
-  [`${work} Adviser's Signature:`, /adviser'?s?\s+signature/i],
+  [`${role}'s Signature:`, SIGNATURE_OF],
 ]
 
 function sequence(tp: TitlePage, emblem: boolean): Finding {
   const id = 'title.sequence'
-  const found = anchors(tp.work).map(([name, re]) => ({
+  const found = anchors(tp.role).map(([name, re]) => ({
     name,
     k: tp.paras.findIndex((p) => re.test(norm(p.text))),
   }))
   // The university's name may be part of the emblem picture: not text, so not missing, but said.
   const named = (n: string) => /^(UNIVERSITY OF THE PHILIPPINES|OPEN UNIVERSITY)$/.test(n)
   const inPicture = emblem ? found.filter((a) => a.k < 0 && named(a.name)) : []
-  const missing = found.filter((a) => a.k < 0 && !inPicture.includes(a)).map((a) => a.name)
+  // The permission table as a picture: its rows are not text, but not missing.
+  const missing = found
+    .filter(
+      (a) =>
+        a.k < 0 &&
+        !inPicture.includes(a) &&
+        !(tp.tablePicture && /^the permission codes/.test(a.name)),
+    )
+    .map((a) => a.name)
   const issues: string[] = []
   // The lines the issues are about, for the places.
   const lines: Para[] = []
@@ -351,23 +444,35 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
       lines.push(tp.author)
     }
   }
+  // A signature label without its apostrophe: the template's wording, which other programs'
+  // title pages do not always follow, so outside the MDC it is for the student to look at.
+  const soft: string[] = []
   for (const [re, right] of [
     [/^student\s+signature/i, "Student's Signature"],
-    [/adviser\s+signature/i, "Adviser's Signature"],
+    [SIGNATURE_BARE, ''],
   ] as const) {
     const p = tp.paras.find((x) => re.test(norm(x.text)))
     if (p) {
-      // As the file names the work: "Thesis", "Dissertation", "Special Problem" Adviser.
+      // As the file words the label: "Thesis", "Dissertation", "Special Problem" Adviser, or only "Adviser".
       const label = norm(p.text).replace(/\s*:$/, '')
-      const work = new RegExp(`^(${WORK})\\b`, 'i').exec(label)?.[1] ?? tp.work
-      const want = right.startsWith('Adviser') ? `${titleCase(work)} ${right}` : right
-      issues.push(
-        `Add an apostrophe and s to the signature label: “${want}” (not “${quote(label, 40)}”)`,
-      )
+      const want = right || `${titleCase(label.replace(/\s+signature\s*$/i, ''))}'s Signature`
+      const note = `Add an apostrophe and s to the signature label: “${want}” (not “${quote(label, 40)}”)`
+      if (upperRule(tp)) issues.push(note)
+      else soft.push(note)
       lines.push(p)
     }
   }
+  if (!issues.length && soft.length)
+    return review(
+      id,
+      "Check the wording of the signature labels against your program's template.",
+      {
+        details: soft,
+        where: lines.slice(0, 5).flatMap(at),
+      },
+    )
   if (!issues.length) return ok(id, 'The title page follows the order of the template.')
+  issues.push(...soft)
   return fix(id, 'Follow the sequence of information in the template.', {
     details: issues,
     where: [
@@ -387,7 +492,7 @@ function titleUpper(tp: TitlePage): Finding {
   if (!t)
     return fix(
       id,
-      `Indicate the final ${tp.work.toLowerCase()} title between your name and “${tp.work} Adviser:”.`,
+      `Indicate the final ${tp.work.toLowerCase()} title between your name and “${tp.role}:”.`,
       {
         where: [{ page: tp.page }],
       },
@@ -439,19 +544,16 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
       : raw,
   )
   if (!name)
-    return fix(
-      id,
-      `Write your ${tp.work.toLowerCase()} adviser's name under “${tp.work} Adviser:”.`,
-      {
-        where: [{ page: tp.page }],
-      },
-    )
+    return fix(id, `Write your ${tp.work.toLowerCase()} adviser's name under “${tp.role}:”.`, {
+      where: [{ page: tp.page }],
+    })
   if (/^name$/i.test(name))
     return fix(id, `Replace “NAME” with your ${tp.work.toLowerCase()} adviser's name.`, {
       where: at(tp.adviser),
     })
-  const chair = committee[0] ? bareName(committee[0]) : ''
-  const mine = bareName(name)
+  // A difference of punctuation, an initial or a title is no misspelling.
+  const chair = committee[0] ? spelling(committee[0]) : ''
+  const mine = spelling(name)
   if (chair && chair !== mine && distance(chair, mine) <= 3)
     return fix(
       id,
@@ -497,7 +599,14 @@ function dateOf(p: Para | undefined, id: string, where: string): Finding {
 
 type Choice = 'yes' | 'no' | 'both' | 'none'
 // Ticks and crosses, including symbol-font ticks that PDFs extract as ü, þ or private-use letters.
-const MARK = /[✓✔✗✘☒☑■●√xX/üþýû-]/
+// The private-use range U+F000–U+F0FF (Wingdings, Wingdings 2) holds boxes too: the empty ones
+// are not marks.
+const MARK = /[✓✔✗✘☒☑■●√xX/üþýû-]/
+const EMPTY_BOXES = new Set([
+  0x2610, 0x25a1, 0xf06f, 0xf070, 0xf071, 0xf072, 0xf0a1, 0xf0a3, 0xf0a8, 0xf0ff,
+])
+const isSymbolMark = (code: number) => code >= 0xf000 && code <= 0xf0ff && !EMPTY_BOXES.has(code)
+const isMark = (s: string) => [...s].some((c) => MARK.test(c) || isSymbolMark(c.charCodeAt(0)))
 const pick = (sides: ('yes' | 'no')[]): Choice =>
   !sides.length ? 'none' : new Set(sides).size === 2 ? 'both' : sides[0]
 
@@ -512,6 +621,11 @@ function typedChoice(text: string): Choice {
   if (!yes || !no) return 'none'
   const divider = /\bor\b/i.exec(t)?.index ?? (yes.index + no.index) / 2
   const marks = [...t.matchAll(/[✓✔✗✘☒☑■●√]|(?<![a-z])[xX](?![a-z])/g)].map((m) => m.index)
+  // Symbol-font boxes drawn ticked (private-use letters).
+  for (let k = 0; k < t.length; k++) {
+    const code = t.charCodeAt(k)
+    if (isSymbolMark(code)) marks.push(k)
+  }
   return pick(marks.map((k) => (k < divider ? 'yes' : 'no')))
 }
 
@@ -527,8 +641,8 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     if (!cell) return 'none'
     const boxes = (cell.shapes ?? []).filter((s) => s.x !== undefined).sort((a, b) => a.x! - b.x!)
     const boxed = pick([
-      ...(boxes[0] && MARK.test(boxes[0].text) ? (['yes'] as const) : []),
-      ...(boxes[1] && MARK.test(boxes[1].text) ? (['no'] as const) : []),
+      ...(boxes[0] && isMark(boxes[0].text) ? (['yes'] as const) : []),
+      ...(boxes[1] && isMark(boxes[1].text) ? (['no'] as const) : []),
     ])
     if (boxed !== 'none') return boxed
     return typedChoice(cell.text)
@@ -540,15 +654,29 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   // One of the two words deleted, as in a Word file.
   const yes = /\byes\b/i.test(line.text)
   if (yes !== /\bno\b/i.test(line.text)) return yes ? 'yes' : 'no'
-  const or = line.spans.find((s) => /^or$/i.test(s.text))
+  // "or" may share its span with "No" ("or No"). With no "or", the Yes group ends before the next
+  // thing on the line: that is the No box when the boxes stand before the words ("☐ Yes ☐ No"), the
+  // Yes box when they stand after them ("Yes ☐ No ☐").
+  const or = line.spans.find((s) => /^or\b/i.test(s.text))
   const yesWord = line.spans.find((s) => /^yes$/i.test(s.text))
+  const noWord = line.spans.find((s) => /^no$/i.test(s.text))
+  const symbol = (s: { text: string }) => /^[^\p{L}\p{N}\s]$/u.test(s.text)
+  const divider = (() => {
+    if (or) return or.x0
+    if (!yesWord || !noWord) return undefined
+    const next = line.spans.filter((s) => s.x0 >= yesWord.x1 - 1 && s !== yesWord && s !== noWord)
+    const boxBefore = line.spans.some((s) => symbol(s) && s.x1 <= yesWord.x0 + 1)
+    const edge = boxBefore ? yesWord.x1 : (next.find(symbol)?.x1 ?? yesWord.x1)
+    const start = line.spans.find((s) => s.x0 >= edge + 1 && s !== yesWord)
+    return start ? (edge + start.x0) / 2 : (yesWord.x1 + noWord.x0) / 2
+  })()
   // The words in one span ("Yes or No") or a mark inside one ("X Yes"): read the line's text.
-  if (!or || !yesWord) return typedChoice(line.text)
+  if (divider === undefined || !yesWord) return typedChoice(line.text)
   // Same row: the mark's middle within half a line of the row's middle.
   const band = (b: Box) =>
     Math.abs((b.y0 + b.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size
   const from = yesWord.x0 - 4 * line.size
-  const side = (x: number) => (x < or.x0 ? 'yes' : 'no')
+  const side = (x: number) => (x < divider ? 'yes' : 'no')
   // Filled shapes on both sides are the boxes themselves; on one side only, they mark it: a box
   // filled in, a word highlighted (a filled shape, not white, wider than a rule, no wider than a word).
   const oneSide = (xs: number[]) => (new Set(xs.map(side)).size === 1 ? xs : [])
@@ -584,7 +712,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     )
     .map((m) => m.x0)
   const xs = [
-    ...page.glyphs.filter((g) => band(g) && g.x0 > from && MARK.test(g.text)).map((g) => g.x0),
+    ...page.glyphs.filter((g) => band(g) && g.x0 > from && isMark(g.text)).map((g) => g.x0),
     // Annotations and form fields, but not a checkbox left unticked.
     ...page.marks
       .filter((m) => band(m) && m.kind !== 'path' && m.on !== false && m.x0 > from)
@@ -598,6 +726,12 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
 
 function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'title.permission'
+  if (tp.rows.length < 4 && tp.tablePicture)
+    return review(
+      id,
+      'The permission table on the title page is a picture, so its marks could not be read here. Check that one code is marked “Yes” and the others “No”.',
+      { where: [{ page: tp.page }] },
+    )
   if (tp.rows.length < 4)
     return fix(
       id,
@@ -630,10 +764,17 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   return ok(id, `Permission code: ${yes[0].name} is “Yes”; the others are “No”.`)
 }
 
-function signature(ctx: Ctx, label: Para | undefined, id: string, page: string): Finding {
+function signature(
+  ctx: Ctx,
+  label: Para | undefined,
+  id: string,
+  page: string,
+  /** The permission table's last row (title page): the signature is below it. */
+  floor?: number,
+): Finding {
   if (!label) return fix(id, `Affix your signature on the ${page}.`)
   const found =
-    ctx.doc.kind === 'pdf' ? pdfMarkNear(ctx, label) : wordPictureNear(ctx, label) && 'mark'
+    ctx.doc.kind === 'pdf' ? pdfMarkNear(ctx, label, floor) : wordPictureNear(ctx, label) && 'mark'
   if (found === 'mark') return ok(id, `Signature found on the ${page}.`)
   if (found === 'field')
     return review(
@@ -861,6 +1002,11 @@ interface Names {
   dean?: { name: string; para: Para }
 }
 
+// A committee member's role under the name: "Adviser", "Program Chair", "Critic/ Reader, Member",
+// "Reader, Dissertation Committee" (a date may follow after a tab).
+const ROLE_LINE =
+  /^(?:(?:program|thesis|dissertation|research|panel|committee) )?(?:chair(?:person)?|member|advis[eo]r|co-advis[eo]r|reader|critic)\b/i
+
 function readNames(ctx: Ctx): Names {
   const r = ctx.s.acceptance
   if (!r) return { committee: [] }
@@ -871,14 +1017,19 @@ function readNames(ctx: Ctx): Names {
     const t = norm(p.text)
     const prev = paras[k - 1]
     if (!prev) return
-    if (
-      /^(chair(person)?|member|advis[eo]r|co-advis[eo]r|reader)\b.*(committee|panel)|^(chair(person)?|member)\b/i.test(
-        t,
-      )
-    )
-      committee.push({ name: cleanName(shown(prev)), para: prev })
+    if (ROLE_LINE.test(t))
+      committee.push({ name: cleanName(shown(prev)).replace(/^_+/, ''), para: prev })
     else if (/^dean\b/i.test(t)) dean = { name: cleanName(shown(prev)), para: prev }
   })
+  // A Dean's block with no line "Dean": the name, then the faculty alone on its line.
+  if (!dean) {
+    const k = paras.findIndex(
+      (p, j) => j > 0 && /^faculty of\b/i.test(norm(p.text)) && norm(p.text).length < 80,
+    )
+    const above = paras[k - 1]
+    if (k > 0 && !committee.some((c) => c.para === above) && !ROLE_LINE.test(norm(above.text)))
+      dean = { name: cleanName(shown(above)), para: above }
+  }
   return { committee, dean }
 }
 
@@ -903,10 +1054,15 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
             .replace(/(title|titled)(\s*:?\s*)³/i, '$1$2“')
             .replace(/´(?=\s*(is hereby|which|has been|is accepted))/i, '”'),
         )
+  // A title in quotes ends at the closing quote (the words after it, "prepared and submitted by…",
+  // are not the title); one without, at "is hereby accepted".
   const m = p
-    ? /(?:with the title|entitled|titled)\s*:?\s*["“'‘]?(.+?)["”'’]?\s*,?\s*(?:is hereby accepted|which|has been|is accepted|$)/i.exec(
+    ? (/(?:with the title|entitled|titled)\s*:?\s*["“‘]\s*(.+?)[,.]?\s*["”’]\s*(?=,?\s*(?:is hereby|which|has been|is accepted|prepared|submitted|by\b|$))/i.exec(
         sentence,
-      )
+      ) ??
+      /(?:with the title|entitled|titled)\s*:?\s*["“'‘]?(.+?)["”'’]?\s*,?\s*(?:is hereby accepted|which|has been|is accepted|$)/i.exec(
+        sentence,
+      ))
     : null
   const t = m?.[1]?.replace(/["”]$/, '').trim() ?? ''
   if (!t || /^x{4,}$/i.test(t))
@@ -954,6 +1110,18 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
   if (!ctx.s.acceptance) return fix(id, 'Add the Acceptance Page from the template.')
   const all = [...names.committee, ...(names.dean ? [names.dean] : [])]
   const blank = all.filter((n) => !n.name || /^name$/i.test(n.name))
+  // No name in the text, but a picture where the names and signatures would stand: for the student.
+  const acc = ctx.s.acceptance
+  const page = ctx.doc.pages?.[ctx.doc.paras[acc.heading].page ?? -1]
+  if (
+    !all.length &&
+    page?.images.some((b) => b.x1 - b.x0 >= 120 && b.y1 - b.y0 >= 60 && b.y0 > 0.2 * page.height)
+  )
+    return review(
+      id,
+      'The names under the Acceptance Page’s sentence are in a picture, so they could not be read here. Check that the advisory committee’s and the Dean’s names are complete and spelled right.',
+      { where: [{ page: page.n }] },
+    )
   if (!all.length || blank.length)
     return fix(id, "Complete the advisory committee's and the Dean's names.", {
       details: blank.length
@@ -1001,7 +1169,8 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
   })
 }
 
-const PREFIX = /^(dr|asst\.?\s*prof|assoc\.?\s*prof|prof|engr|atty)\b\.?/i
+const PREFIX =
+  /^(dr|(asst|assistant|assoc|associate)\.?\s*prof(essor)?|prof(essor)?|engr|atty|ms|mr|mrs|hon)\b\.?/i
 // Degrees after a name, UPOU's among them (MDC, MDE, MDM, MAEd, MIS, MNSE…).
 const DEGREES =
   'ph\\.?\\s?d|ed\\.?\\s?d|d\\.?\\s?comm|dcomm|d\\.?p\\.?a|mdc|mde|mdm|mis|mnse|maed|ma\\.?ed|m\\.?a|m\\.?s|m\\.?sc|mpa|mba|med|mph|mm|dvm|md|' +
@@ -1016,9 +1185,18 @@ function convention(names: Names): Finding {
     (n) => n.name && !/^name$/i.test(n.name),
   )
   if (!all.length) return na(id, 'No committee names yet.')
+  // A name whose font came out as control characters: its title or degree cannot be told.
+  const unreadable = all.filter((n) => [...n.name].some((c) => c.charCodeAt(0) < 32))
+  if (unreadable.length)
+    return review(
+      id,
+      'A name on the Acceptance Page could not be read reliably (its font is encoded oddly). Check that the names use titles before all names or degrees after all names, not a mix.',
+      { where: unreadable.flatMap((n) => at(n.para)) },
+    )
   // A stray comma after the degree ("Ph.D,") is a typo (acceptance.names says so), not a style.
   const style = (raw: string) => {
-    const n = raw.replace(/[,;]\s*$/, '')
+    // (a qualifier in brackets after the name, as "(candidate)", is neither title nor degree)
+    const n = raw.replace(/[,;]\s*$/, '').replace(/\s*\([^)]*\)\s*$/, '')
     if (PREFIX.test(n)) return SUFFIX.test(n) ? 'both' : 'title'
     if (SUFFIX.test(n)) return 'degree'
     // Something short after a comma that is no degree this list knows (and no "Jr."): a degree
@@ -1093,7 +1271,13 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
           ),
           dateOf(tp.date, 'title.date', 'title page'),
           permissionCode(ctx, tp),
-          signature(ctx, tp.studentSig, 'title.signature', 'title page'),
+          signature(
+            ctx,
+            tp.studentSig,
+            'title.signature',
+            'title page',
+            tp.rows.at(-1)?.lines?.[0]?.y,
+          ),
           folioCheck(
             ctx,
             'title.pageNumber',

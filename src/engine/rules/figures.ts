@@ -1,9 +1,10 @@
 // Figures and tables: the number in bold above, the title in italics right below, APA style.
 import type { Box, Para } from '../model.ts'
 import { fix, na, ok, review, spread, worst, type Ctx, type Finding } from '../report.ts'
-import { bolded, isTocLine } from '../structure.ts'
+import { bolded, headingText, isTocLine, LIST_HEADING } from '../structure.ts'
+import { inShape, textSize } from './body.ts'
 import { list, norm, quote } from '../text.ts'
-import { more, pagesText } from './numbering.ts'
+import { more, noTextPages, pagesText } from './numbering.ts'
 
 export interface Caption {
   para: Para
@@ -16,11 +17,15 @@ export interface Caption {
   object: 'after' | 'before' | 'unknown'
 }
 
-const LABEL = /^(fig(?:ure)?\.?|table)\s*(\d+(?:[.-]\d+)*|[A-Z]-?\d+)\s*[.:–—-]?\s*(.*)$/i
+// "Chart S1:", "Figure 4a" and "Table 3 .1" (a stray space) are labels too.
+const LABEL =
+  /^(fig(?:ure)?\.?|table|chart)\s*(\d+(?:\s?[.-]\s?\d+)*[a-z]?|[A-Z]-?\d+(?:[.-]\d+)*)\s*[.:–—-]?\s*(.*)$/i
 /** "Table 1 (continued)": a long table carried over to the next page, not a caption of its own. */
 const CONTINUED = /^(figure|table)\s+\S+\s*\(?cont(inued|['’]d|\.)?\)?\.?$/i
+/** A PDF paragraph set in a font whose name says nothing: its bold and italics are unknown. */
+const faceUnknown = (p: Para) => p.runs.some((r) => r.unknown && r.text.trim())
 const italic = (p: Para) => {
-  if (p.plain) return true
+  if (p.plain || faceUnknown(p)) return true
   let all = 0
   let it = 0
   for (const r of p.runs) {
@@ -32,7 +37,7 @@ const italic = (p: Para) => {
 }
 /** The label part ("Table 1.") in bold. */
 const labelBold = (p: Para) => {
-  if (p.plain) return true
+  if (p.plain || faceUnknown(p)) return true
   const label = LABEL.exec(norm(p.text))
   if (!label) return false
   const head = norm(p.text).slice(0, norm(p.text).length - label[3].length)
@@ -119,17 +124,41 @@ export function findCaptions(ctx: Ctx): Caption[] {
   const [start, end] = bodyRange(ctx)
   const out: Caption[] = []
   const seen = new Map<string, number>()
+  const size = textSize(doc.paras)
+  // Pages that list tables and figures (a list put at the end too): their entries are not captions.
+  const listed = new Set(
+    doc.paras.flatMap((q) =>
+      q.page !== undefined && LIST_HEADING.test(headingText(q)) && norm(q.text).length < 45
+        ? [q.page]
+        : [],
+    ),
+  )
   for (let k = start; k < end; k++) {
     const p = doc.paras[k]
     const t = norm(p.text)
     const m = LABEL.exec(t)
-    if (!m || p.inTable || isTocLine(p.text) || t.length > (labelBold(p) ? 400 : 250)) continue
+    if (
+      !m ||
+      p.inTable ||
+      isTocLine(p.text) ||
+      // (a caption can run to a paragraph, but then the label is closed by a full stop or a
+      // colon: "Table 1 (see next page) presents…" is a sentence)
+      t.length > (labelBold(p) ? 1500 : 1000) ||
+      (t.length > (labelBold(p) ? 400 : 250) &&
+        !/^[A-Za-z.]+\s*[A-Z]?\d[\d.a-z -]*?\s?[.:]\s/i.test(t)) ||
+      (p.page !== undefined && listed.has(p.page)) ||
+      // (a bare label in the small type of a table's cell or a diagram is no caption)
+      (!m[3] && !!p.lines?.[0] && p.lines[0].size < size - 1) ||
+      inShape(ctx, p)
+    )
+      continue
+    const number = m[2].replace(/\s/g, '')
     const rest = m[3]
     // "Table 1 shows that…" and "Table 1, the…" are sentences about the table, not its caption;
     // nor is a continued table's.
     if ((rest && /^\p{Ll}/u.test(rest) && !bolded(p)) || /^[,;)]/.test(rest) || CONTINUED.test(t))
       continue
-    const kind: Caption['kind'] = /^fig/i.test(m[1]) ? 'figure' : 'table'
+    const kind: Caption['kind'] = /^table/i.test(m[1]) ? 'table' : 'figure'
     let title: Para | undefined
     if (!rest) {
       for (let j = k + 1; j < Math.min(end, k + 4); j++) {
@@ -144,28 +173,31 @@ export function findCaptions(ctx: Ctx): Caption[] {
     // A long table carried over the pages with its caption repeated on each (APA asks for
     // "(continued)", but it is still one table): same number and title on the page before or this one.
     const text = (rest || norm(title?.text ?? '')).toLowerCase()
-    const key = `${kind}${m[2]}`
+    const key = `${kind}${number}`
     const lastPage = seen.get(key)
     seen.set(key, p.page ?? -1)
-    const again = out.findLast((c) => c.kind === kind && c.number === m[2])
+    const again = out.findLast((c) => c.kind === kind && c.number === number)
     const prior = (again?.inline || norm(again?.title?.text ?? '')).toLowerCase()
+    const caption: Caption = {
+      para: p,
+      kind,
+      number,
+      inline: rest,
+      title,
+      object: objectSide(ctx, p, kind, title),
+    }
+    // (a label left alone at the foot of a page and repeated with its title on the next is one too)
     if (
       lastPage !== undefined &&
       p.page !== undefined &&
       p.page - lastPage <= 1 &&
-      text &&
-      prior &&
-      (prior.startsWith(text) || text.startsWith(prior))
-    )
+      (!text || !prior || prior.startsWith(text) || text.startsWith(prior))
+    ) {
+      // The one with the title stands for both.
+      if (again && !prior && text) out[out.indexOf(again)] = caption
       continue
-    out.push({
-      para: p,
-      kind,
-      number: m[2],
-      inline: rest,
-      title,
-      object: objectSide(ctx, p, kind, title),
-    })
+    }
+    out.push(caption)
   }
   return out
 }
@@ -233,13 +265,28 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
   const captioned = (n: number, i?: number) =>
     caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i))
   const out: number[] = []
+  const unread = noTextPages(doc)
   for (const pg of pages.slice(from, to)) {
-    if (captioned(pg.n)) continue
+    // (a page of picture or drawn letters: its captions cannot be read)
+    if (captioned(pg.n) || unread.has(pg.n)) continue
+    // (not an icon in the cell of a table: a drawn box around it)
+    const cell = (b: Box) =>
+      pg.marks.some(
+        (m) =>
+          m.kind === 'path' &&
+          m.x1 - m.x0 < 0.7 * pg.width &&
+          m.x0 <= b.x0 + 2 &&
+          m.x1 >= b.x1 - 2 &&
+          m.y0 <= b.y0 + 2 &&
+          m.y1 >= b.y1 - 2 &&
+          m.y1 - m.y0 < 1.6 * (b.y1 - b.y0),
+      )
     const big = pg.images.filter(
       (b) =>
         Math.min(b.x1 - b.x0, b.y1 - b.y0) >= 72 &&
         b.y1 > 0.12 * pg.height &&
-        b.y0 < 0.88 * pg.height,
+        b.y0 < 0.88 * pg.height &&
+        !cell(b),
     )
     const lonely = big.some(
       (b) =>
@@ -285,8 +332,11 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     )
   if (notBold.length) numberIssues.push(`Not in bold: ${names(notBold)}.`)
   if (lonely.length) numberIssues.push(`No number at all: ${list(lonely.slice(0, 3))}.`)
-  // An old .doc is read for its text only: bold and italics are for the student to check.
-  const plain = ctx.doc.kind === 'doc'
+  // An old .doc is read for its text only, and a PDF may name no font: bold and italics are for
+  // the student to check.
+  const plain = ctx.doc.kind === 'doc' || caps.some((c) => faceUnknown(c.para))
+  const why =
+    ctx.doc.kind === 'doc' ? 'an old .doc file does not say' : 'this PDF does not name its fonts'
   // A table or chart the file does not place (a PDF's drawn chart, Word shapes): not "above".
   const unsure = caps.filter((c) => c.object === 'unknown')
   const number = numberIssues.length
@@ -307,7 +357,7 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       : plain
         ? review(
             'figures.number',
-            `All ${caps.length} figure/table numbers are above their figure or table. Check that they are bold (an old .doc file does not say).`,
+            `All ${caps.length} figure/table numbers are above their figure or table. Check that they are bold (${why}).`,
           )
         : ok(
             'figures.number',
@@ -333,22 +383,52 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     : plain
       ? review(
           'figures.title',
-          'Every figure/table title is right below its number. Check that the titles are in italics (an old .doc file does not say).',
+          `Every figure/table title is right below its number. Check that the titles are in italics (${why}).`,
         )
       : ok('figures.title', 'Every figure/table title is in italics, right below its number.')
 
-  // Numbering: 1, 2, 3… for tables and for figures, each in order.
+  // Numbering: 1, 2, 3… for tables and for figures, each in order. A numbering by chapter (2.1,
+  // 2.2, then a bare 3 for a chapter with one figure) runs by its first number; a letter after
+  // the number (4a, 4b) marks parts of one figure. Anything else, as S1, is the writer's own.
   const order: string[] = []
+  const odd: string[] = []
   for (const kind of ['table', 'figure'] as const) {
-    const nums = caps.filter((c) => c.kind === kind && /^\d+$/.test(c.number)).map((c) => +c.number)
-    const dup = nums.filter((n, k) => nums.indexOf(n) !== k)
-    if (dup.length) order.push(`${kind === 'table' ? 'Table' : 'Figure'} ${dup[0]} is used twice.`)
-    else if (nums.some((n, k) => k > 0 && n !== nums[k - 1] + 1))
-      order.push(
-        `${kind === 'table' ? 'Tables' : 'Figures'} are not numbered in order (${nums.slice(0, 8).join(', ')}).`,
-      )
+    const name = kind === 'table' ? 'Table' : 'Figure'
+    const found = caps
+      .filter((c) => c.kind === kind)
+      .flatMap((c) => {
+        const m = /^(\d+)(?:[.-](\d+))?([a-z])?$/i.exec(c.number)
+        return m ? [{ text: c.number, a: +m[1], b: m[2] === undefined ? undefined : +m[2] }] : []
+      })
+    const texts = found.map((f) => f.text)
+    const dup = texts.filter((t, k) => texts.indexOf(t) !== k)
+    if (dup.length) {
+      order.push(`${name} ${dup[0]} is used twice.`)
+      continue
+    }
+    const list = `${texts.slice(0, 8).join(', ')}`
+    if (found.some((f) => f.b !== undefined)) {
+      // By chapter: the first numbers never go back, and a chapter's second numbers run 1, 2, 3…
+      let bad = false
+      for (const [k, f] of found.entries()) {
+        const prev = found[k - 1]
+        if (prev && f.a < prev.a) bad = true
+        if (f.b !== undefined && f.b !== (prev && prev.a === f.a ? (prev.b ?? 0) + 1 : 1))
+          bad = true
+        if (f.b === undefined && prev && prev.a === f.a) bad = true
+      }
+      if (bad) odd.push(`${name}s are numbered by chapter, but not in order (${list}).`)
+    } else {
+      const wholes = found.map((f) => f.a).filter((n, k, all) => k === 0 || n !== all[k - 1])
+      if (wholes.some((n, k) => k > 0 && n !== wholes[k - 1] + 1))
+        order.push(`${name}s are not numbered in order (${list}).`)
+    }
   }
-  const apaStatus = worst([number.status, title.status, order.length ? 'fix' : 'ok'])
+  const apaStatus = worst([
+    number.status,
+    title.status,
+    order.length ? 'fix' : odd.length ? 'review' : 'ok',
+  ])
   // The rest of the APA setup (title case, notes, table lines) is not read, and reviewers ask for it.
   const apa =
     apaStatus === 'ok'
@@ -366,7 +446,18 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
                 'figures.apa',
                 'Check the APA style figure and table setup (see the APA pages linked here).',
               )),
-          details: order.length ? order : undefined,
+          details: order.length + odd.length ? [...order, ...odd] : undefined,
         }
-  return [number, title, apa]
+  // Pages with no text layer among the chapters may hold figures and captions that cannot be read.
+  const unread = [...noTextPages(ctx.doc)].filter(
+    (n) => ctx.s.chapters.length > 0 && n >= (ctx.doc.paras[ctx.s.chapters[0].heading].page ?? 0),
+  )
+  const soften = (f: Finding): Finding =>
+    unread.length && f.status === 'ok'
+      ? review(
+          f.id,
+          `${pagesText(unread.slice(0, 6))}${unread.length > 6 ? ' and others' : ''} ${unread.length === 1 ? 'has' : 'have'} no text layer (a picture or drawn letters), so the figures and tables there could not be read. Check them yourself.`,
+        )
+      : f
+  return [soften(number), soften(title), apa]
 }

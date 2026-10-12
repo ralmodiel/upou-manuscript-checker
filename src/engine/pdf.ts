@@ -34,8 +34,11 @@ interface Span {
   font?: string
   bold: boolean
   italic: boolean
+  /** The font's name says nothing: bold, italic and the typeface are unknown. */
+  unknown?: boolean
 }
 
+const OPAQUE_FONT = /^(CIDFont\+)?(F|Font|g_d\d+_f)\d+$/i
 const BOLD = /bold|black|heavy|semibold|demibold/i
 const ITALIC = /italic|oblique/i
 // Lines that open a paragraph of their own: list markers ("1. ", "a) ", "(A) ", bullets; not "M. ",
@@ -44,6 +47,10 @@ const ITALIC = /italic|oblique/i
 const MARKER = /^(\(?\d{1,2}[.)]|\(?[a-z][.)]|\([A-Z]\)|[•●▪◦‣∙·-])\s/
 const LABEL =
   /^(Table|TABLE|Fig(ure|\.)?|FIG(URE|\.)?|Chapter|CHAPTER|Appendix|APPENDIX|Annex|ANNEX)(\s*[A-Z]?\d+([.-]\d+)*|\s+[IVXLC]+\b|\s+[A-Z]\b)?\s*[.:–—-]?\s*($|[\p{Lu}(])/u
+/** The heading of a list of the contents, tables or figures: it opens a paragraph whatever stands above. */
+const LIST_HEADING = /^(list of (tables|figures|illustrations)|table of contents)$/i
+/** A caption standing at the top of a page ("Figure 4. Title"): a sentence does not break there. */
+const CAPTION_START = /^(Table|Figure|Fig\.|Chart)\s*[A-Z]?\d+([.-]\d+)*[a-z]?[.:]\s+\p{Lu}/u
 /** A caption or note line: never a running head, and outside the table above or below it. */
 const OUTSIDE = /^(note[.:]|(table|fig(ure)?\.?)\s*\d)/i
 /** Whether line `l` opens a paragraph after `prev`. A label opens one only when bold, as the
@@ -52,10 +59,13 @@ const OUTSIDE = /^(note[.:]|(table|fig(ure)?\.?)\s*\d)/i
  *  the section heading), opens one as well. */
 const opens = (l: Line, prev: Line) =>
   MARKER.test(l.text) ||
+  LIST_HEADING.test(l.text.trim()) ||
   (LABEL.test(l.text) &&
     (!!l.runs.find((r) => r.text.trim())?.bold ||
       !/\p{L}$/u.test(prev.text) ||
-      (boldness(prev) === 1 && boldness(l) === 0)))
+      (boldness(prev) === 1 && boldness(l) === 0) ||
+      // a short heading in capitals ("LIST OF FIGURES"), then the label of its first entry
+      (prev.text.length <= 60 && /^[^a-z]*$/.test(prev.text) && /\p{Lu}/u.test(prev.text))))
 
 /** 'Arial' from 'ABCDEF+Arial-BoldMT', 'Times New Roman' from 'TimesNewRomanPSMT'. */
 export function familyOf(raw: string | undefined): string | undefined {
@@ -251,7 +261,10 @@ export async function readPdf(
       }
 
       // Text spans, with each font's real name.
-      const fonts = new Map<string, { font?: string; bold: boolean; italic: boolean }>()
+      const fonts = new Map<
+        string,
+        { font?: string; bold: boolean; italic: boolean; unknown?: boolean }
+      >()
       const fontOf = (id: string) => {
         let f = fonts.get(id)
         if (!f) {
@@ -270,7 +283,11 @@ export async function readPdf(
           } catch {
             // Font not loaded: style unknown.
           }
-          f = { font: familyOf(name), bold, italic }
+          // A name such as "CIDFont+F4" or "F2" (no real name was kept in the file) tells nothing.
+          const unknown = !name || OPAQUE_FONT.test(name.replace(/^[A-Z]{6}\+/, ''))
+          f = unknown
+            ? { bold: false, italic: false, unknown }
+            : { font: familyOf(name), bold, italic }
           fonts.set(id, f)
         }
         return f
@@ -385,8 +402,19 @@ export async function readPdf(
 
   // Headers and footers, once every page is read: a running title can only be told by its repeats.
   const running = runningLines(allLines, pages)
+  // Where most pages have a foot to go by, the bottom inch is read from it: only the lines joined
+  // to it are footer, and a line of text set lower than the writer's footers stand is not.
+  const strict =
+    allLines.filter((ls, n) => ls.some((l) => surelyFoot(l, pages[n].height, running))).length >=
+    0.5 * pages.length
   for (const [n, lines] of allLines.entries()) {
-    const { body, footer, header } = splitBands(lines, pages[n].height, running)
+    const { body, footer, header } = splitBands(
+      lines,
+      pages[n].width,
+      pages[n].height,
+      running,
+      strict,
+    )
     allLines[n] = body
     pages[n].header = header.map((l) => l.text).join('\n')
     pages[n].footer = footer.map((l) => l.text).join('\n')
@@ -451,13 +479,15 @@ function toLines(spans: Span[], page: number): Line[] {
         italic: s.italic,
         font: s.font,
         size: Math.round(s.size * 2) / 2,
+        ...(s.unknown ? { unknown: true } : {}),
       }
       if (
         last &&
         last.bold === style.bold &&
         last.italic === style.italic &&
         last.font === style.font &&
-        last.size === style.size
+        last.size === style.size &&
+        !last.unknown === !style.unknown
       )
         last.text += piece
       else runs.push({ text: piece, ...style })
@@ -520,29 +550,97 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
   return out
 }
 
+const looksLikeNumber = (t: string) =>
+  /(…|\.{2,}|\.\s\.\s\.)\s*\S+\s*$|^\s*([ivxlcdm]+|\d+)\s*$/i.test(t)
+
+/** A line surely in the foot: a running foot, a page number (or an ellipsis and number) in the
+ *  bottom inch, or anything in the last 50 points. */
+const surelyFoot = (l: Line, height: number, running: Set<Line>) =>
+  (running.has(l) && l.y > height / 2) ||
+  (l.y > height - 72 && (looksLikeNumber(l.text) || l.y > height - 50))
+
 /** Footer (and header) lines: in the outer inch, set apart from the body or shaped like a page
- *  number, or a running head or foot. */
-function splitBands(lines: Line[], height: number, running: Set<Line>) {
+ *  number, or a running head or foot. With `strict`, only the lines joined to a sure foot (the
+ *  next line up, in the same size and single spacing: a title wrapped over two lines) count. */
+function splitBands(
+  lines: Line[],
+  width: number,
+  height: number,
+  running: Set<Line>,
+  strict: boolean,
+) {
   const footer: Line[] = []
   const header: Line[] = []
   const body: Line[] = []
-  const looksLikeNumber = (t: string) =>
-    /(…|\.{2,}|\.\s\.\s\.)\s*\S+\s*$|^\s*([ivxlcdm]+|\d+)\s*$/i.test(t)
+  const foot = new Set<Line>()
+  if (strict) {
+    for (let k = lines.length - 1; k >= 0; k--) {
+      const l = lines[k]
+      const under = lines[k + 1]
+      if (surelyFoot(l, height, running)) foot.add(l)
+      else if (
+        under &&
+        foot.has(under) &&
+        l.y > height - 100 &&
+        under.y - l.y <= 1.35 * Math.max(l.size, under.size) &&
+        Math.abs(l.size - under.size) < 0.6
+      )
+        foot.add(l)
+    }
+    // A foot of its own kind (a title page's, set once): the last line and the lines tight above
+    // it, apart from the text over them.
+    const last = lines.at(-1)
+    if (last && !foot.has(last) && last.y > height - 60 && !OUTSIDE.test(last.text.trim())) {
+      const block = [last]
+      for (let k = lines.length - 2; k >= 0; k--) {
+        const l = lines[k]
+        const under = block[block.length - 1]
+        if (
+          l.y > height - 100 &&
+          under.y - l.y <= 1.6 * Math.max(l.size, under.size) &&
+          Math.abs(l.size - under.size) < 0.6
+        )
+          block.push(l)
+        else break
+      }
+      const top = block[block.length - 1]
+      const above = lines[lines.indexOf(top) - 1]
+      if (!above || top.y - above.y >= 18) for (const l of block) foot.add(l)
+    }
+  }
   for (let k = 0; k < lines.length; k++) {
     const l = lines[k]
     const above = lines[k - 1]
     const below = lines[k + 1]
     if (running.has(l)) (l.y > height / 2 ? footer : header).push(l)
     else if (
-      l.y > height - 72 &&
-      (!above || l.y - above.y >= 18 || looksLikeNumber(l.text) || l.y > height - 50)
+      strict
+        ? foot.has(l)
+        : l.y > height - 72 &&
+          // (a caption or a note low on the page is not a foot)
+          !OUTSIDE.test(l.text.trim()) &&
+          (!above || l.y - above.y >= 18 || looksLikeNumber(l.text) || l.y > height - 50)
     )
       footer.push(l)
     // A bare page number set higher than the bottom inch (an A4 page's number 1.1 in up) and last
     // on the page, even right under double-spaced text.
     else if (!below && l.y > height - 100 && /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text))
       footer.push(l)
-    else if (l.y < 54 && (!below || below.y - l.y >= 18)) header.push(l)
+    // A bare page number at the top right, first on its page.
+    else if (
+      !above &&
+      l.y < 100 &&
+      l.x0 > 0.7 * width &&
+      /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text)
+    )
+      header.push(l)
+    // (a chapter or appendix label at the top of a page is a heading, not a running head)
+    else if (
+      l.y < 54 &&
+      (!below || below.y - l.y >= 18) &&
+      !/^(chapter|appendix|annex)\b/i.test(l.text.trim())
+    )
+      header.push(l)
     else body.push(l)
   }
   // Once a line is footer, everything under it is too.
@@ -558,7 +656,7 @@ function tableLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
   const rules = pages.map((pg, n) => {
     const rows: Rule[] = []
     for (const m of pg.marks) {
-      if (m.kind !== 'path' || m.y1 - m.y0 > 2) continue
+      if (m.kind !== 'path' || m.y1 - m.y0 > 3) continue
       const y = (m.y0 + m.y1) / 2
       const row = rows.find((r) => Math.abs(r.y - y) < 1.5)
       if (row) {
@@ -609,19 +707,59 @@ interface Margins {
   justified?: boolean
 }
 
+/** How far short of the margin a line of justified text may stop (points). */
+const EDGE = 5
+
+/** Long lines in the text's size: running text, not table rows or smaller notes. */
+const longLines = (lines: Line[], size: number) =>
+  lines.filter((l) => l.text.length > 40 && !l.text.includes('\t') && Math.abs(l.size - size) < 0.6)
+
+/** The points many of the document's long lines end at (a fifth of them or more, within `EDGE`
+ *  of each other): the right edges its text is set to. Justified text ends at one; a writer who
+ *  indents some paragraphs from the right has two. */
+function rightEdges(lines: Line[], size: number): number[] {
+  const long = longLines(lines, size)
+  if (long.length < 30) return []
+  const xs = long.map((l) => l.x1).sort((a, b) => a - b)
+  const out: number[] = []
+  // The densest window first, then the next one clear of it.
+  const near = (x: number) => xs.filter((v) => Math.abs(v - x) <= EDGE)
+  const dense = [...new Set(xs.map(Math.round))]
+    .map((x) => ({ x, n: near(x).length }))
+    .sort((a, b) => b.n - a.n)
+  for (const d of dense) {
+    if (d.n < 0.2 * long.length) break
+    if (out.some((e) => Math.abs(e - d.x) <= 2 * EDGE)) continue
+    out.push(Math.max(...near(d.x)))
+  }
+  return out
+}
+
 /** Text margins from long lines in the text's size (`size`), not table rows or smaller notes. */
-function marginsOf(lines: Line[], size: number, fallback?: Margins): Margins | undefined {
-  const long = lines.filter(
-    (l) => l.text.length > 40 && !l.text.includes('\t') && Math.abs(l.size - size) < 0.6,
-  )
+function marginsOf(
+  lines: Line[],
+  size: number,
+  fallback?: Margins,
+  edges: number[] = [],
+): Margins | undefined {
+  const long = longLines(lines, size)
   if (long.length < 4) return fallback
   const left = mode(long.map((l) => l.x0))
   // Centred lines (a title page) share no left edge: that page keeps the document's margins.
   if (fallback && long.filter((l) => Math.round(l.x0) === left).length < 3) return fallback
   // Ragged-right lines rarely reach the margin; the longest ones (bar a stray) mark it.
   const xs1 = long.map((l) => l.x1).sort((a, b) => a - b)
-  const right = xs1[Math.floor(xs1.length * 0.95)]
-  const full = long.filter((l) => l.x1 >= right - 2.5).length
+  let right = xs1[Math.floor(xs1.length * 0.95)]
+  // Where the document's text ends, when this page's lines end there too: a wider line of a
+  // table or a figure does not set the page's margin.
+  const edge = edges.find(
+    (e) => long.filter((l) => Math.abs(l.x1 - e) <= EDGE).length >= 0.3 * long.length,
+  )
+  if (edge !== undefined)
+    right = Math.max(...long.filter((l) => Math.abs(l.x1 - edge) <= EDGE).map((l) => l.x1))
+  const full = long.filter(
+    (l) => l.x1 >= right - EDGE || edges.some((e) => Math.abs(l.x1 - e) <= EDGE),
+  ).length
   // Most lines may start at an indent (short paragraphs, a reference list's hanging lines), never
   // left of the margin: the page's margin is not right of the document's.
   return {
@@ -674,7 +812,11 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
   const width = (n: number) => Math.round(pages[n].width)
   const usual = mode(pages.map((pg) => pg.width))
   const linesOf = (w: number) => pagesLines.filter((_, n) => width(n) === w).flat()
-  const docMargins = marginsOf(linesOf(usual), size) ?? { left: 72, right: 523 }
+  const edges = rightEdges(
+    pagesLines.flatMap((ls) => ls.filter((l) => !tables.has(l))),
+    size,
+  )
+  const docMargins = marginsOf(linesOf(usual), size, undefined, edges) ?? { left: 72, right: 523 }
   const byWidth = new Map<number, Margins>([[usual, docMargins]])
   const fallbackOf = (n: number) => {
     const w = width(n)
@@ -688,7 +830,22 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
   const margins = pagesLines.map((ls, n) => {
     // A ruled table's rows do not show where the page's text runs.
     const text = ls.filter((l) => !tables.has(l))
-    return marginsOf(text, size, fallbackOf(n)) ?? fallbackOf(n)
+    return marginsOf(text, size, fallbackOf(n), edges) ?? fallbackOf(n)
+  })
+  // How far apart the lines of each page stand, line after line (the smaller gaps: a list may have extra space between entries): a font with tall lines (1.3 × its
+  // size) set double stands 2.6 sizes apart, and no gap of that size parts two paragraphs.
+  const pitch = pagesLines.map((ls) => {
+    const gaps: number[] = []
+    for (let k = 1; k < ls.length; k++) {
+      const g = ls[k].y - ls[k - 1].y
+      if (
+        g >= 0.9 * ls[k].size &&
+        g <= 3.4 * ls[k].size &&
+        Math.abs(ls[k].size - ls[k - 1].size) <= 0.6
+      )
+        gaps.push(g)
+    }
+    return gaps.length >= 5 ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 4)] : 0
   })
   const paras: Para[] = []
   let draft: Line[] = []
@@ -721,9 +878,12 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
     if (Math.abs(l.x1 - m.right) < 3 && l.x0 > m.left + 0.3 * width) return 'right'
     return 'left'
   }
+  // A line that ends at the margin or at another of the document's right edges.
+  const atEdge = (l: Line, right: number) =>
+    l.x1 >= right - EDGE || edges.some((e) => Math.abs(l.x1 - e) <= EDGE)
   const flush = () => {
     if (draft.length) {
-      const para = toPara(draft, paras.length, margins[draft[0].page], kind === 'center')
+      const para = toPara(draft, paras.length, margins[draft[0].page], kind === 'center', edges)
       if (draft.every((l) => tables.has(l))) para.inTable = true
       paras.push(para)
       if (draft.length > 1) {
@@ -768,9 +928,9 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
         // bold: a heading, then an indented first line.
         const shortEnd =
           !!pm.justified &&
-          prev.x1 < pm.right - 2.5 &&
+          !atEdge(prev, pm.right) &&
           (draft.length >= 2
-            ? draft.slice(0, -1).every((l) => l.x1 >= margins[l.page].right - 2.5)
+            ? draft.slice(0, -1).every((l) => atEdge(l, margins[l.page].right))
             : c.x0 > m.left + 8 &&
               !tables.has(c) &&
               kindOf(c, m) !== 'center' &&
@@ -800,6 +960,7 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
             !aligned ||
             newEntry ||
             opens(c, prev) ||
+            CAPTION_START.test(c.text) ||
             kindOf(c, m) !== 'left' ||
             // A wholly bold line against one that is not: a heading starts or ends there.
             (boldness(prev) === 1) !== (boldness(c) === 1)
@@ -819,7 +980,7 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
             gap <= 0 ||
             (gaps.length
               ? gap > 1.35 * median(gaps)
-              : gap > Math.max(2.6 * prev.size, runOn ? 1.35 * (after.y - c.y) : 0))
+              : gap > Math.max(2.6 * prev.size, runOn ? 1.35 * (after.y - c.y) : 0, 1.2 * pitch[p]))
           if (apart || !sameSize || tabular) split = true
           // Stacked centred or right-aligned lines are one paragraph only when the next line's first
           // word would not have fitted on the line above, and both are bold or neither is.
@@ -861,7 +1022,7 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
   return paras
 }
 
-function toPara(lines: Line[], i: number, m: Margins, centered: boolean): Para {
+function toPara(lines: Line[], i: number, m: Margins, centered: boolean, edges: number[]): Para {
   const runs: Run[] = []
   for (const l of lines) {
     if (runs.length) runs.push({ ...runs.at(-1)!, text: ' ' })
@@ -872,7 +1033,14 @@ function toPara(lines: Line[], i: number, m: Margins, centered: boolean): Para {
   const body = lines.slice(0, -1)
   if (centered) para.align = 'center'
   else if (body.length >= 1) {
-    const full = body.filter((l) => l.x1 >= m.right - 2.5).length
+    // A line of justified text may fall a few points short of the margin; with a single line
+    // to go by, less is allowed. The margin, or another edge the document's text is set to (a
+    // paragraph indented from the right as well).
+    const tol = body.length >= 2 ? EDGE : 2.5
+    const full = Math.max(
+      body.filter((l) => l.x1 >= m.right - tol).length,
+      ...edges.map((e) => body.filter((l) => Math.abs(l.x1 - e) <= tol).length),
+    )
     const flushRight = lines.every((l) => l.x1 >= m.right - 2.5)
     if (flushRight && lines.some((l) => l.x0 > m.left + 0.3 * width)) para.align = 'right'
     else para.align = full / body.length >= 0.85 ? 'justify' : 'left'

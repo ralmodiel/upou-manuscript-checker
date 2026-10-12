@@ -18,6 +18,8 @@ export interface Run {
   color?: string
   /** Inside a hyperlink (its colour is the link's, not the writer's). */
   link?: boolean
+  /** PDF: the font's name says nothing (`CIDFont+F4`), so its typeface, bold and italics are unknown. */
+  unknown?: boolean
 }
 
 /** A PDF text line: baseline `y` from the top of the page, `x0`-`x1` across it (points). */

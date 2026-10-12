@@ -7,8 +7,13 @@ import { pagesText } from './numbering.ts'
 
 // Double spacing is 2 lines; 24 pt on 12 pt type (1.74) still reads as double, 1.5 lines does not.
 export const DOUBLE = 1.7
-const LIST = /^(\(?\d{1,2}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·-])\s/i
-export const CAPTION = /^(table|fig(ure)?\.?)\s*\d/i
+// A bullet may be typed in a symbol font ("o", a black circle) or come out as a private-use letter.
+const LIST = /^(\(?\d{1,2}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·–—⚫⚪○◆◇■□➢➤➔✓✔-]|o|[a-z](?=\s[-–—]\s))\s/i
+const symbolBullet = (t: string) => {
+  const c = t.trimStart().charCodeAt(0)
+  return c >= 0xf000 && c <= 0xf0ff
+}
+export const CAPTION = /^(table|fig(ure)?\.?|chart)\s*[a-z]?-?\d/i
 
 /** A PDF paragraph that is not running text: wholly bold (a long caption or heading run on), or
  *  a narrow column of lines (a table's cell). */
@@ -18,6 +23,57 @@ const apart = (ctx: Ctx, p: Para) => {
   const width = page?.margins ? page.margins.right - page.margins.left : (page?.width ?? 612) - 144
   return (
     bolded(p) || (p.lines.length >= 2 && Math.max(...p.lines.map((l) => l.x1 - l.x0)) < 0.5 * width)
+  )
+}
+
+/** The size of running text (PDF): of the first lines of the long paragraphs, the largest size
+ *  many of them share (tables and notes in smaller type may be as many). */
+export function textSize(paras: Para[]): number {
+  const sizes = paras.flatMap((q) =>
+    q.lines?.[0] && q.text.length > 80 && !q.inTable ? [Math.round(q.lines[0].size * 2) / 2] : [],
+  )
+  return Math.max(
+    0,
+    ...[...new Set(sizes)].filter(
+      (z) => sizes.filter((x) => x === z).length >= 0.25 * sizes.length,
+    ),
+  )
+}
+
+/** A short note under a table (its scale, its key), whether or not it opens with "Note:". */
+const tableNote = (prev: Para | undefined, p: Para) =>
+  !!prev &&
+  (!!prev.inTable || prev.text.includes('\t')) &&
+  !p.text.includes('\t') &&
+  (p.lines ? p.lines.length <= 3 : norm(p.text).length < 300)
+
+/** A table's row read as a paragraph: its first line stands a long way from the other lines
+ *  (a label, then its text in the next column). */
+const tableRow = (p: Para) => Math.abs(p.indent?.firstLine ?? 0) >= 100
+
+/** An excerpt of a transcript: numbered lines (007, 034…), an annotation in double parentheses,
+ *  or the caption "Extracted Lines". */
+const transcript = (t: string) => /^(0\d{1,3}\s|\(\(|extracted lines?\b)/i.test(t)
+
+/** PDF: the paragraph's lines lie within one drawn shape (a box of a diagram, a table's cell)
+ *  smaller than the page's text: text of a figure, not running text. */
+export function inShape(ctx: Ctx, p: Para): boolean {
+  const ls = p.lines
+  const pg = ls && ctx.doc.pages?.[ls[0].page]
+  if (!ls || !pg || ls.some((l) => l.page !== ls[0].page)) return false
+  const x0 = Math.min(...ls.map((l) => l.x0))
+  const x1 = Math.max(...ls.map((l) => l.x1))
+  const top = ls[0].y - ls[0].size
+  const bottom = ls[ls.length - 1].y + 0.3 * ls[0].size
+  return pg.marks.some(
+    (m) =>
+      m.kind === 'path' &&
+      m.x1 - m.x0 < 0.7 * pg.width &&
+      m.y1 - m.y0 > 1.5 * ls[0].size &&
+      m.x0 <= x0 + 2 &&
+      m.x1 >= x1 - 2 &&
+      m.y0 <= top + 2 &&
+      m.y1 >= bottom - 2,
   )
 }
 
@@ -50,6 +106,10 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !/^(notes?|sources?)\s*[.:]/i.test(t) &&
       !isTocLine(p.text) &&
       !(isHeadingish(p) && t.length <= 120) &&
+      !tableNote(paras[p.i - 1], p) &&
+      !tableRow(p) &&
+      !transcript(t) &&
+      !inShape(ctx, p) &&
       !/^key\s?words?\s*:/i.test(t) &&
       !apart(ctx, p) &&
       // A footnote: set smaller than the text.
@@ -82,7 +142,7 @@ const mode = (xs: number[]) => {
 const multiLine = (ctx: Ctx, p: Para) =>
   ctx.doc.kind === 'pdf' ? (p.lines?.length ?? 0) >= 2 : norm(p.text).length > 110
 
-export const isList = (p: Para) => !!p.list || LIST.test(norm(p.text))
+export const isList = (p: Para) => !!p.list || LIST.test(norm(p.text)) || symbolBullet(p.text)
 
 const where = (ps: Para[]) => spread(ps.map((p) => ({ page: p.page, quote: quote(p.text, 60) })))
 

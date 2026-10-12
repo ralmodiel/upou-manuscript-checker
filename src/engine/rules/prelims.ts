@@ -3,7 +3,7 @@ import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts
 import { PRELIM_NAMES, titlePage, type PrelimKey } from '../structure.ts'
 import { list, norm, quote, roman } from '../text.ts'
 import { bodyParas, doubleSpaced, justified } from './body.ts'
-import { thesisTitle } from './front.ts'
+import { readTitlePage, thesisTitle } from './front.ts'
 import type { Caption } from './figures.ts'
 import {
   auditPdf,
@@ -36,12 +36,24 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
           p.newPage &&
           /^dedicated\s+to\b/i.test(norm(p.text)),
       )
-  const missing = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
+  const absent = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
+  // The MDC template has a biographical sketch and a dedication; UPOU's style guide (2022)
+  // calls the sketch recommended and says nothing of a dedication, so for other programs they
+  // are for the student to look at. (A declaration page takes the place of neither.)
+  const mdc = /development communication/i.test(norm(readTitlePage(ctx).program?.text ?? ''))
+  const optional: PrelimKey[] = mdc ? [] : absent.filter((k) => k === 'bio' || k === 'dedication')
+  const missing = absent.filter((k) => !optional.includes(k))
   if (missing.length) {
     issues.push(
       `Include the missing preliminary pages: ${list(missing.map((k) => PRELIM_NAMES[k]))}.`,
     )
     statuses.push('fix')
+  }
+  if (optional.length) {
+    issues.push(
+      `Check whether your program asks for the ${list(optional.map((k) => PRELIM_NAMES[k]))}: the MDC template has ${optional.length > 1 ? 'them' : 'it'}, and UPOU’s style guide (2022) recommends a biographical sketch.`,
+    )
+    statuses.push('review')
   }
   if (dedicated) {
     issues.push(
@@ -139,6 +151,12 @@ function numbers(ctx: Ctx): Finding {
       return ok(
         id,
         `${pagesText(pages)} are numbered ${roman(first - base + 1)}\u2060–\u2060${roman(last - base + 1)}, with the shortened title and an ellipsis.`,
+      )
+    if (problems.every((p) => p.type === 'unread'))
+      return review(
+        id,
+        `${pagesText(problems.map((p) => p.page!))} have no text layer (a picture or drawn letters), so their page numbers could not be read. Check them yourself.`,
+        { where: [{ page: problems[0].page }] },
       )
     return fix(id, msg, { details: summarize(problems), where: [{ page: problems[0].page }] })
   }
