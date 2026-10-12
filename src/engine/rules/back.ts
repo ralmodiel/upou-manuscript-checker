@@ -663,8 +663,14 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
           .replace(/[^\p{L}\p{N}]/gu, '')
           .slice(0, 80)
     const first = seen.get(k)
-    if (first) twice.push([first, e])
-    else seen.set(k, e)
+    // (the same author, year and title, but the rest of the entry differs: perhaps two works)
+    const whole = (x: typeof e) =>
+      norm(x.text)
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]/gu, '')
+    if (first && whole(first) === whole(e)) twice.push([first, e])
+    else if (first && y) nearly.push([first, e])
+    else if (!first) seen.set(k, e)
     if (!y || first) continue
     const other = years.get(`${y.who}|${y.year}`)
     if (other && !y.marked && alike(byline(other)!.title, y.title)) nearly.push([other, e])

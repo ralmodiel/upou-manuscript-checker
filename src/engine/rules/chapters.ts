@@ -3,7 +3,7 @@ import type { Para } from '../model.ts'
 import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
-import { bodyParas, CAPTION, doubleSpaced, isList, justified, textSize } from './body.ts'
+import { bodyParas, CAPTION, doubleSpaced, inShape, isList, justified, textSize } from './body.ts'
 import type { Caption } from './figures.ts'
 import { readTitlePage, thesisTitle } from './front.ts'
 import {
@@ -454,6 +454,8 @@ const headingLike = (p: Para) => {
     // A heading opens with a capital or a number: a line starting with a small letter ends a
     // sentence (the last line of a quotation); a form's blank or placeholder is no heading.
     !/^\p{Ll}/u.test(t) &&
+    // (nor does one with a sentence closed inside quotation marks: a quotation's end, its source)
+    !/[.!?,;]["”]/.test(t) &&
     !/_{3,}|\[[^\]]*\]/.test(t) &&
     (p.lines?.length ?? 1) <= 2 &&
     // (two lines of a term and its meaning, "SUPPORT - Send a message…", are a list item)
@@ -635,6 +637,23 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       ) &&
       end.page === p.page &&
       (!next || next.page !== p.page) &&
+      // (the legend or axis labels inside a chart's drawn frame are no heading)
+      !(!caption && inShape(ctx, p, 0.95)) &&
+      // (a figure drawn in vectors below it, above the footer: the line is not the page's last;
+      // one box drawn over and over, a frame around the footer, is no figure)
+      new Set(
+        pg.marks
+          .filter(
+            (m) =>
+              m.kind === 'path' &&
+              m.y0 >= end.y - 2 &&
+              m.y1 <= 0.9 * pg.height &&
+              m.x1 - m.x0 > 20 &&
+              m.y1 - m.y0 > 10 &&
+              m.x1 - m.x0 < 0.95 * pg.width,
+          )
+          .map((m) => [m.x0, m.y0, m.x1, m.y1].map(Math.round).join()),
+      ).size < 4 &&
       !pics.some((b) => b.y0 >= end.y - 2) &&
       (texted.has(pg.n) || above) &&
       (next || (doc.pages?.[pg.n + 1]?.images.length ?? 0) > 0) &&

@@ -120,6 +120,36 @@ export function garbled(s: string): boolean {
   return letters.length >= 14 && vowels < 0.15 * letters.length
 }
 
+/** Two titles the text layer reads differently through its own failings, not the writer's: letters
+ *  spaced out or runs of text out of order (the same letters, another arrangement), or a glyph
+ *  misread as a digit inside a word ("ANALYS1S"). */
+export function readsOddly(a: string, b: string): boolean {
+  const letters = (s: string) => s.toLowerCase().replace(/[^\p{L}]/gu, '')
+  const [la, lb] = [letters(a), letters(b)]
+  if (la.length >= 8 && [...la].sort().join('') === [...lb].sort().join('')) {
+    // The same letters in the same order, the spaces elsewhere: a word or two joined or split is
+    // the writer's ("health care", "healthcare"); several words broken into pieces is spacing.
+    if (la === lb) {
+      const words = (s: string) =>
+        s
+          .toLowerCase()
+          .split(/[^\p{L}]+/u)
+          .filter(Boolean)
+      const [wa, wb] = [words(a), words(b)]
+      return wb.length - wa.length >= 2 || wb.some((w) => w.length === 1 && !wa.includes(w))
+    }
+    // The same letters in another order: two letters swapped is a typing slip ("SCEURITY"); a
+    // longer stretch out of place is runs of text read in the wrong order.
+    let i = 0
+    while (la[i] === lb[i]) i++
+    let j = 0
+    while (la[la.length - 1 - j] === lb[lb.length - 1 - j]) j++
+    return la.length - i - j > 3
+  }
+  const { onlyA, onlyB } = wordDiff(a, b)
+  return [...onlyA, ...onlyB].some((w) => /\p{L}\d|\d\p{L}/u.test(w))
+}
+
 /** A title for comparing two copies: case, a hyphen broken at a line end ("SOCIO-" "CULTURAL")
  *  and the punctuation or quotes around the title count for nothing. */
 export const titleForm = (s: string) =>

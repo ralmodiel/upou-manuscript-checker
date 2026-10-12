@@ -147,6 +147,7 @@ export async function readPdf(
   ])
   const pages: Page[] = []
   const allLines: Line[][] = []
+  const turnedFeet: (Line | undefined)[] = []
   const pictures: Picture[] = []
   try {
     for (let n = 0; n < pdf.numPages; n++) {
@@ -182,6 +183,10 @@ export async function readPdf(
       // The coloured text being read: black text in between ends it.
       let run: Page['colored'][number] | undefined
       let ctm: Matrix = [1, 0, 0, 1, 0, 0]
+      // The text line's matrix, and where white text begins (user space).
+      let tlm: Matrix = [1, 0, 0, 1, 0, 0]
+      let leading = 0
+      const whiteAt: number[][] = []
       let fill = '#000000'
       const stack: { ctm: Matrix; fill: string }[] = []
       for (let k = 0; k < ops.fnArray.length; k++) {
@@ -190,6 +195,13 @@ export async function readPdf(
         if (fn === OPS.save) stack.push({ ctm, fill })
         else if (fn === OPS.restore) ({ ctm, fill } = stack.pop() ?? { ctm, fill })
         else if (fn === OPS.transform) ctm = mul(ctm, args as Matrix)
+        else if (fn === OPS.beginText) tlm = [1, 0, 0, 1, 0, 0]
+        else if (fn === OPS.setTextMatrix) tlm = Array.from(args as ArrayLike<number>)
+        else if (fn === OPS.moveText || fn === OPS.setLeadingMoveText) {
+          if (fn === OPS.setLeadingMoveText) leading = -(args[1] as number)
+          tlm = mul(tlm, [1, 0, 0, 1, args[0] as number, args[1] as number])
+        } else if (fn === OPS.setLeading) leading = args[0] as number
+        else if (fn === OPS.nextLine) tlm = mul(tlm, [1, 0, 0, 1, 0, -leading])
         else if (fn === OPS.setFillRGBColor && typeof args[0] === 'string') fill = args[0]
         else if (
           fn === OPS.showText ||
@@ -197,6 +209,9 @@ export async function readPdf(
           fn === OPS.nextLineShowText ||
           fn === OPS.nextLineSetSpacingShowText
         ) {
+          if (fn === OPS.nextLineShowText || fn === OPS.nextLineSetSpacingShowText)
+            tlm = mul(tlm, [1, 0, 0, 1, 0, -leading])
+          if (fill === '#ffffff') whiteAt.push(apply(ctm, tlm[4], tlm[5]))
           if (fill === '#000000') run = undefined
           else {
             const glyphs = args.at(-1)
@@ -303,6 +318,9 @@ export async function readPdf(
       }
       const spans: Span[] = []
       const glyphs: Page['glyphs'] = []
+      let turned = 0
+      // Turned a quarter way round, as the page reads when turned: where its words stand in that frame.
+      const sideways: { text: string; x0: number; x1: number; y: number; size: number }[] = []
       for (const item of text.items) {
         if (!('str' in item) || !item.str) continue
         const [a, b, c, d, e, f] = item.transform as Matrix
@@ -317,6 +335,23 @@ export async function readPdf(
         // Rotated text (a turned table, a chart label) is not part of the running text. A mark
         // set at an angle (a slanted "/" in a tick box) is still a mark.
         if (!slanted && (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0)) {
+          turned += item.str.replace(/\s/g, '').length
+          if (
+            Math.abs(a) < 0.01 &&
+            Math.abs(d) < 0.01 &&
+            Math.abs(Math.abs(b) - Math.abs(c)) < 0.01
+          ) {
+            const [rx, ry] = toView(e, f)
+            const cw = b < 0
+            const x0 = cw ? ry : vp.height - ry
+            sideways.push({
+              text: item.str,
+              x0,
+              x1: x0 + item.width,
+              y: cw ? vp.width - rx : rx,
+              size: Math.abs(b),
+            })
+          }
           if (item.str.trim().length === 1) {
             const [rx, ry] = toView(e, f)
             const rs = Math.hypot(a, b) * Math.abs(vp.transform[3] || 1)
@@ -362,7 +397,6 @@ export async function readPdf(
               .join(''),
           )
         : ''
-      const lines = toLines(spans, n)
       // White text on white paper (a hidden line left in the file) is not read: with no coloured
       // shape under it, which would make it a caption on a dark box.
       const whites = colored.filter((c) => c.color === '#ffffff').map((c) => flat(c.text))
@@ -372,6 +406,55 @@ export async function readPdf(
           m.fill &&
           !/^#f[0-9a-f]f[0-9a-f]f[0-9a-f]$/i.test(m.fill) &&
           m.x1 - m.x0 < 0.95 * vp.width,
+      )
+      // (a hidden piece standing over a line of real text is dropped before the lines are made)
+      // A page set wholly sideways keeps its foot at the bottom of that frame.
+      const sideChars = sideways.reduce((s, q) => s + q.text.replace(/\s/g, '').length, 0)
+      const lowest = Math.max(...sideways.map((q) => q.y))
+      const feet = sideways.filter((q) => q.y >= lowest - 3)
+      turnedFeet.push(
+        sideChars > 0.5 * spans.reduce((s, q) => s + q.text.replace(/\s/g, '').length, 0) &&
+          lowest > vp.width - 72 &&
+          feet.some((q) => /\S/.test(q.text))
+          ? ((): Line => {
+              const g = feet.sort((p, q) => p.x0 - q.x0)
+              const text = g
+                .map((q) => q.text)
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+              return {
+                page: n,
+                y: lowest,
+                x0: g[0].x0,
+                x1: Math.max(...g.map((q) => q.x1)),
+                size: g[0].size,
+                text,
+                runs: [{ text, size: Math.round(g[0].size * 2) / 2 }],
+                spans: g.map((q) => ({ text: q.text.trim(), x0: q.x0, x1: q.x1 })),
+              }
+            })()
+          : undefined,
+      )
+      const whiteView = whiteAt.map(([x, y]) => toView(x, y))
+      const lines = toLines(
+        whites.length
+          ? spans.filter(
+              (s) =>
+                flat(s.text).length < 4 ||
+                !whites.some((w) => w.includes(flat(s.text))) ||
+                // (white text begins where the piece does: another piece of the same words
+                // elsewhere on the page is the visible one)
+                !whiteView.some(
+                  ([x, y]) => Math.abs(x - s.x0) <= 1.5 && Math.abs(y - s.y) <= 1.5,
+                ) ||
+                shapes.some(
+                  (m) =>
+                    m.x0 <= s.x0 + 2 && m.x1 >= s.x1 - 2 && m.y0 <= s.y - s.size && m.y1 >= s.y,
+                ),
+            )
+          : spans,
+        n,
       )
       // A typed-over box (a free-text note with its own look) hides a template line beneath it:
       // a line wholly inside one that does not say what the line says is not on the page.
@@ -438,6 +521,7 @@ export async function readPdf(
         images: images.map(({ x0, y0, x1, y1, z }) => ({ x0, y0, x1, y1, z })),
         marks,
         glyphs,
+        ...(turned ? { turned } : {}),
         colored: own.map(readable),
         ...(own.length < colored.length ? { linked: true } : {}),
       })
@@ -540,6 +624,7 @@ export async function readPdf(
       bodyish,
     )
     allLines[n] = body
+    if (!footer.length && turnedFeet[n]) footer.push(turnedFeet[n]!)
     pages[n].header = header.map((l) => l.text).join('\n')
     pages[n].footer = footer.map((l) => l.text).join('\n')
     pages[n].footerLines = footer
@@ -602,7 +687,8 @@ function toLines(spans: Span[], page: number): Line[] {
           return { ...s, text: s.text.slice(n), x0: q.x1 }
       return s
     })
-    const ink = g.filter((s) => s.text.trim())
+    // (a span of blank glyphs, control characters a font prints as spaces, is no ink)
+    const ink = g.filter((s) => [...s.text].some((c) => c.trim() && c.charCodeAt(0) >= 32))
     if (!ink.length) continue
     // The baseline and size of the line are those of its longest span (not a superscript).
     const main = ink.reduce((p, q) => (q.text.length * q.size > p.text.length * p.size ? q : p))
@@ -687,7 +773,10 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
         // (a number run into the last word: "Learning118")
         .replace(/(?<=\p{L})\d+\s*$/u, '')
         .replace(/\d+/g, '#')
+        .replace(/[’‘]/g, "'")
         .replace(/\s+/g, ' ')
+        // (a title cut short and its dots: "Title…" and "Title ..." are one)
+        .replace(/[\s.…]+$/, '')
         .trim()
         .toLowerCase()
       return { l, k, side, d: Math.round(side === 'f' ? h - l.y : l.y) }
@@ -747,7 +836,9 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
       x.side === 'f' &&
       !out.has(x.l) &&
       feetKeys.has(x.k) &&
-      /(…|\.{2,}|\.\s\.\s\.)\s*([ivxlcdm]+|\d+)\s*$/i.test(x.l.text)
+      (/(…|\.{2,}|\.\s\.\s\.)\s*([ivxlcdm]+|\d+)\s*$/i.test(x.l.text) ||
+        // (the whole title, no ellipsis: its number after it, and nothing under the line)
+        (/\s([ivxlcdm]+|\d+)$/i.test(x.l.text) && pagesLines[x.l.page].at(-1) === x.l))
     )
       out.add(x.l)
   // The same footer wrapped another way on a few pages (a portrait page among landscape ones):

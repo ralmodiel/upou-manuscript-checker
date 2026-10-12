@@ -254,6 +254,16 @@ export function findCaptions(ctx: Ctx): Caption[] {
       /^(fig(ure)?\.?|table|chart)\s*\d+[A-Za-z]{2,}/i.test(t)
     )
       continue
+    // "Chart 2: Title" right under a bare "Figure 68.": the figure's title, not a caption of its own.
+    const bare = k > 0 ? LABEL.exec(norm(doc.paras[k - 1].text)) : null
+    if (
+      /^chart/i.test(m[1]) &&
+      bare &&
+      !bare[3] &&
+      !/^chart/i.test(bare[1]) &&
+      doc.paras[k - 1].page === p.page
+    )
+      continue
     const number = m[2].replace(/\s/g, '')
     const rest = m[3]
     // "Table 1 shows that…" and "Table 1, the…" are sentences about the table, not its caption;
@@ -274,7 +284,11 @@ export function findCaptions(ctx: Ctx): Caption[] {
         const q = doc.paras[j]
         if (q.inTable || q.image) break
         if (norm(q.text)) {
-          if (norm(q.text).length <= 250 && !LABEL.test(norm(q.text))) title = q
+          if (
+            norm(q.text).length <= 250 &&
+            (!LABEL.test(norm(q.text)) || (/^chart/i.test(norm(q.text)) && !/^chart/i.test(m[1])))
+          )
+            title = q
           break
         }
       }

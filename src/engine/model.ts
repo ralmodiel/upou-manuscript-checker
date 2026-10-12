@@ -109,6 +109,8 @@ export interface Page {
   })[]
   /** Small text marks (✓, X, /) and where they stand, for the permission boxes. */
   glyphs: (Box & { text: string })[]
+  /** Letters of text set turned (a landscape table's cells): not part of the lines, but on the page. */
+  turned?: number
   /** Text painted in a colour other than black ('#rrggbb'). */
   colored: { text: string; color: string }[]
   /** Coloured text inside hyperlinks was left out of `colored` (a link keeps its colour). */

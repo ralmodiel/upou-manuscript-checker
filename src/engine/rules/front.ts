@@ -8,6 +8,7 @@ import {
   DATE,
   distance,
   garbled,
+  readsOddly,
   isUpper,
   list,
   lowerWords,
@@ -68,6 +69,8 @@ export interface TitlePage {
   rows: Para[]
   /** The permission table is a picture (PDF): no row is text, so none could be read. */
   tablePicture?: boolean
+  /** The permission statement is not text but a wide picture on the page. */
+  statementPicture?: boolean
   studentSig?: Para
   adviserSig?: Para
   /** What the manuscript is ("Thesis", "Dissertation", "Special Problem"…): the words before
@@ -202,7 +205,10 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     find(paras, PROGRAM) ?? find(paras, /(associate|bachelor|master|doctor) (of|in)|program/i)
   const adviserLabel = find(paras, ADVISER_LABEL)
   const work = workOf(adviserLabel, program)
-  const faculty = paras.find((p, k) => k > idx(adviserLabel) && FACULTY.test(norm(p.text)))
+  const faculty =
+    paras.find((p, k) => k > idx(adviserLabel) && FACULTY.test(norm(p.text))) ??
+    // (a faculty the template does not list: the line is still the faculty's)
+    paras.find((p, k) => k > idx(adviserLabel) && /^faculty of [a-z]/i.test(norm(p.text)))
   const permissionText = find(paras, PERMISSION_TEXT)
   // The major under the degree program, in parentheses on a line of its own, belongs to it.
   let from = idx(program) + 1
@@ -296,6 +302,11 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     date: date && date !== permissionText ? date : undefined,
     permissionText,
     rows,
+    statementPicture:
+      !permissionText &&
+      !!ctx.doc.pages?.[page]?.images.some(
+        (b) => b.x1 - b.x0 >= 0.5 * ctx.doc.pages![page].width && b.y1 - b.y0 >= 20,
+      ),
     tablePicture:
       rows.length < 4 &&
       !!ctx.doc.pages?.[page]?.images.some(
@@ -512,7 +523,9 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
       (a) =>
         a.k < 0 &&
         !inPicture.includes(a) &&
-        !(tp.tablePicture && /^the permission codes|signature/i.test(a.name)),
+        !(tp.tablePicture && /^the permission codes|signature/i.test(a.name)) &&
+        !(tp.statementPicture && /^permission of/i.test(a.name)) &&
+        !(tp.faculty && /^the faculty/i.test(a.name)),
     )
     .map((a) => a.name)
   // Lines in a font that could not be read (control characters for letters): the labels may be
@@ -579,6 +592,8 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
   for (const [re, right] of [
     [/^student\s+signature/i, "Student's Signature"],
     [SIGNATURE_BARE, ''],
+    // (an apostrophe and no "s": "Dissertation adviser' signature")
+    [new RegExp(`\\b(?:${ROLE})['’]\\s*signature`, 'i'), ''],
   ] as const) {
     const p = tp.paras.find((x) => re.test(norm(x.text)))
     if (p) {
@@ -590,13 +605,21 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
         .slice(whole.lastIndexOf(':', Math.max(0, at - 1)) + 1)
         .replace(/\s*:$/, '')
         .trim()
-      const want = right || `${titleCase(label.replace(/\s+signature\s*$/i, ''))}'s Signature`
+      const want = right || `${titleCase(label.replace(/['’]?\s*signature\s*$/i, ''))}'s Signature`
       soft.push(
         `Add an apostrophe and s to the signature label: “${want}” (not “${quote(label, 40)}”)`,
       )
       lines.push(p)
     }
   }
+  if (tp.statementPicture && !found.some((a) => a.k >= 0 && /^permission of/i.test(a.name)))
+    soft.push(
+      '“Permission of the classification…” is not text on the page (perhaps a picture): check that the statement is there, as in the template',
+    )
+  if (tp.faculty && !FACULTY.test(norm(tp.faculty.text)))
+    soft.push(
+      `Check the faculty line, “${quote(tp.faculty.text, 60)}”, against the template: it names Information and Communication Studies, Management and Development Studies or Education`,
+    )
   if (hidden.length)
     soft.push(
       `Check ${list(hidden.map((n) => `“${n}”`))} yourself: ${
@@ -817,26 +840,46 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   const yesWord = line.spans.find((s) => /^yes$/i.test(s.text))
   const noWord = line.spans.find((s) => /^no$/i.test(s.text))
   const symbol = (s: { text: string }) => /^[^\p{L}\p{N}\s]$/u.test(s.text)
+  // Same row: the mark's middle within half a line of the row's middle.
+  const band = (b: Box) =>
+    Math.abs((b.y0 + b.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size
+  const width = (b: Box) => b.x1 - b.x0
+  // Boxes drawn as shapes or small pictures (empty or filled), left to right.
+  const squares = [
+    ...page.marks.filter((m) => m.kind === 'path'),
+    ...page.images.filter((b) => b.y1 - b.y0 <= 2 * line.size),
+  ]
+    .filter(
+      (m) =>
+        band(m) &&
+        width(m) >= 0.5 * line.size &&
+        width(m) <= 1.6 * line.size &&
+        m.y1 - m.y0 >= 0.4 * line.size &&
+        m.y1 - m.y0 <= 1.2 * line.size,
+    )
+    .map((m) => m.x0)
+    .sort((a, b) => a - b)
   const divider = (() => {
     if (or) return or.x0
     if (!yesWord || !noWord) return undefined
     const next = line.spans.filter((s) => s.x0 >= yesWord.x1 - 1 && s !== yesWord && s !== noWord)
-    const boxBefore = line.spans.some((s) => symbol(s) && s.x1 <= yesWord.x0 + 1)
+    const boxBefore =
+      line.spans.some((s) => symbol(s) && s.x1 <= yesWord.x0 + 1) ||
+      squares.some((x) => x < yesWord.x0 && x > yesWord.x0 - 4 * line.size)
     const edge = boxBefore ? yesWord.x1 : (next.find(symbol)?.x1 ?? yesWord.x1)
+    // (a box drawn as a shape before the No word ends the Yes group too)
+    const nextBox = boxBefore ? squares.find((x) => x >= edge - 1 && x < noWord.x0) : undefined
     const start = line.spans.find((s) => s.x0 >= edge + 1 && s !== yesWord)
-    return start ? (edge + start.x0) / 2 : (yesWord.x1 + noWord.x0) / 2
+    const stop = Math.min(start?.x0 ?? Infinity, nextBox ?? Infinity)
+    return stop < Infinity ? (edge + stop) / 2 : (yesWord.x1 + noWord.x0) / 2
   })()
   // The words in one span ("Yes or No") or a mark inside one ("X Yes"): read the line's text.
   if (divider === undefined || !yesWord) return typedChoice(line.text)
-  // Same row: the mark's middle within half a line of the row's middle.
-  const band = (b: Box) =>
-    Math.abs((b.y0 + b.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size
   const from = yesWord.x0 - 4 * line.size
   const side = (x: number) => (x < divider ? 'yes' : 'no')
   // Filled shapes on both sides are the boxes themselves; on one side only, they mark it: a box
   // filled in, a word highlighted (a filled shape, not white, wider than a rule, no wider than a word).
   const oneSide = (xs: number[]) => (new Set(xs.map(side)).size === 1 ? xs : [])
-  const width = (b: Box) => b.x1 - b.x0
   // Pictures (a Google Docs export draws its boxes as pictures): those on one side only, or more of
   // them on one side (a tick pasted on its box), mark it; with one box picture a side, the clearly
   // darker one is a ticked box swapped in.
@@ -960,6 +1003,22 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   return chosen === 'none' ? typedChoice(line.text) : chosen
 }
 
+/** A permission row whose two boxes are glyphs of a symbol font (one before "Yes", one before
+ *  "No") that differ from one another: which glyph is the ticked box depends on the font. */
+function symbolBoxes(ctx: Ctx, row: Para): boolean {
+  const page = ctx.doc.pages?.[row.page ?? -1]
+  const line = row.lines?.[0]
+  const yes = line?.spans.find((s) => /^yes$/i.test(s.text))
+  if (!page || !line || !yes) return false
+  const near = page.glyphs.filter(
+    (g) =>
+      /^[^\p{L}\p{N}\s]$/u.test(g.text) &&
+      g.x0 > yes.x0 - 4 * line.size &&
+      Math.abs((g.y0 + g.y1) / 2 - (line.y - 0.3 * line.size)) < 0.5 * line.size,
+  )
+  return near.length >= 2 && new Set(near.map((g) => g.text)).size === 2
+}
+
 function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'title.permission'
   if (tp.rows.length < 4 && tp.tablePicture)
@@ -988,6 +1047,12 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   const both = rows.filter((r) => r.choice === 'both')
   const where = at(tp.rows[0])
   const msg = "Select one permission code (one 'Yes', others marked as 'No')."
+  if (unmarked.length === 4 && tp.rows.slice(0, 4).every((r) => symbolBoxes(ctx, r)))
+    return review(
+      id,
+      'The boxes beside “Yes” and “No” are drawn with a symbol font, so which of them is ticked could not be read here. Check that one code is marked “Yes” and the others “No”.',
+      { where },
+    )
   if (unmarked.length === 4)
     return fix(id, msg, { details: ['No mark found beside any “Yes” or “No”.'], where })
   const details: string[] = []
@@ -1227,6 +1292,12 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
       )}).`,
     )
   const differs = !!main && titleForm(main) !== titleForm(t)
+  if (differs && readsOddly(main, t))
+    return review(
+      id,
+      `The title on the University Permission Page could not be read reliably (its letters are spaced out or out of order in the file). Check that it is the ${tp.work.toLowerCase()} title as on the Title Page, in upper case.`,
+      { where: at(lines[0]) },
+    )
   if (differs && isUpper(t) && titleLoose(main) === titleLoose(t))
     return review(
       id,
@@ -1300,7 +1371,19 @@ function permissionSignature(ctx: Ctx): Finding {
   const placeholder = typed.some((t) => /\bname and date$/i.test(t))
   // A name or a date whose digits came out of the font as control characters.
   const unreadable = typed.some((t) => [...t].some((c) => c.charCodeAt(0) < 32 && c !== '	'))
-  if (!placeholder && !typed.some((t) => DATE.test(t)) && unreadable) {
+  // The signature block as a picture under the text (name, line and date typed in it).
+  const last = paras.at(-1)?.lines?.at(-1)
+  const pg = ctx.doc.pages?.[last?.page ?? -1]
+  const pictured =
+    !label &&
+    !!last &&
+    !!pg?.images.some((b) => b.x1 - b.x0 >= 100 && b.y0 >= last.y - 2 && b.y1 < pg.height - 40)
+  if (pictured && !placeholder && !typed.some((t) => DATE.test(t))) {
+    issues.push(
+      'The signature block of the University Permission Page is a picture, so the name and date in it could not be read. Check that your name and the date of submission are there.',
+    )
+    statuses.push('review')
+  } else if (!placeholder && !typed.some((t) => DATE.test(t)) && unreadable) {
     issues.push(
       'The name or the date above the label could not be read reliably (its font is encoded oddly). Check that your name and the date of submission are there.',
     )
@@ -1331,7 +1414,12 @@ function permissionSignature(ctx: Ctx): Finding {
   return {
     id,
     status: worst(statuses),
-    message: issues.length === 1 ? issues[0] : 'Add your signature and the date of submission.',
+    message:
+      issues.length === 1
+        ? issues[0]
+        : pictured && sig.status !== 'ok'
+          ? sig.message
+          : 'Add your signature and the date of submission.',
     details: issues.length === 1 ? undefined : issues,
     where: at(label),
   }
@@ -1477,6 +1565,13 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
     return review(
       id,
       `The title could not be read reliably (its font is encoded oddly). Check that the Acceptance Page has the same ${tp.work.toLowerCase()} title as the Title Page.`,
+      { where: at(p) },
+    )
+  // Letters spaced out, runs out of order, a glyph read as a digit: the text layer's failing.
+  if (main && titleForm(main) !== titleForm(t) && readsOddly(main, t))
+    return review(
+      id,
+      `The title on the Acceptance Page could not be read reliably (its letters are spaced out or out of order in the file). Check that it is the same ${tp.work.toLowerCase()} title as on the Title Page.`,
       { where: at(p) },
     )
   // Differences in punctuation, a hyphen or a space only: for the student to look at.

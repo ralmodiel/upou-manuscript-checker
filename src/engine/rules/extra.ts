@@ -96,7 +96,9 @@ function blankPages(ctx: Ctx): Finding {
     const inked = new Set(doc.paras.flatMap((p) => (p.lines ?? []).map((l) => l.page)))
     const drawn = noTextPages(doc)
     const blank = (doc.pages ?? [])
-      .filter((pg) => !inked.has(pg.n) && !pg.images.length && !drawn.has(pg.n))
+      .filter(
+        (pg) => !inked.has(pg.n) && !pg.images.length && !drawn.has(pg.n) && (pg.turned ?? 0) < 10,
+      )
       .map((pg) => pg.n)
     if (!blank.length) return ok(id, 'No blank pages.')
     return fix(

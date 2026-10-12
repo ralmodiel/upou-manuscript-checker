@@ -8,6 +8,7 @@ import { reportDocx } from '../report/docx.ts'
 import { reportModel } from '../report/model.ts'
 import { check, FileProblem, sniff } from './check.ts'
 import { ITEMS } from './checklist.ts'
+import { readsOddly } from './text.ts'
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
@@ -183,6 +184,34 @@ describe('check', () => {
     const apa = finding(r, 'references.apa')
     expect(apa.status).toBe('fix')
     expect(apa.details?.join(' ')).toMatch(/Listed twice.*add a, b.*personal communications/)
+  })
+
+  it('does not call two entries with one author, year and title but other details the same entry', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('REFERENCES', '<w:jc w:val="center"/>'),
+        para('Cruz, A. (2019). Course notes. Module 1 on radio. Open Press.', double),
+        para('Cruz, A. (2019). Course notes. Module 2 on print. Open Press.', double),
+      ),
+      opts,
+    )
+    const apa = finding(r, 'references.apa').details?.join(' ') ?? ''
+    expect(apa).not.toMatch(/Listed twice:/)
+    expect(apa).toMatch(/Listed twice, it seems, with different details/)
+  })
+
+  it('reads a title the text layer spaced out or shuffled as unreadable, not as another title', () => {
+    expect(readsOddly('A STUDY OF RADIO NARRATIVES', 'A STUDY OF RA DIO NARRAT IVES')).toBe(true)
+    // (a word joined, two letters swapped: the writer's slips, to be corrected)
+    expect(readsOddly('HEALTH CARE OF RURAL TOWNS', 'HEALTHCARE OF RURAL TOWNS')).toBe(false)
+    expect(readsOddly('SECURITY OF RURAL TOWNS', 'SCEURITY OF RURAL TOWNS')).toBe(false)
+    expect(readsOddly('A STUDY OF RADIO NARRATIVES', 'A STUDY OF RADIO IVENARRAT S')).toBe(true)
+    expect(readsOddly('AN ANALYSIS OF RADIO', 'AN ANALYS1S OF RADIO')).toBe(true)
+    expect(readsOddly('A STUDY OF RADIO NARRATIVES', 'A STUDY OF TELEVISION NARRATIVES')).toBe(
+      false,
+    )
   })
 
   it('tells a mistyped year from one outside the parentheses, and finds a lone a/b letter', async () => {

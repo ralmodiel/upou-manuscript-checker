@@ -80,7 +80,7 @@ const transcript = (t: string) => /^(0\d{1,3}\s|\(\(|extracted lines?\b)/i.test(
 
 /** PDF: the paragraph's lines lie within one drawn shape (a box of a diagram, a table's cell)
  *  smaller than the page's text: text of a figure, not running text. */
-export function inShape(ctx: Ctx, p: Para): boolean {
+export function inShape(ctx: Ctx, p: Para, widest = 0.7): boolean {
   const ls = p.lines
   const pg = ls && ctx.doc.pages?.[ls[0].page]
   if (!ls || !pg || ls.some((l) => l.page !== ls[0].page)) return false
@@ -91,7 +91,7 @@ export function inShape(ctx: Ctx, p: Para): boolean {
   return pg.marks.some(
     (m) =>
       m.kind === 'path' &&
-      m.x1 - m.x0 < 0.7 * pg.width &&
+      m.x1 - m.x0 < widest * pg.width &&
       m.y1 - m.y0 > 1.5 * ls[0].size &&
       m.x0 <= x0 + 2 &&
       m.x1 >= x1 - 2 &&
@@ -131,6 +131,8 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !(isHeadingish(p) && t.length <= 120) &&
       !tableNote(paras[p.i - 1], p) &&
       !tableRow(p) &&
+      // (a line with a column's gap inside it, after any list label: cells of a table side by side)
+      !p.lines?.some((l) => /\S\t/.test(l.text.replace(/^\S{1,5}\t/, ''))) &&
       !transcript(t) &&
       !glossary(p) &&
       !wrappedRow(p) &&
