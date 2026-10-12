@@ -17,7 +17,11 @@ const model = (text: string): ReportModel => ({
   summary: text,
   intro: text,
   parts: [
-    { n: 1, name: 'Title Page', items: [{ check: true, text, details: [text], where: text }] },
+    {
+      letter: 'A',
+      name: 'Title Page',
+      items: [{ check: true, text, details: [text], where: text }],
+    },
   ],
   passed: [{ name: 'Acceptance Page', items: [text] }],
   closing: [text],

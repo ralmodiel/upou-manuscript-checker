@@ -182,3 +182,7 @@ export const CHECKLIST: Part[] = [
 ]
 
 export const ITEMS = CHECKLIST.flatMap((p) => p.items)
+
+/** A part's letter as the checklist sections are named (A. Title Page, B. …); "+" for the extra part. */
+export const partLetter = (k: number): string =>
+  CHECKLIST[k].extra ? '+' : String.fromCharCode(65 + k)

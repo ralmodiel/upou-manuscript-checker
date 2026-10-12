@@ -1,7 +1,7 @@
-// The formatting comments as a document, shaped like the program reviewers' emails: numbered parts
+// The formatting comments as a document, shaped like the program reviewers' emails: lettered parts
 // with dash items (each with the pages or text to look at), then what is already in order, the
 // closing reminder, and the notices. The Word and PDF writers both render this.
-import { CHECKLIST } from '../engine/checklist'
+import { CHECKLIST, partLetter } from '../engine/checklist'
 import { stripControls } from '../engine/controls'
 import type { Finding, Report, Where } from '../engine/report'
 import { NOTICE, PRIVATE_SHORT, VERIFY } from '../notice'
@@ -20,7 +20,7 @@ export interface ReportModel {
   intro: string
   /** How pages are counted, when printed page numbers are given too. */
   pagesNote?: string
-  parts: { n: number; name: string; items: ReportItem[] }[]
+  parts: { letter: string; name: string; items: ReportItem[] }[]
   passed: { name: string; items: string[] }[]
   closing: string[]
   notices: string[]
@@ -108,7 +108,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     .filter((i) => byId.get(i.id)?.status === 'fix').length
 
   const parts: ReportModel['parts'] = []
-  for (const part of CHECKLIST) {
+  for (const [k, part] of CHECKLIST.entries()) {
     const items = part.items
       .map((i) => ({ i, f: byId.get(i.id)! }))
       .filter(({ f }) => f.status === 'fix' || f.status === 'review')
@@ -127,7 +127,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
           where: f.message.replace(/ /g, ' ').includes(where) ? '' : where,
         }
       })
-    if (items.length) parts.push({ n: parts.length + 1, name: part.name, items })
+    if (items.length) parts.push({ letter: partLetter(k), name: part.name, items })
   }
   const passed = CHECKLIST.filter((p) => !p.extra)
     .map((p) => ({

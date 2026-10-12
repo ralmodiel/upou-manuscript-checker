@@ -42,11 +42,17 @@ export function reportDocx(m: ReportModel): Uint8Array {
   body.push(para(run(m.intro), { after: 10 }))
   for (const part of m.parts) {
     body.push(
-      para(run(`${part.n}. ${part.name}`, { bold: true, size: 12 }), {
-        before: 8,
-        after: 4,
-        keepNext: true,
-      }),
+      para(
+        run(`${part.letter === '+' ? '' : part.letter + '. '}${part.name}`, {
+          bold: true,
+          size: 12,
+        }),
+        {
+          before: 8,
+          after: 4,
+          keepNext: true,
+        },
+      ),
     )
     for (const item of part.items) {
       const where = item.where ? run(`  (${item.where})`, { size: 9.5, color: '5C5A5C' }) : ''

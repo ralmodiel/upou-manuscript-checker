@@ -9,7 +9,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import { CHECKLIST, type Item } from '../engine/checklist'
+import { CHECKLIST, partLetter, type Item } from '../engine/checklist'
 import type { Finding, Report, Status, Where } from '../engine/report'
 import { saveFile } from '../lib/browser'
 import { PRIVATE_SHORT, VERIFY } from '../notice'
@@ -483,7 +483,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                   <span
                     className={`font-display text-xl leading-none tabular-nums ${p.fix ? 'text-fix' : p.review ? 'text-review' : 'text-ok'}`}
                   >
-                    {p.extra ? '+' : k + 1}
+                    {partLetter(k)}
                   </span>
                   <span className="text-sm leading-snug font-semibold text-ink">{p.name}</span>
                 </span>
@@ -574,7 +574,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                     id={`part-${k}-title`}
                     className="flex items-baseline gap-3 font-display text-3xl text-ink"
                   >
-                    <span className="text-maroon tabular-nums">{p.extra ? '+' : k + 1}</span>
+                    <span className="text-maroon tabular-nums">{partLetter(k)}</span>
                     {p.name}
                   </h2>
                   <PartState part={p} />

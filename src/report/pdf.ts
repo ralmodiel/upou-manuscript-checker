@@ -132,7 +132,13 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   if (m.pagesNote) write(m.pagesNote, { size: 9.5, after: 6 })
   write(m.intro, { after: 8 })
   for (const part of m.parts) {
-    write(`${part.n}. ${part.name}`, { font: bold, size: 12, before: 6, after: 3, keep: 3 })
+    write(`${part.letter === '+' ? '' : part.letter + '. '}${part.name}`, {
+      font: bold,
+      size: 12,
+      before: 6,
+      after: 3,
+      keep: 3,
+    })
     for (const item of part.items) {
       const text = `${item.check ? 'Check: ' : ''}${item.text}${item.where ? `  (${item.where})` : ''}`
       write(text, { lead: '-', indent: 6, hang: 10, after: 2 })

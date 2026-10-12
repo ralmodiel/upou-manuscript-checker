@@ -1,7 +1,7 @@
 // Stage 1: what this is, the privacy promise, the drop zone; then the program's files and the whole
 // checklist in its own words, so a visitor knows what will be looked at before choosing a file.
 import { useRef } from 'react'
-import { CHECKLIST } from '../engine/checklist'
+import { CHECKLIST, partLetter } from '../engine/checklist'
 import { PRIVATE_BODY, PRIVATE_HEAD, PRIVATE_SHORT } from '../notice'
 import { DownloadIcon, ExternalLinkIcon, PageIcon, ShieldIcon } from './icons'
 import { buttonClass } from './styles'
@@ -197,7 +197,7 @@ export default function Prepare({
             <li key={part.id} className="mb-8 break-inside-avoid">
               <h3 className="flex items-baseline gap-2 font-semibold text-ink">
                 <span className="font-display text-xl text-maroon tabular-nums">
-                  {part.extra ? '+' : k + 1}
+                  {partLetter(k)}
                 </span>
                 {part.name}
               </h3>
