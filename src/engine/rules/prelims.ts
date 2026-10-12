@@ -103,7 +103,7 @@ function numbers(ctx: Ctx): Finding {
       'Chapter I was not found, so the numbering of the preliminary pages was not checked.',
     )
   const msg =
-    'Add the shortened thesis title + ellipsis + page number (in Roman numerals: iv, v, vi…) on the preliminary pages.'
+    'Add the shortened title + ellipsis + page number (in Roman numerals: iv, v, vi…) on the preliminary pages.'
   if (doc.kind === 'pdf') {
     const first = doc.paras[start]?.page ?? 3
     const last = (doc.paras[s.chapters[0].heading].page ?? doc.pages!.length) - 1

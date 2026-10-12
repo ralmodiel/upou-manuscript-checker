@@ -12,7 +12,7 @@ export default function Checking({ name, progress }: { name: string; progress: P
   const pct = progress.total ? Math.round(((progress.done ?? 0) / progress.total) * 100) : undefined
   const status =
     progress.step === 'checking'
-      ? 'Checking every item of the MDC Format Checklist…'
+      ? 'Checking every item of the format checklist…'
       : progress.total
         ? `Reading page ${progress.done} of ${progress.total}…`
         : 'Reading the file…'

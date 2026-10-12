@@ -8,7 +8,7 @@ related_targets: []
 ## Scope
 
 The whole site: one page, mode Operate (the visitor's success is a checked manuscript and a list of
-corrections). Students and MDC reviewers use it the same way.
+corrections). Students and program reviewers use it the same way.
 
 ## Audience, job, constraints
 
@@ -20,7 +20,7 @@ results, footer, FAQ and report. Template and checklist downloads.
 ## Direction contract
 
 THESIS: A guided desk in three stages, Prepare, Check, Correct, that walks one manuscript through
-the MDC checklist part by part; it refuses the category default of a lone upload box over a wall of
+the format checklist part by part; it refuses the category default of a lone upload box over a wall of
 mixed results.
 
 OWN-WORLD: The UPOU OER system: paper ground, charcoal ink, UP maroon action fills, forest for

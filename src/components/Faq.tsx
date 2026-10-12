@@ -89,19 +89,33 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
         </p>
         <p>
           No AI reads your file: the checks are rules written into this site, and they run the same
-          way every time. Treat every result as a guide and confirm it in your manuscript. MDC
-          Program Support’s format review remains the official check, and its comments come first.
+          way every time. Treat every result as a guide and confirm it in your manuscript. Your
+          program’s format review remains the official check, and its comments come first.
         </p>
       </>
+    ),
+  },
+  {
+    q: 'Does it work for my program?',
+    a: (
+      <p>
+        It is meant for every UPOU program and level: a bachelor’s special or capstone project, a
+        master’s capstone project, special problem or thesis, and a doctoral dissertation. It
+        follows the MDC program’s copy of UPOU’s central format checklist. Where UPOU’s style guide
+        (issued in May 2022) differs from that checklist, as with upper case or title case for the
+        title, other programs get “To review” instead of “To correct”. Ask your program office
+        whether it adds rules of its own.
+      </p>
     ),
   },
   {
     q: 'Who is it for?',
     a: (
       <p>
-        It is made for MDC students preparing their manuscript and for reviewers preparing format
-        comments; both use the same page. The downloadable comments follow the layout of the
-        program’s comment emails: numbered parts with the corrections under each.
+        It is made for UPOU students at every level preparing a special problem, thesis or
+        dissertation, and for reviewers preparing format comments; both use the same page. The
+        downloadable comments follow the layout of the program’s comment emails: numbered parts with
+        the corrections under each.
       </p>
     ),
   },

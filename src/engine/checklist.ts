@@ -1,4 +1,4 @@
-// The MDC Format Checklist (data/Format Checklist.xlsx), item for item and in its wording, plus a
+// The format checklist (data/Format Checklist.xlsx, the MDC program's copy of UPOU's central one), item for item and in its wording, plus a
 // last group for things the program's reviewers point out that the checklist does not list.
 
 export interface Item {

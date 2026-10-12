@@ -48,6 +48,37 @@ describe('check', () => {
     expect(finding(r, 'extra.placeholders').status).toBe('ok')
   })
 
+  it('reads the title page of any UPOU program and level', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'project.docx',
+      docx(
+        ...[
+          'UNIVERSITY OF THE PHILIPPINES',
+          'OPEN UNIVERSITY',
+          'BACHELOR OF ARTS IN MULTIMEDIA STUDIES',
+          'Juan A. Cruz',
+          'A Study of Community Radio',
+          'Special Project Adviser:',
+          'MARIA B. SANTOS, Ph.D.',
+          'Faculty of Management and Development Studies',
+          '12 May 2026',
+        ].map((t) => para(t, c)),
+        para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+        para('INTRODUCTION', c),
+        para('Body text.'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'title.adviser').message).not.toMatch(/write your/i)
+    expect(finding(r, 'title.sequence').details?.join(' ') ?? '').not.toMatch(
+      /degree program|Adviser:|the Faculty/,
+    )
+    // Title case is UPOU's style guide; upper case the MDC checklist's: for the student to check.
+    expect(finding(r, 'title.title')).toMatchObject({ status: 'review' })
+    expect(finding(r, 'title.title').message).toMatch(/special project title/)
+  })
+
   it('reports template text left in', async () => {
     const r = await check('thesis.docx', thesis(para('Xxxxxxxxxxxxxxxx xxxxxxx.')), opts)
     expect(finding(r, 'extra.placeholders').status).toBe('fix')

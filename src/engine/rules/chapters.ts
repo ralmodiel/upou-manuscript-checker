@@ -467,7 +467,7 @@ export function bodyNumbers(
 ): Finding {
   const { doc, s } = ctx
   if (start >= end) return na(id, `No ${name} found.`)
-  const msg = `Add the shortened thesis title + ellipsis + page number (in Arabic numerals) on the ${name}.`
+  const msg = `Add the shortened title + ellipsis + page number (in Arabic numerals) on the ${name}.`
   const ch1 = s.chapters[0] ? doc.paras[s.chapters[0].heading] : undefined
   if (doc.kind === 'pdf') {
     const firstPages = new Set(s.chapters.map((c) => doc.paras[c.heading].page))
@@ -540,7 +540,7 @@ export function chapterRules(ctx: Ctx): Finding[] {
   if (!s.chapters.length) {
     // Without a chapter label the chapters cannot be told apart: nothing here was checked.
     const why =
-      'No chapter label (Chapter I, Chapter II…) was found, so this was not checked. Label the chapters as in the MDC template, or check this item yourself.'
+      'No chapter label (Chapter I, Chapter II…) was found, so this was not checked. Label the chapters as in the template, or check this item yourself.'
     return [
       number(ctx),
       hanging(ctx),

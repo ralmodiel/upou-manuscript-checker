@@ -1,7 +1,8 @@
-# MDC Format Check
+# UPOU Format Check
 
-A web app that checks a UP Open University (UPOU) Master of Development Communication (MDC) thesis
-manuscript against every item of the MDC Format Checklist, right in the browser. It lists what to
+A web app that checks a UP Open University (UPOU) manuscript, at any level and in any program (a
+bachelor's special or capstone project, a master's capstone project, special problem or thesis, a
+doctoral dissertation), against every item of the format checklist, right in the browser. It lists what to
 correct, with the pages to look at, and writes the comments as a Word or PDF file set out like the
 program's review emails.
 
@@ -27,8 +28,18 @@ program's review emails.
 
 This is an **unofficial proof of concept in its alpha testing stage**. It is not an official UPOU
 site and is not affiliated with or endorsed by UPOU. It was built diligently and meticulously with
-the help of AI, but it can still make mistakes, so every result needs human verification. MDC
-Program Support's review remains the official format check. See [NOTICE.md](NOTICE.md).
+the help of AI, but it can still make mistakes, so every result needs human verification. The
+program's own review remains the official format check. See [NOTICE.md](NOTICE.md).
+
+## Programs and sources
+
+The checklist is the MDC program's copy of UPOU's central format checklist (`data/`, offered for
+download with the template that follows it). The title and acceptance pages are read for any UPOU
+degree (Associate, Bachelor, Diploma, Master, Doctor; "of" or "in"), any of the three faculties and
+any manuscript type named before "Adviser:". Where UPOU's style guide (OVCAA 2017-4, issued by
+memorandum on 25 May 2022, the newest found) differs from the checklist, as in upper case versus
+title case for the title, other programs get _To review_, not _To correct_. Dean names are not
+hard-coded: they differ by faculty and change.
 
 ## Stack
 

@@ -15,7 +15,7 @@ export interface Folio {
   field?: boolean
 }
 
-const PLACEHOLDER = /shortened thesis title here/i
+const PLACEHOLDER = /shortened (thesis |dissertation |manuscript |project )?title here/i
 // The number after an ellipsis, a space, or a bar or dot set where the ellipsis goes ("Title │ii").
 const FOLIO = /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s*[|│¦•·]\s*|\s+|^)([ivxlcdm]+|\d+)\s*$/i
 
@@ -153,9 +153,9 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
     out.push({ type: 'value', page, text: `${at}shows ${folio.number}; it should be ${expected}` })
   const words = folio.title.split(/\s+/).filter(Boolean).length
   if (PLACEHOLDER.test(folio.title))
-    out.push({ type: 'placeholder', page, text: `${at}still says “Shortened thesis title here”` })
+    out.push({ type: 'placeholder', page, text: `${at}still says “Shortened title here”` })
   else if (!folio.title)
-    out.push({ type: 'title', page, text: `${at}has no shortened thesis title before the number` })
+    out.push({ type: 'title', page, text: `${at}has no shortened title before the number` })
   else {
     // A shortened title is a few words; the whole title runs longer.
     if (words > 12)
@@ -331,8 +331,8 @@ const LABEL: Record<Problem['type'], string> = {
   present: 'A page number shows on',
   kind: 'The wrong kind of numerals on',
   value: 'The wrong page number on',
-  title: 'No shortened thesis title on',
-  placeholder: '“Shortened thesis title here” is still on',
+  title: 'No shortened title on',
+  placeholder: '“Shortened title here” is still on',
   ellipsis: 'No ellipsis (…) after the shortened title on',
   long: 'A long title, not a shortened one, on',
   changed: 'The title in the footer changes on',

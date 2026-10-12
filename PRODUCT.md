@@ -8,19 +8,20 @@ web
 
 ## Users
 
-- **MDC students** (Master of Development Communication, UP Open University) finishing their thesis
-  manuscript. They check their own file before sending the PDF to MDC Program Support for the
+- **UPOU students at every level and in every program** (a bachelor's special or capstone project,
+  a master's capstone project, special problem or thesis, a doctoral dissertation) finishing their
+  manuscript. They check their own file before sending the PDF to their program for the
   format consistency check, and come back after each round of corrections.
-- **MDC Program Support staff** reviewing manuscripts. They use the same results to prepare the
+- **Program staff and advisers** reviewing manuscripts. They use the same results to prepare the
   formatting comments they email to students (numbered parts, dash items, as in the sample emails).
 - Both use the same page: no separate reviewer and student modes, and wording that serves either.
 
 ## Product Purpose
 
-Check a thesis manuscript against every item of the MDC Format Checklist
-(data/Format Checklist.xlsx: 38 items in 9 parts, plus a few things reviewers also point out) and
+Check a manuscript against every item of the format checklist (the MDC program's copy of UPOU's
+central one, data/Format Checklist.xlsx: 38 items in 9 parts, plus a few things reviewers also point out) and
 list what to correct, where, in the reviewer's own phrasing. Success: fewer correction rounds
-between students and MDC Program Support, and students who know exactly what to fix.
+between students and their program, and students who know exactly what to fix.
 
 ## Positioning
 
@@ -56,7 +57,7 @@ writing advice.
 - Text wordmark only; no UP seal or UPOU logo artwork on the site.
 - State prominently and in several places: an unofficial proof of concept, not an official UPOU
   site, in alpha testing; built diligently and meticulously with AI but it can still make mistakes,
-  so results need human verification; MDC Program Support's review is the official check.
+  so results need human verification; the program's own review is the official check.
 
 ## Evidence on Hand
 

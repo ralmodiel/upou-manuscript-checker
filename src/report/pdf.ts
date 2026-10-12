@@ -71,9 +71,9 @@ const MUTED = rgb(0.36, 0.353, 0.36)
 export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create()
   pdf.setTitle(`${m.title}: ${m.file}`)
-  pdf.setAuthor('MDC Format Check')
-  pdf.setCreator('MDC Format Check')
-  pdf.setProducer('MDC Format Check (pdf-lib)')
+  pdf.setAuthor('UPOU Format Check')
+  pdf.setCreator('UPOU Format Check')
+  pdf.setProducer('UPOU Format Check (pdf-lib)')
   const regular = await pdf.embedFont(StandardFonts.Helvetica)
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
   const italic = await pdf.embedFont(StandardFonts.HelveticaOblique)
@@ -158,7 +158,7 @@ export async function reportPdf(m: ReportModel): Promise<Uint8Array> {
   const pages = pdf.getPages()
   pages.forEach((p, k) => {
     const label = safe(
-      `MDC Format Check · unofficial proof of concept (alpha) · page ${k + 1} of ${pages.length}`,
+      `UPOU Format Check · unofficial proof of concept (alpha) · page ${k + 1} of ${pages.length}`,
     )
     p.drawText(label, { x: M, y: M - 18, size: 8, font: regular, color: MUTED })
   })

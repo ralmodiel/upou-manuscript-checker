@@ -23,7 +23,7 @@
     main.style.cssText =
       'max-width:34rem;margin:12vh auto;padding:0 16px;font:1rem/1.6 system-ui,sans-serif'
     var lines = [
-      ['h1', 'MDC Format Check'],
+      ['h1', 'UPOU Format Check'],
       ['p', 'This browser needs an update to support the checker.'],
       ['p', 'Update it, or open this page in an up-to-date Chrome, Edge, Firefox or Safari.'],
       ['p', 'An unofficial proof of concept in alpha testing, not an official UPOU site.'],

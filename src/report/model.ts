@@ -1,4 +1,4 @@
-// The formatting comments as a document, shaped like MDC Program Support's emails: numbered parts
+// The formatting comments as a document, shaped like the program reviewers' emails: numbered parts
 // with dash items (each with the pages or text to look at), then what is already in order, the
 // closing reminder, and the notices. The Word and PDF writers both render this.
 import { CHECKLIST } from '../engine/checklist'
@@ -139,7 +139,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
   return {
     title: 'Formatting comments',
     file: r.fileName,
-    meta: `${KIND[r.kind]}${r.pages ? ` · ${r.pages} pages` : ''} · checked ${date} against the MDC Format Checklist`,
+    meta: `${KIND[r.kind]}${r.pages ? ` · ${r.pages} pages` : ''} · checked ${date} against the UPOU format checklist`,
     summary: `${n('fix')} to correct · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed${extra ? ` · ${extra} more to correct outside the checklist` : ''}`,
     intro: parts.length
       ? 'Please revise the manuscript to reflect the following:'
@@ -158,7 +158,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     ],
     notices: [
       VERIFY,
-      `${NOTICE} ${PRIVATE_SHORT} This report was generated on the same device by MDC Format Check.`,
+      `${NOTICE} ${PRIVATE_SHORT} This report was generated on the same device by UPOU Format Check.`,
     ],
   }
 }

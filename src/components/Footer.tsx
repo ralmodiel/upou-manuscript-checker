@@ -35,7 +35,7 @@ export default function Footer() {
                 href={`${base}downloads/mdc-thesis-manuscript-template.docx`}
                 download="MDC Thesis Manuscript_SURNAME, Given Name.docx"
               >
-                MDC thesis manuscript template (.docx)
+                Manuscript template, MDC copy (.docx)
               </a>
             </li>
             <li>
@@ -44,7 +44,7 @@ export default function Footer() {
                 href={`${base}downloads/mdc-format-checklist.xlsx`}
                 download="Format Checklist.xlsx"
               >
-                MDC Format Checklist (.xlsx)
+                Format Checklist, MDC copy (.xlsx)
               </a>
             </li>
             <li>
@@ -95,7 +95,7 @@ export default function Footer() {
       <div className="border-t border-on-band/15 bg-black/10">
         <div className="mx-auto flex max-w-6xl flex-col gap-2 px-(--gutter) py-5 text-xs text-on-band/80 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-display text-lg leading-none text-on-band">
-            MDC <span className="text-band-gold">Format Check</span>
+            UPOU <span className="text-band-gold">Format Check</span>
           </p>
           <p>Not affiliated with or endorsed by UP Open University · alpha testing</p>
         </div>

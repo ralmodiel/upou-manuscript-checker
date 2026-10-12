@@ -1,8 +1,8 @@
 {
-  "name": "upou-mdc-manuscripts",
+  "name": "upou-manuscript-checker",
   "private": true,
   "version": "0.1.0",
-  "description": "Proof-of-concept format checker for UPOU MDC thesis manuscripts that runs entirely in the browser",
+  "description": "Proof-of-concept format checker for UPOU manuscripts (special problems, theses, dissertations) that runs entirely in the browser",
   "license": "MIT",
   "type": "module",
   "engines": {

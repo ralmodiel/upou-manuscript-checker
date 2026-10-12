@@ -21,10 +21,10 @@ export default function Header({ onHome, home }: { onHome: () => void; home: boo
           <a
             href="#top"
             onClick={onHome}
-            aria-label="MDC Format Check, start over"
+            aria-label="UPOU Format Check, start over"
             className="flex min-h-10 items-baseline gap-1.5 rounded-sm font-display text-[1.6rem] leading-none tracking-tight"
           >
-            <span className="text-ink">MDC</span>
+            <span className="text-ink">UPOU</span>
             <span className="text-maroon">Format Check</span>
           </a>
           <span className="ml-1 hidden rounded-pill border border-line bg-surface px-2 py-1 text-[0.6875rem] leading-none font-semibold tracking-[0.06em] text-ink-2 uppercase sm:inline">

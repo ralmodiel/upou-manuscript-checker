@@ -26,11 +26,9 @@ import {
   type Want,
 } from './numbering.ts'
 
-// The seal in the MDC template: its file's SHA-256 and its difference hash (scripts/probe/seal-hash.mjs).
+// The UP seal in the template: its file's SHA-256 and its difference hash (scripts/probe/seal-hash.mjs).
 export const SEAL_SHA256 = '1d89b4e2dbe46ea14a34faeeeb4a0fc18999438b12c4fae9bc8ac66abf6ae8c9'
 export const SEAL_DHASH = '0e1f2b333313170e'
-// The Dean of the Faculty of Information and Communication Studies, as the template names him.
-const DEAN = 'ROBERTO B. FIGUEROA, JR.'
 
 const at = (p: Para | undefined): Where[] => (p ? [{ page: p.page, quote: quote(p.text) }] : [])
 
@@ -60,14 +58,39 @@ export interface TitlePage {
   rows: Para[]
   studentSig?: Para
   adviserSig?: Para
-  /** "Thesis" or, on a doctoral dissertation, "Dissertation": the word before "Adviser". */
-  work: 'Thesis' | 'Dissertation'
+  /** What the manuscript is ("Thesis", "Dissertation", "Special Problem"…): the words before
+   *  "Adviser", else what the degree suggests. */
+  work: string
 }
 
 const TABLE_ROW = /^(invention|publication|confidential|free)\s*\(/i
-// A doctoral dissertation on the same template has a "Dissertation Adviser:" and a "Doctor of …".
-const ADVISER_LABEL = /^(thesis|dissertation) adviser\b(?!'?s?\s*signature)/i
-const PROGRAM = /master of development communication|^doctor of\b/i
+// UPOU's style guide (OVCAA 2017-4, 2022) covers every level: a bachelor's special or capstone
+// project, a master's capstone project, special problem or thesis, a doctoral dissertation. The
+// title page names it before "Adviser:" and gives the degree ("Master in …", "Diploma in …" too).
+const WORK =
+  'thesis|dissertation|special problem|special project|capstone project|capstone|research paper|project paper|project'
+const ADVISER_LABEL = new RegExp(`^(${WORK}) advis[eo]r\\b(?!'?s?\\s*signature)`, 'i')
+const PROGRAM =
+  /^(associate|bachelor|master|doctor) (of|in)\b|^(diploma|graduate certificate|professional teaching certificate|certificate) in\b/i
+// UPOU's three faculties.
+const FACULTY =
+  /faculty of (information and communication studies|management and development studies|education)\b/i
+
+// The checklist (the MDC program's copy) asks for the title in upper case; UPOU's style guide
+// (2022) shows it in title case. Outside MDC, a title not in upper case is for the student to check.
+const upperRule = (tp: TitlePage) => /development communication/i.test(norm(tp.program?.text ?? ''))
+const CASE_NOTE =
+  "The format checklist (the MDC program's copy) asks for upper case; UPOU's style guide (2022) shows the title in title case. Follow your program's template."
+
+const titleCase = (s: string) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase())
+/** The manuscript as the adviser label names it, else as the degree suggests. */
+function workOf(label?: Para, program?: Para): string {
+  const named = new RegExp(`^(${WORK})\\b`, 'i').exec(norm(label?.text ?? ''))?.[1]
+  if (named) return titleCase(named)
+  const degree = norm(program?.text ?? '')
+  if (/^doctor (of|in)/i.test(degree)) return 'Dissertation'
+  return /^(associate|bachelor) (of|in)/i.test(degree) ? 'Special Project' : 'Thesis'
+}
 
 /** PDF pages before the other preliminary pages that hold a picture and no text: signed pages
  *  scanned back in, which cannot be read. */
@@ -88,18 +111,11 @@ export function readTitlePage(ctx: Ctx): TitlePage {
   // A scanned title page has no text: what comes after it is not the title page.
   const paras = scannedFront(ctx).includes(page) ? [] : textIn(ctx, start, end)
   const idx = (p?: Para) => (p ? paras.indexOf(p) : -1)
-  const program = find(paras, PROGRAM) ?? find(paras, /master of|program/i)
+  const program =
+    find(paras, PROGRAM) ?? find(paras, /(associate|bachelor|master|doctor) (of|in)|program/i)
   const adviserLabel = find(paras, ADVISER_LABEL)
-  const work =
-    /^dissertation/i.test(norm(adviserLabel?.text ?? '')) ||
-    (!adviserLabel && /^doctor of/i.test(norm(program?.text ?? '')))
-      ? 'Dissertation'
-      : 'Thesis'
-  const faculty = paras.find(
-    (p, k) =>
-      k > idx(adviserLabel) &&
-      /faculty of information and communication studies/i.test(norm(p.text)),
-  )
+  const work = workOf(adviserLabel, program)
+  const faculty = paras.find((p, k) => k > idx(adviserLabel) && FACULTY.test(norm(p.text)))
   const permissionText = find(paras, /permission of the classification/i)
   // Between the program and "Thesis Adviser:": the author, then the title (one or more lines).
   const between = paras.slice(idx(program) + 1, adviserLabel ? idx(adviserLabel) : idx(program) + 3)
@@ -137,7 +153,7 @@ export function readTitlePage(ctx: Ctx): TitlePage {
 
 export const titleOf = (tp: TitlePage) => norm(tp.title.map((p) => shown(p)).join(' '))
 
-/** The thesis title on the title page, or '' when it cannot be read. */
+/** The title on the title page, or '' when it cannot be read. */
 export function thesisTitle(ctx: Ctx): string {
   try {
     return titleOf(readTitlePage(ctx))
@@ -157,10 +173,7 @@ function cleanName(s: string) {
 const bareName = (s: string) =>
   cleanName(s)
     .replace(/^((dr|asst|assoc|prof|engr|atty|mr|ms|mrs)\.?\s+)+/i, '')
-    .replace(
-      /,?\s*(ph\.?\s?d|ed\.?\s?d|d\.?\s?comm|dcomm|d\.?p\.?a|mdc|m\.?a|m\.?s|m\.?sc|mpa|mba|med|mph)\.?$/i,
-      '',
-    )
+    .replace(SUFFIX_ANY, '')
     .replace(/,\s*$/, '')
     .toUpperCase()
 
@@ -215,7 +228,7 @@ async function seal(ctx: Ctx, tp: TitlePage): Promise<Finding> {
   if (!pixels)
     return review(
       id,
-      'Make sure the picture on the title page is the official UP seal (copy it from the MDC template).',
+      'Make sure the picture on the title page is the official UP seal (copy it from the template).',
     )
   const small = shrink(pixels, 64)
   const d = hamming(dHash(small), SEAL_DHASH)
@@ -224,32 +237,24 @@ async function seal(ctx: Ctx, tp: TitlePage): Promise<Finding> {
   if (d <= 12)
     return review(
       id,
-      'The seal on the title page looks faded or grey. Use the full-color official UP seal from the MDC template.',
+      'The seal on the title page looks faded or grey. Use the full-color official UP seal from the template.',
     )
   return fix(
     id,
-    'Use the official UP seal: the picture on the title page does not look like it. Copy the seal from the MDC template.',
+    'Use the official UP seal: the picture on the title page does not look like it. Copy the seal from the template.',
     {
       where: [{ page: tp.page }],
     },
   )
 }
 
-/** The title page's parts in the template's order, named as a thesis or a dissertation has them. */
+/** The title page's parts in the template's order, named as the manuscript has them. */
 const anchors = (work: TitlePage['work']): [string, RegExp][] => [
   ['UNIVERSITY OF THE PHILIPPINES', /university of the philippines/i],
   ['OPEN UNIVERSITY', /open university/i],
-  [
-    work === 'Dissertation'
-      ? 'the degree program (DOCTOR OF …)'
-      : 'MASTER OF DEVELOPMENT COMMUNICATION',
-    PROGRAM,
-  ],
+  ['the degree program (BACHELOR OF …, MASTER OF …, DOCTOR OF …)', PROGRAM],
   [`${work} Adviser:`, ADVISER_LABEL],
-  [
-    'Faculty of Information and Communication Studies',
-    /faculty of information and communication studies/i,
-  ],
+  ['the Faculty (Faculty of …)', FACULTY],
   ['Permission of the classification…', /permission of the classification/i],
   ['the permission codes (Invention, Publication, Confidential, Free)', /^invention\s*\(/i],
   ["Student's Signature:", /student'?s?\s+signature/i],
@@ -296,12 +301,10 @@ function sequence(tp: TitlePage): Finding {
   ] as const) {
     const p = tp.paras.find((x) => re.test(norm(x.text)))
     if (p) {
-      // As the file names the work: "Thesis" or "Dissertation" Adviser.
+      // As the file names the work: "Thesis", "Dissertation", "Special Problem" Adviser.
       const label = norm(p.text).replace(/\s*:$/, '')
-      const work = /^(thesis|dissertation)\b/i.exec(label)?.[1] ?? tp.work
-      const want = right.startsWith('Adviser')
-        ? `${work[0].toUpperCase()}${work.slice(1).toLowerCase()} ${right}`
-        : right
+      const work = new RegExp(`^(${WORK})\\b`, 'i').exec(label)?.[1] ?? tp.work
+      const want = right.startsWith('Adviser') ? `${titleCase(work)} ${right}` : right
       issues.push(
         `Add an apostrophe and s to the signature label: “${want}” (not “${quote(label, 40)}”)`,
       )
@@ -309,7 +312,7 @@ function sequence(tp: TitlePage): Finding {
     }
   }
   if (!issues.length) return ok(id, 'The title page follows the order of the template.')
-  return fix(id, 'Follow the sequence of information in the MDC template.', {
+  return fix(id, 'Follow the sequence of information in the template.', {
     details: issues,
     where: [
       // A scanned cover: its page is the place.
@@ -334,20 +337,29 @@ function titleUpper(tp: TitlePage): Finding {
       },
     )
   if (/^title$/i.test(t))
-    return fix(id, 'Replace “TITLE” with your final thesis title, in upper case.', {
+    return fix(
+      id,
+      `Replace “TITLE” with your final ${tp.work.toLowerCase()} title, in upper case.`,
+      {
+        where: at(tp.title[0]),
+      },
+    )
+  if (!isUpper(t)) {
+    const words = `Not in upper case: ${list(
+      lowerWords(t)
+        .slice(0, 8)
+        .map((w) => `“${w}”`),
+    )}`
+    if (!upperRule(tp))
+      return review(id, `Check the case of the ${tp.work.toLowerCase()} title. ${CASE_NOTE}`, {
+        details: [words],
+        where: at(tp.title[0]),
+      })
+    return fix(id, `Write the ${tp.work.toLowerCase()} title in upper case.`, {
+      details: [words],
       where: at(tp.title[0]),
     })
-  if (!isUpper(t))
-    return fix(id, 'Write the thesis title in upper case.', {
-      details: [
-        `Not in upper case: ${list(
-          lowerWords(t)
-            .slice(0, 8)
-            .map((w) => `“${w}”`),
-        )}`,
-      ],
-      where: at(tp.title[0]),
-    })
+  }
   return ok(id, `Title (in upper case): “${quote(t, 120)}”`)
 }
 
@@ -498,7 +510,7 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   if (tp.rows.length < 4)
     return fix(
       id,
-      'Add the permission classification table from the MDC template (Invention, Publication, Confidential, Free).',
+      'Add the permission classification table from the template (Invention, Publication, Confidential, Free).',
       {
         where: [{ page: tp.page }],
       },
@@ -608,14 +620,14 @@ function folioCheck(
 const wantMessage = (want: Want, name: string, title?: string) =>
   want === 'none'
     ? `Remove the ${title ? `footer (${title} and page number)` : 'page number'} on the ${name}.`
-    : `Add the shortened thesis title + ellipsis + page number (${want.kind === 'roman' && want.value ? roman(want.value) : 'Roman numerals'}) on the ${name}.`
+    : `Add the shortened title + ellipsis + page number (${want.kind === 'roman' && want.value ? roman(want.value) : 'Roman numerals'}) on the ${name}.`
 
 // ---- University Permission Page ----
 
 function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'permission.title'
   const r = ctx.s.permission
-  if (!r) return fix(id, 'Add the University Permission Page from the MDC template.')
+  if (!r) return fix(id, 'Add the University Permission Page from the template.')
   const paras = textIn(ctx, r.heading + 1, r.end)
   const end = paras.findIndex((p) => /^["“]?\s*I hereby grant|specifically/i.test(norm(p.text)))
   const lines = paras
@@ -623,9 +635,13 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
     .filter((p) => !/^university permission page$/i.test(norm(p.text)))
   const t = norm(lines.map(shown).join(' '))
   if (!t || /^title$/i.test(t))
-    return fix(id, 'Indicate the thesis title (in upper case) on the University Permission Page.', {
-      where: at(lines[0]),
-    })
+    return fix(
+      id,
+      `Indicate the ${tp.work.toLowerCase()} title (in upper case) on the University Permission Page.`,
+      {
+        where: at(lines[0]),
+      },
+    )
   const main = titleOf(tp)
   const details: string[] = []
   if (!isUpper(t))
@@ -636,24 +652,34 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
           .map((w) => `“${w}”`),
       )}).`,
     )
-  if (main && norm(main).toLowerCase() !== t.toLowerCase()) {
+  const differs = !!main && norm(main).toLowerCase() !== t.toLowerCase()
+  if (details.length && !differs && !upperRule(tp))
+    return review(id, `Check the case of the ${tp.work.toLowerCase()} title. ${CASE_NOTE}`, {
+      details,
+      where: at(lines[0]),
+    })
+  if (differs) {
     const d = wordDiff(main, t)
     details.push(
       `It differs from the Title Page${d.onlyB.length ? `: “${d.onlyB.slice(0, 5).join(' ')}” here` : ''}${d.onlyA.length ? `, “${d.onlyA.slice(0, 5).join(' ')}” on the Title Page` : ''}.`,
     )
   }
   if (details.length)
-    return fix(id, 'Use the final thesis title, in upper case, as on the Title Page.', {
-      details,
-      where: at(lines[0]),
-    })
+    return fix(
+      id,
+      `Use the final ${tp.work.toLowerCase()} title, in upper case, as on the Title Page.`,
+      {
+        details,
+        where: at(lines[0]),
+      },
+    )
   return ok(id, 'The title matches the Title Page and is in upper case.')
 }
 
 function permissionStatement(ctx: Ctx): Finding {
   const id = 'permission.statement'
   const r = ctx.s.permission
-  if (!r) return fix(id, 'Add the University Permission Page from the MDC template.')
+  if (!r) return fix(id, 'Add the University Permission Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
   const allow = find(paras, /I specifically allow/i)
   const grant = find(paras, /Specifically,? I grant/i)
@@ -665,14 +691,14 @@ function permissionStatement(ctx: Ctx): Finding {
     return ok(id, `Uses only “${allow ? 'I specifically allow…' : 'Specifically, I grant…'}”.`)
   return review(
     id,
-    'The permission statement (“Specifically, I grant…”) was not found. Use the wording of the MDC template.',
+    'The permission statement (“Specifically, I grant…”) was not found. Use the wording of the template.',
   )
 }
 
 function permissionSignature(ctx: Ctx): Finding {
   const id = 'permission.signature'
   const r = ctx.s.permission
-  if (!r) return fix(id, 'Add the University Permission Page from the MDC template.')
+  if (!r) return fix(id, 'Add the University Permission Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
   const label = find(paras, /signature over (student|printed)? ?name/i) ?? find(paras, /signature/i)
   const k = label ? paras.indexOf(label) : paras.length
@@ -725,7 +751,11 @@ function readNames(ctx: Ctx): Names {
     const t = norm(p.text)
     const prev = paras[k - 1]
     if (!prev) return
-    if (/^(chair|member|adviser|co-adviser|reader)\b.*committee|^(chair|member)\b/i.test(t))
+    if (
+      /^(chair(person)?|member|advis[eo]r|co-advis[eo]r|reader)\b.*(committee|panel)|^(chair(person)?|member)\b/i.test(
+        t,
+      )
+    )
       committee.push({ name: cleanName(shown(prev)), para: prev })
     else if (/^dean\b/i.test(t)) dean = { name: cleanName(shown(prev)), para: prev }
   })
@@ -735,7 +765,7 @@ function readNames(ctx: Ctx): Names {
 function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'acceptance.title'
   const r = ctx.s.acceptance
-  if (!r) return fix(id, 'Add the Acceptance Page from the MDC template.')
+  if (!r) return fix(id, 'Add the Acceptance Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
   const p = find(paras, /with the title|entitled|titled/i)
   // The sentence may come in pieces (a PDF splits it where the bold title starts): read on to "accepted".
@@ -757,7 +787,9 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
     : null
   const t = m?.[1]?.replace(/["”]$/, '').trim() ?? ''
   if (!t || /^x{4,}$/i.test(t))
-    return fix(id, 'Indicate the final thesis title on the Acceptance Page.', { where: at(p) })
+    return fix(id, `Indicate the final ${tp.work.toLowerCase()} title on the Acceptance Page.`, {
+      where: at(p),
+    })
   const main = titleOf(tp)
   const issues: string[] = []
   if (main && norm(main).toLowerCase() !== norm(t).toLowerCase()) {
@@ -777,16 +809,20 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   if (author && /author'?s name/i.test(author))
     issues.push('Replace “AUTHOR’S NAME” with your name.')
   if (issues.length)
-    return fix(id, 'Replace with the approved thesis title (the same as on the Title Page).', {
-      details: issues,
-      where: at(p),
-    })
+    return fix(
+      id,
+      `Replace with the approved ${tp.work.toLowerCase()} title (the same as on the Title Page).`,
+      {
+        details: issues,
+        where: at(p),
+      },
+    )
   return ok(id, 'The title matches the Title Page.')
 }
 
 function acceptanceNames(ctx: Ctx, names: Names): Finding {
   const id = 'acceptance.names'
-  if (!ctx.s.acceptance) return fix(id, 'Add the Acceptance Page from the MDC template.')
+  if (!ctx.s.acceptance) return fix(id, 'Add the Acceptance Page from the template.')
   const all = [...names.committee, ...(names.dean ? [names.dean] : [])]
   const blank = all.filter((n) => !n.name || /^name$/i.test(n.name))
   if (!all.length || blank.length)
@@ -797,12 +833,12 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       where: at(blank[0]?.para),
     })
   const dean = names.dean
-  const deanOff = !!dean && bareName(dean.name) !== bareName(DEAN)
-  // A committee member's name left on the Dean's line (a line copied and not changed).
-  if (dean && deanOff && names.committee.some((c) => bareName(c.name) === bareName(dean.name)))
-    return fix(
+  // A committee member's name on the Dean's line: a line copied and not changed, or a Dean who
+  // sits on the committee. Deans change and each faculty has its own: only the student can tell.
+  if (dean && names.committee.some((c) => bareName(c.name) === bareName(dean.name)))
+    return review(
       id,
-      `Write the Dean's name on the Dean's line: “${dean.name}” is a committee member's name (the MDC template has “${DEAN}, Ph.D.”). Check the spelling of each committee name below.`,
+      `“${dean.name}” is on the Dean's line and is also a committee member's name. Check that the Dean's line names your faculty's current Dean, and the spelling of each committee name below.`,
       { details: names.committee.map((c) => c.name), where: at(dean.para) },
     )
   // A name line ending in a comma ("…, Ph.D,"): a typo, certain enough to correct.
@@ -813,10 +849,11 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
       `Remove the comma at the end of ${list(comma.map((n) => `“${n.name}”`))}. Check the spelling of each name below.`,
       { details: all.map((n) => n.name), where: at(comma[0].para) },
     )
-  if (dean && deanOff)
+  // Deans change and each faculty has its own: the name is the student's to check.
+  if (dean)
     return review(
       id,
-      `Check the Dean's name (the MDC template has “${DEAN}, Ph.D.”) and the spelling of each name below: spelling cannot be checked here.`,
+      "Check that the Dean's line names your faculty's current Dean, and the spelling of each name below: spelling cannot be checked here.",
       { details: all.map((n) => n.name), where: at(dean.para) },
     )
   return review(id, 'Check the spelling of each name below: spelling cannot be checked here.', {
@@ -825,8 +862,12 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
 }
 
 const PREFIX = /^(dr|asst\.?\s*prof|assoc\.?\s*prof|prof|engr|atty)\b\.?/i
-const SUFFIX =
-  /,\s*(ph\.?\s?d|ed\.?\s?d|d\.?\s?comm|dcomm|d\.?p\.?a|mdc|m\.?a|m\.?s|m\.?sc|mpa|mba|med|mph|dvm|md)\.?$/i
+// Degrees after a name, UPOU's among them (MDC, MDE, MDM, MAEd, MIS, MNSE…).
+const DEGREES =
+  'ph\\.?\\s?d|ed\\.?\\s?d|d\\.?\\s?comm|dcomm|d\\.?p\\.?a|mdc|mde|mdm|mis|mnse|maed|ma\\.?ed|m\\.?a|m\\.?s|m\\.?sc|mpa|mba|med|mph|mm|dvm|md'
+const SUFFIX = new RegExp(`,\\s*(${DEGREES})\\.?$`, 'i')
+// A space or a comma before it, so "ROMA" keeps its "MA".
+const SUFFIX_ANY = new RegExp(`(?:,\\s*|\\s+)(${DEGREES})\\.?$`, 'i')
 
 function convention(names: Names): Finding {
   const id = 'acceptance.convention'

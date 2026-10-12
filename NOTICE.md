@@ -4,9 +4,9 @@
 
 This project is an unofficial, non-commercial proof of concept in its alpha testing stage. It is
 not an official site of the University of the Philippines Open University (UPOU) and is not
-affiliated with or endorsed by UPOU or its Master of Development Communication (MDC) program. The
+affiliated with or endorsed by UPOU or any of its programs. The
 site's own pages use no UP or UPOU seal, logo or other artwork. The UP seal appears only inside the
-program's thesis template (`public/downloads/`), unchanged, as the program distributes it for title
+MDC program's thesis template (`public/downloads/`), unchanged, as the program distributes it for title
 pages.
 
 ## Results need human verification
@@ -14,7 +14,7 @@ pages.
 The checker was built diligently and meticulously with the help of AI, but it reads files the way
 a program does, not the way a person does. It can miss a problem or flag one that is not there,
 especially with unusual layouts, text boxes or scanned pages. Every result is a guide to be
-confirmed against the manuscript itself. MDC Program Support's format review remains the official
+confirmed against the manuscript itself. Your program's format review remains the official
 check, and its comments take precedence.
 
 The software is provided "as is", without warranty of any kind, as stated in the

@@ -25,7 +25,7 @@ const ACCEPT = [
 
 const FILES = [
   {
-    name: 'MDC thesis manuscript template',
+    name: 'Manuscript template (MDC copy)',
     kind: 'Word document',
     size: '344 KB',
     href: 'downloads/mdc-thesis-manuscript-template.docx',
@@ -33,7 +33,7 @@ const FILES = [
     icon: PageIcon,
   },
   {
-    name: 'MDC Format Checklist',
+    name: 'Format Checklist (MDC copy)',
     kind: 'Excel workbook',
     size: '7 KB',
     href: 'downloads/mdc-format-checklist.xlsx',
@@ -116,12 +116,12 @@ export default function Prepare({
       <section className="grid gap-x-14 gap-y-8 py-8 sm:py-10 lg:grid-cols-2 lg:grid-rows-[auto_1fr] lg:py-16">
         <div>
           <h1 tabIndex={-1} className="font-display text-title text-ink outline-none">
-            Check your thesis manuscript before you send it
+            Check your manuscript before you send it
           </h1>
           <p className="mt-5 max-w-[36rem] leading-relaxed text-ink-2 sm:mt-6 sm:text-lg">
-            Compare your Master of Development Communication manuscript with every item of the MDC
-            Format Checklist. You get what to correct, with the pages to look at, and the comments
-            as a Word or PDF file.
+            Compare your special problem, thesis or dissertation with every item of the UPOU format
+            checklist, at any level and in any program. You get what to correct, with the pages to
+            look at, and the comments as a Word or PDF file.
           </p>
         </div>
         <div className="lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-center">
@@ -146,12 +146,13 @@ export default function Prepare({
         <div className="grid gap-8 lg:grid-cols-12">
           <div className="lg:col-span-4">
             <h2 id="files-title" className="font-display text-3xl text-ink">
-              Start from the program’s files
+              Start from the format files
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-ink-2">
-              The template the program shares and the checklist this site checks against, offered
-              here for convenience. Ask MDC Program Support if you are unsure you have the latest
-              version.
+              The checklist this site checks against, drawn from UPOU’s central format checklist,
+              and a template that follows it, both as the MDC program shares them. Ask your program
+              office if you are unsure you have the latest version, or whether your program adds
+              rules.
             </p>
           </div>
           <ul className="grid gap-3 lg:col-span-8">
@@ -196,7 +197,7 @@ export default function Prepare({
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-ink-2">
             All {CHECKLIST.filter((p) => !p.extra).reduce((n, p) => n + p.items.length, 0)} items of
-            the MDC Format Checklist, in its own words, and a few things reviewers often point out.
+            the format checklist, in its own words, and a few things reviewers often point out.
             After a check, each one shows whether your file passed it.
           </p>
         </div>
