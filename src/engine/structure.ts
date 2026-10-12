@@ -62,8 +62,8 @@ const PRELIMS: [PrelimKey, RegExp][] = [
     'bio',
     /^(biographical sketch|bio-?sketch|biography|curriculum vitae|about the (author|researcher))$/i,
   ],
-  ['ack', /^acknowledge?ments?$/i],
-  ['dedication', /^dedications?$/i],
+  ['ack', /^acknowledge?ments?( page)?$/i],
+  ['dedication', /^dedications?( page)?$/i],
   ['toc', /^(table of contents?|contents)$/i],
   // (a list's heading is often miswritten: "LISTS OF FIGURES", "List of Table", "LIST OF TABLE/S")
   ['tables', /^lists? of tables?(\/s)?( and (figures?|illustrations?))?$/i],
@@ -162,6 +162,17 @@ export const titlePage = (doc: Doc, s: Structure) => {
 function pageStart(doc: Doc, i: number) {
   for (let k = i; k > 0; k--) if (doc.paras[k].newPage) return k
   return 0
+}
+
+/** The start of the page a paragraph is on: when a paragraph runs over from the page before (a
+ *  label set across the break), the first paragraph that begins on this page. */
+function pageStartOn(doc: Doc, i: number) {
+  const k = pageStart(doc, i)
+  const pg = doc.paras[i].page
+  if (pg === undefined || doc.paras[k].page === pg) return k
+  let j = i
+  while (j > k && doc.paras[j - 1].page === pg) j--
+  return j
 }
 
 export function findStructure(doc: Doc): Structure {
@@ -292,7 +303,11 @@ export function findStructure(doc: Doc): Structure {
       /\b(paper|thesis|dissertation|study|manuscript|special problem|special project|capstone project) (prepared|written|entitled)\b.*\bby\b|is hereby accepted/i,
     )
     if (k > 0)
-      s.acceptance = { heading: pageStart(doc, k), start: pageStart(doc, k), end: paras.length }
+      s.acceptance = {
+        heading: pageStartOn(doc, k),
+        start: pageStartOn(doc, k),
+        end: paras.length,
+      }
   }
 
   // Each part runs to the next landmark.

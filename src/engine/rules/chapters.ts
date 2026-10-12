@@ -561,6 +561,29 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     const next = doc.paras[p.i + 1]
     const pg = doc.pages?.[p.page ?? -1]
     const end = lines.at(-1)
+    // The third centred line in a row, none of them bold, of one size: a verse, or the cells of a
+    // table set in one column, not a heading.
+    const mid = pg ? ((pg.margins?.left ?? 72) + (pg.margins?.right ?? pg.width - 72)) / 2 : 0
+    const centred = (q?: Para) =>
+      !!q?.lines?.length &&
+      (q.align === 'center' ||
+        (q.align === undefined &&
+          Math.abs((q.lines[0].x0 + q.lines[0].x1) / 2 - mid) <= 6 &&
+          q.lines[0].x0 > (pg?.margins?.left ?? 72) + 20))
+    if (lines.length === 1 && centred(p) && !bolded(p)) {
+      const above = [doc.paras[p.i - 1], doc.paras[p.i - 2]]
+      if (
+        above.every(
+          (q) =>
+            q?.page === p.page &&
+            centred(q) &&
+            !bolded(q) &&
+            q!.lines!.length === 1 &&
+            Math.abs(q!.lines![0].size - lines[0].size) < 0.6,
+        )
+      )
+        continue
+    }
     // Text set smaller than the running text (the labels of a chart, a note) is no heading.
     if (!pg || !end || lines[0].size < bodySize - 1) continue
     // A caption's second line (the first says "Figure 4.", the next gives the title).
@@ -759,7 +782,29 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         !headingLike(before) &&
         !before.inTable &&
         /[,;]$/.test(norm(before.text))
+      // (the line above stops short, but by less than this one's first word, and the lines keep
+      // their pitch: the paragraph goes on)
+      const prevLast = before?.lines?.at(-1)
+      const prevPitch =
+        before?.lines && before.lines.length >= 2 ? prevLast!.y - before.lines.at(-2)!.y : 0
+      const firstWord = norm(lines[0].text).split(' ')[0]
+      // (its width by the size: capitals and digits wide, the rest narrow, and a space)
+      const wordWidth =
+        lines[0].size *
+        ([...firstWord].reduce((n, c) => n + (/[\p{Lu}\d]/u.test(c) ? 0.7 : 0.48), 0) + 0.25)
+      const goesOnAbove =
+        !!prevLast &&
+        before!.page === p.page &&
+        prevLast.page === p.page &&
+        prevPitch > 0 &&
+        !isList(p) &&
+        !headingLike(before!) &&
+        !before!.inTable &&
+        lines[0].x0 <= prevLast.x0 + 3 &&
+        lines[0].y - prevLast.y <= 1.3 * prevPitch &&
+        prevLast.x1 + wordWidth > (pg.margins?.right ?? Infinity) - 6
       const stray =
+        goesOnAbove ||
         (/^\p{Ll}/u.test(norm(p.text)) && !isList(p)) ||
         fragment ||
         caption ||
@@ -770,10 +815,22 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       const l1 = lines[onFirst]
       const word = norm(l1.text).split(' ')[0]
       const room = (pg.margins?.right ?? Infinity) - l0.x1
-      const complete =
+      // (a sentence-long line followed on the next page by a line with no end mark, a heading, or
+      // by a link set out from the margin, a reference of its own: the line stands alone)
+      const closed =
         onFirst === 1 &&
-        isList(p) &&
-        room > ((l1.x1 - l1.x0) / Math.max(1, l1.text.length)) * word.length
+        onNext === 1 &&
+        l0.x1 < (pg.margins?.right ?? Infinity) - 10 &&
+        ((/[.!?]["”’)]?$/.test(norm(l0.text)) &&
+          !/[.,;:!?]$/.test(norm(l1.text)) &&
+          /^[\p{Lu}\d]/u.test(norm(l1.text)) &&
+          l1.x1 - l1.x0 < 0.6 * (l0.x1 - l0.x0)) ||
+          (/^(https?:\/\/|www\.)/i.test(norm(l1.text)) && l1.x0 < l0.x0 - 3))
+      const complete =
+        closed ||
+        (onFirst === 1 &&
+          isList(p) &&
+          room > ((l1.x1 - l1.x0) / Math.max(1, l1.text.length)) * word.length)
       // (a line near the top of its page is no foot of it, nor one near the foot its top: pages of
       // headings only, set over a picture)
       const atFoot = onFirst === 1 && !stray && lines[0].y > 0.5 * pg.height

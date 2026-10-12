@@ -11,6 +11,11 @@ const PLACEHOLDERS: [RegExp, string][] = [
   [/insert figure here/i, '“--- INSERT FIGURE HERE ---”'],
   [/^author'?s name$/i, '“AUTHOR’S NAME”'],
   [/^(column \d+\s*)+$/i, 'the sample table (“Column 1”, “Content”)'],
+  // The template's own labels in brackets.
+  [
+    /\((student as author|(acceptance|title|permission) page for [^)]*)\)/i,
+    'the template’s bracketed label (“(Student as Author)”, “(Acceptance page for …)”)',
+  ],
   // The degree's name left as the word "Course" (or "Program").
   [
     /for the degree,?\s*(course|program)\.?$/i,

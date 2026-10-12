@@ -1,5 +1,5 @@
 // Title Page, University Permission Page and Acceptance Page.
-import type { Box, Para } from '../model.ts'
+import type { Box, Doc, Para } from '../model.ts'
 import { CHECKLIST } from '../checklist.ts'
 import { colourfulness, dHash, hamming, shrink } from '../images.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding, type Where } from '../report.ts'
@@ -130,7 +130,7 @@ const ROLE = 'advis[eo]rs?|faculty[- ]in[- ]charge|fic'
 // Other programs name it otherwise ("Research Adviser:", "Special/Capstone Project Adviser:",
 // "MMS 200 Adviser:", or only "Adviser:"): up to three words before it, then a colon.
 const ADVISER_LABEL = new RegExp(
-  `^(?:(?:${WORK}) (?:${ROLE})\\b|(?:[\\p{L}\\d][\\p{L}\\d/.]*[ -]){0,3}(?:${ROLE})\\s*:)(?!'?s?\\s*signature)`,
+  `^(?:(?:${WORK}) (?:${ROLE})\\b|(?:[\\p{L}\\d][\\p{L}\\d/.'’]*[ -]){0,3}(?:${ROLE})\\s*:)(?!'?s?\\s*signature)`,
   'iu',
 )
 // "Permission of the classification…", or the older template's "Permission is given for the
@@ -507,7 +507,7 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
       (a) =>
         a.k < 0 &&
         !inPicture.includes(a) &&
-        !(tp.tablePicture && /^the permission codes/.test(a.name)),
+        !(tp.tablePicture && /^the permission codes|signature/i.test(a.name)),
     )
     .map((a) => a.name)
   // Lines in a font that could not be read (control characters for letters): the labels may be
@@ -563,6 +563,14 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
   // Adviser"): the template's wording, which title pages do not always follow, so it is for the
   // student to look at.
   const soft: string[] = []
+  // The permission table is a picture and the signature labels are not text: they may be part of it.
+  const pictured = tp.tablePicture
+    ? found.filter((a) => a.k < 0 && /signature/i.test(a.name)).map((a) => `“${a.name}`)
+    : []
+  if (pictured.length)
+    soft.push(
+      `${list(pictured.map((n) => n + '”'))} ${pictured.length > 1 ? 'are' : 'is'} not text on the page (perhaps part of the permission picture): check ${pictured.length > 1 ? 'them' : 'it'} yourself`,
+    )
   for (const [re, right] of [
     [/^student\s+signature/i, "Student's Signature"],
     [SIGNATURE_BARE, ''],
@@ -1025,6 +1033,20 @@ function signature(
       )
 }
 
+/**
+ * Whether a page after the title page carries title-page content (the access table or its
+ * Yes/No lines, signature or adviser labels, the date of submission): a second sheet. A page with
+ * a heading of its own (copyright, contents) is a page of its own.
+ */
+function titleSheet(doc: Doc, q: number): boolean {
+  const lines = (doc.pages?.[q]?.paras ?? [])
+    .map((i) => norm(doc.paras[i].text))
+    .filter((t) => !/\.{4,}/.test(t))
+  return lines.some((t) =>
+    /(signature|adviser|date of submission|permission is given|yes\s*(or|\/)\s*no)/i.test(t),
+  )
+}
+
 /** A footer check for one page: the title page, the permission page, the acceptance page. */
 function folioCheck(
   ctx: Ctx,
@@ -1061,7 +1083,7 @@ function folioCheck(
         ? Array.from(
             { length: Math.max(0, Math.min(permPage, page + 3) - page - 1) },
             (_, k) => page + 1 + k,
-          )
+          ).filter((q) => titleSheet(doc, q))
         : []
     const found = [
       ...judge(folio, here, page),
@@ -1141,12 +1163,12 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
   const r = ctx.s.permission
   if (!r) return fix(id, 'Add the University Permission Page from the template.')
   // A page found by its wording has no heading: its first line is the title's.
-  const named = /permission page/i.test(norm(ctx.doc.paras[r.heading]?.text ?? ''))
+  const named = /permission( page)?\s*$/i.test(norm(ctx.doc.paras[r.heading]?.text ?? ''))
   const paras = textIn(ctx, r.heading + (named ? 1 : 0), r.end)
   // The title ends where the statement begins, even within a paragraph (a PDF joins the title's
   // lines to the statement's when they stand as close).
   const units = paras
-    .filter((p) => !/^university permission page$/i.test(norm(p.text)))
+    .filter((p) => !/^university permission( page)?$/i.test(norm(p.text)))
     .flatMap((p) =>
       p.lines && p.lines.length > 1
         ? p.lines.map((l) => ({ p, text: l.text }))
@@ -1389,6 +1411,15 @@ function readNames(ctx: Ctx): Names {
   return { committee, dean }
 }
 
+/** How many letters two words share at their starts and ends together. */
+function sharedEnds(a: string, b: string) {
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  let j = 0
+  while (j < a.length - i && j < b.length - i && a.at(-1 - j) === b.at(-1 - j)) j++
+  return i + j
+}
+
 function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'acceptance.title'
   const r = ctx.s.acceptance
@@ -1442,6 +1473,23 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
         where: at(p),
       },
     )
+  // One word of the two titles differs by a letter or two, and one of them has a small letter
+  // among capitals ("LEARmNG"): a glyph the text layer got wrong, for the student to look at.
+  if (main && titleForm(main) !== titleForm(t)) {
+    const d = wordDiff(main, t)
+    if (
+      d.onlyA.length === 1 &&
+      d.onlyB.length === 1 &&
+      Math.abs(d.onlyA[0].length - d.onlyB[0].length) <= 1 &&
+      sharedEnds(d.onlyA[0], d.onlyB[0]) >= Math.max(d.onlyA[0].length, d.onlyB[0].length) - 3 &&
+      /\p{Lu}{2}\p{Ll}\p{Lu}{2}/u.test(`${main} ${t}`)
+    )
+      return review(
+        id,
+        `A word of the title, “${quote(d.onlyA[0], 20)}” on the Title Page, “${quote(d.onlyB[0], 20)}” here, differs by a letter that may be a misread glyph. Check that the Acceptance Page has the same title.`,
+        { where: at(p) },
+      )
+  }
   const issues: string[] = []
   if (main && titleForm(main) !== titleForm(t)) {
     const d = wordDiff(main, t)

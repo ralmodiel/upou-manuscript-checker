@@ -59,7 +59,21 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
           (/^dedicated\s+to\b/i.test(norm(p.text)) || shortPage(p)) &&
           !(s.acceptance && p.i <= s.acceptance.heading),
       )
-  const absent = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
+  // A page the contents list but whose heading was not found (set under no heading, or in a
+  // picture): for the student to look at, not a page left out.
+  const tocText = s.prelims
+    .filter((x) => x.key === 'toc')
+    .flatMap((x) => doc.paras.slice(x.heading + 1, x.end))
+    .map((q) => norm(q.text))
+    .join(' ')
+  const IN_TOC: Partial<Record<PrelimKey, RegExp>> = {
+    bio: /biograph|bio-?sketch|about the (author|researcher)/i,
+    ack: /acknowledg/i,
+    dedication: /dedication/i,
+  }
+  const notAbsent = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
+  const listed = notAbsent.filter((k) => IN_TOC[k]?.test(tocText))
+  const absent = notAbsent.filter((k) => !listed.includes(k))
   // The MDC template has a biographical sketch and a dedication; UPOU's style guide (2022)
   // calls the sketch recommended and says nothing of a dedication, so for other programs they
   // are for the student to look at. (A declaration page takes the place of neither.)
@@ -116,6 +130,12 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
   if (optional.length) {
     issues.push(
       `Check whether your program asks for the ${list(optional.map((k) => PRELIM_NAMES[k]))}: the MDC template has ${optional.length > 1 ? 'them' : 'it'}, and UPOU’s style guide (2022) recommends a biographical sketch.`,
+    )
+    statuses.push('review')
+  }
+  if (listed.length) {
+    issues.push(
+      `The table of contents lists the ${list(listed.map((k) => PRELIM_NAMES[k]))}, but no heading for ${listed.length > 1 ? 'them' : 'it'} was found: check that the page has its heading, as in the template.`,
     )
     statuses.push('review')
   }

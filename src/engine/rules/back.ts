@@ -85,6 +85,8 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
       (placed !== false && PARTICLE.test(t)) ||
       (!goesOn &&
         !/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
+        // (an issue number ending a wrapped line: "11. Retrieved from…")
+        !(out.length && /^\d{1,3}[.)]\s+(retrieved|https?:|doi\b)/i.test(t)) &&
         (placed ?? (startsEntry(t) || /^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t))))
     if (opens) out.push({ paras: [p], text: t })
     else {
@@ -381,6 +383,8 @@ function byline(e: Entry) {
   // The title, up to its closing period, without a leading article.
   const title = e.text
     .slice(m.index + m[0].length)
+    // (a full date, "(2011, July 27)", is no part of the title)
+    .replace(/^,[^)]{0,30}\)/, '')
     .replace(/^[^\p{L}\p{N}]+/u, '')
     .split(/\.\s/)[0]
     .normalize('NFD')
@@ -393,7 +397,7 @@ function byline(e: Entry) {
         year: /^\d/.test(m[1]) ? m[1] : /^n/i.test(m[1]) ? '0' : '9',
         title,
         // Told apart by a letter already: 2011a, n.d.-a, in press-a.
-        marked: /^\((\d{4}[a-z]|(n\.\s?d\.|in press)\s?-\s?[a-z])/i.test(rest),
+        marked: /^\((\d{4}[a-z]|(n\.\s?d\.|in press)(\s?-\s?[a-z]|\s[a-z]\)))/i.test(rest),
         // A full date ("2011, March 3"): works of one year then go by date, not by title.
         dated: /^\(\d{4}[a-z]?,/.test(rest),
         // The first author's initials ("Brown, J. D." → "jd"), when written as initials.
