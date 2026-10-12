@@ -8,6 +8,9 @@ import type { Caption } from './figures.ts'
 import { readTitlePage, thesisTitle } from './front.ts'
 import {
   auditPdf,
+  lookNote,
+  lookOnly,
+  unreadNote,
   clip,
   judge,
   more,
@@ -909,18 +912,13 @@ export function bodyNumbers(
         'Chapter I’s first page is page 1 (though not shown), so the page after it is page 2.',
       )
     // Only pages with no text layer left: nothing there could be read.
-    if (problems.every((p) => p.type === 'typo'))
-      return review(
-        id,
-        'The title in the footers is spelled differently from the title page. Check it.',
-        { details: summarize(problems), where: [{ page: problems[0].page }] },
-      )
+    if (lookOnly(problems))
+      return review(id, lookNote(problems), {
+        details: summarize(problems),
+        where: [{ page: problems[0].page }],
+      })
     if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
-      return review(
-        id,
-        `${pagesText(problems.map((p) => p.page!))} ${problems.every((p) => p.type === 'overlap') ? 'have a footer that prints over itself' : 'have no text layer (a picture or drawn letters)'}, so their page numbers could not be read. Check them yourself.`,
-        { where: [{ page: problems[0].page }] },
-      )
+      return review(id, unreadNote(problems), { where: [{ page: problems[0].page }] })
     return fix(id, msg, { details, where: [{ page: problems[0].page }] })
   }
   if (!doc.sections) return review(id, `Check the page numbers of the ${name} in the PDF version.`)

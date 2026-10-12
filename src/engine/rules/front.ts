@@ -22,7 +22,9 @@ import {
 } from '../text.ts'
 import {
   againstTitle,
+  garbledVariant,
   judge,
+  lookOnly,
   mainTitle,
   pagesText,
   pdfFolio,
@@ -496,7 +498,10 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
     )
   const found = anchors(tp.role).map(([name, re]) => ({
     name,
-    k: tp.paras.findIndex((p) => re.test(norm(p.text))),
+    // (a crossed box's "x" may stand inside a label: "adviserx’s signature")
+    k: tp.paras.findIndex(
+      (p) => re.test(norm(p.text)) || re.test(norm(p.text).replace(/(?<=\p{L})x(?=[’'])/gu, '')),
+    ),
   }))
   // The university's name may be part of the emblem picture: not text, so not missing, but said.
   const named = (n: string) => /^(UNIVERSITY OF THE PHILIPPINES|OPEN UNIVERSITY)$/.test(n)
@@ -986,6 +991,15 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   if (unmarked.length === 4)
     return fix(id, msg, { details: ['No mark found beside any “Yes” or “No”.'], where })
   const details: string[] = []
+  // A tick before the unfilled words "Yes or No" on every row: nothing was chosen.
+  if (
+    yes.length === 4 &&
+    tp.rows.slice(0, 4).every((r) => /[✓✔√] ?yes or no\b[^\p{L}]*$/iu.test(r.text))
+  )
+    return fix(id, msg, {
+      details: ['Every row still reads “Yes or No” with a tick before it: no code was chosen.'],
+      where,
+    })
   if (both.length)
     details.push(`Both “Yes” and “No” are marked for ${list(both.map((r) => r.name))}.`)
   if (yes.length > 1)
@@ -1102,16 +1116,18 @@ function folioCheck(
       )
       if (main && titleKey(folio.title) !== main.key)
         problems.push({
-          type: 'changed',
+          type: garbledVariant(folio.title, main.shown) ? 'garbled' : 'changed',
           page,
           text: `${pagesText([page])}: the footer has another title, “${quote(folio.title, 40)}”, than the other preliminary pages (“${quote(main.shown, 40)}”); keep one shortened title`,
         })
     }
     // A misspelt title alone is for the student to look at, not a sure fault.
-    if (problems.length && problems.every((p) => p.type === 'typo'))
+    if (lookOnly(problems))
       return review(
         id,
-        `The footer of the ${name} spells the title differently from the title page. Check it.`,
+        problems.some((p) => p.type === 'garbled')
+          ? `The footer of the ${name} has a title that differs from the other pages' only in letters the font printed wrongly, so it could not be compared. Check it yourself.`
+          : `The footer of the ${name} spells the title differently from the title page. Check it.`,
         { details: problems.map((p) => p.text), where: [{ page }] },
       )
     if (!problems.length && found.some(shortWhole))

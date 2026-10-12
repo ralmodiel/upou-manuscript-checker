@@ -16,6 +16,9 @@ import { readTitlePage, thesisTitle } from './front.ts'
 import type { Caption } from './figures.ts'
 import {
   auditPdf,
+  lookNote,
+  lookOnly,
+  unreadNote,
   judge,
   pagesText,
   summarize,
@@ -249,18 +252,13 @@ function numbers(ctx: Ctx): Finding {
         id,
         `${pagesText(pages)} are numbered ${roman(first - base + 1)}\u2060–\u2060${roman(last - base + 1)}, with the shortened title and an ellipsis.`,
       )
-    if (problems.every((p) => p.type === 'typo'))
-      return review(
-        id,
-        'The title in the footers is spelled differently from the title page. Check it.',
-        { details: summarize(problems), where: [{ page: problems[0].page }] },
-      )
+    if (lookOnly(problems))
+      return review(id, lookNote(problems), {
+        details: summarize(problems),
+        where: [{ page: problems[0].page }],
+      })
     if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
-      return review(
-        id,
-        `${pagesText(problems.map((p) => p.page!))} ${problems.every((p) => p.type === 'overlap') ? 'have a footer that prints over itself' : 'have no text layer (a picture or drawn letters)'}, so their page numbers could not be read. Check them yourself.`,
-        { where: [{ page: problems[0].page }] },
-      )
+      return review(id, unreadNote(problems), { where: [{ page: problems[0].page }] })
     return fix(id, msg, { details: summarize(problems), where: [{ page: problems[0].page }] })
   }
   if (!doc.sections)

@@ -73,6 +73,11 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
         !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t) &&
         !!out.length &&
         unfinished(out.at(-1)!.text)) ||
+      // A publisher's name alone on a line (a few words, no year): the end of the entry above.
+      (!!out.length &&
+        t.split(' ').length <= 6 &&
+        /\b(press|publishers?|publishing|publications?|books|verlag|editions?)\.?$/i.test(t) &&
+        !/\d|,/.test(t)) ||
       // The end of an entry that lost its indent: a journal, then volume, issue and pages.
       (!!out.length &&
         !startsEntry(t) &&
@@ -118,7 +123,9 @@ const key = (e: Entry, ignoreThe = false) =>
     .replace(/^the\s+/i, (the) => (ignoreThe ? '' : the))
     .split(/[,(]/)[0]
     // (a surname with its initials and no comma: "Santos R.A.E", "Cruz PM")
-    .replace(/(?<=\p{L}{2})\s+(?:\p{Lu}\.?){1,4}$/u, '')
+    .trimEnd()
+    // (also spaced: "Santos J. W.")
+    .replace(/(?<=\p{L}{2})(?:\s+(?:\p{Lu}\.?){1,4}){1,4}$/u, '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -386,7 +393,8 @@ function byline(e: Entry) {
     // (a full date, "(2011, July 27)", is no part of the title)
     .replace(/^,[^)]{0,30}\)/, '')
     .replace(/^[^\p{L}\p{N}]+/u, '')
-    .split(/\.\s/)[0]
+    // (not at an abbreviation: "Circular No. 5", "Vol. 2")
+    .split(/(?<!\b(?:no|nos|vol|vols|ed|eds|pp|p|dr|inc|jr|sr|vs|rev|art|sec|st))\.\s/i)[0]
     .normalize('NFD')
     .toLowerCase()
     .replace(/^(a|an|the)\s+/, '')
@@ -405,14 +413,23 @@ function byline(e: Entry) {
           .toLowerCase()
           .replace(/[^a-z]/g, ''),
         // The authors' surnames in order ("Reyes, A., Cruz, B. L., & Santos, C. D."), letters only.
-        names: [
-          ...by.matchAll(/(\p{Lu}[\p{L}'’-]*(?:\s\p{L}[\p{L}'’-]*)*),\s+(?:\p{Lu}\.[\s-]*)+/gu),
-        ].map((n) =>
-          n[1]
-            .normalize('NFD')
-            .toLowerCase()
-            .replace(/[^a-z]/g, ''),
-        ),
+        names: (
+          [
+            ...by.matchAll(/(\p{Lu}[\p{L}'’-]*(?:\s\p{L}[\p{L}'’-]*)*),\s+(?:\p{Lu}\.[\s-]*)+/gu),
+          ].map((n) => n[1]) as string[]
+        )
+          // (one author with no comma: "Santos J. W.")
+          .concat(
+            by.includes(',')
+              ? []
+              : (/^(\p{Lu}[\p{L}'’-]+)(?:\s+(?:\p{Lu}\.?){1,4}){1,4}\s*$/u.exec(by)?.[1] ?? []),
+          )
+          .map((n) =>
+            n
+              .normalize('NFD')
+              .toLowerCase()
+              .replace(/[^a-z]/g, ''),
+          ),
         by: cite,
         from: quote(rest, 40),
         cite: `${cite} (${m[1]})`,
@@ -553,7 +570,11 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   // APA and the template centre the heading. A Word file states its alignment; in a PDF a heading
   // that starts at the margin is plainly not centred.
   const head = ctx.doc.paras[ctx.s.references.heading]
-  if (!head.plain && head.align !== 'center') {
+  const hl = head.lines?.length === 1 ? head.lines[0] : undefined
+  const hp = hl && ctx.doc.pages?.[hl.page]
+  // (a PDF line whose middle is the page's middle is centred, whatever the file says)
+  const middle = !!hp && Math.abs((hl.x0 + hl.x1) / 2 - hp.width / 2) < 8
+  if (!head.plain && head.align !== 'center' && !middle) {
     const left = ctx.doc.pages?.[head.page ?? -1]?.margins?.left
     const x0 = head.lines?.[0]?.x0
     const sure =

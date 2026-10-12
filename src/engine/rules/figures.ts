@@ -3,7 +3,7 @@ import type { Box, Para } from '../model.ts'
 import { fix, na, ok, review, spread, worst, type Ctx, type Finding } from '../report.ts'
 import { bolded, headingText, isTocLine, LIST_HEADING } from '../structure.ts'
 import { inShape, textSize } from './body.ts'
-import { list, norm, quote } from '../text.ts'
+import { garbled, list, norm, quote } from '../text.ts'
 import { noTextPages, pagesText } from './numbering.ts'
 
 export interface Caption {
@@ -260,6 +260,8 @@ export function findCaptions(ctx: Ctx): Caption[] {
     // nor is a continued table's.
     if (
       (rest && /^\p{Ll}/u.test(rest) && !bolded(p)) ||
+      // (a sentence in a font read wrongly: its first word, "shows", has capitals inside it)
+      (rest.length > 40 && garbled(rest) && !bolded(p) && !faceUnknown(p)) ||
       /^[,;)]/.test(rest) ||
       CONTINUED.test(t) ||
       /^\(?cont(inued|['’]d|\.)?\)?(\s|$)/i.test(rest)

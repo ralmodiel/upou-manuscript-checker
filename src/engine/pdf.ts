@@ -737,6 +737,19 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
     )
       out.add(x.l)
   }
+  // The running foot's own words and number set higher on one page (an acceptance page with its
+  // signature lines, say): a foot all the same.
+  const feetKeys = new Set(
+    info.filter((x) => x.side === 'f' && out.has(x.l) && x.k.length >= 12).map((x) => x.k),
+  )
+  for (const x of info)
+    if (
+      x.side === 'f' &&
+      !out.has(x.l) &&
+      feetKeys.has(x.k) &&
+      /(…|\.{2,}|\.\s\.\s\.)\s*([ivxlcdm]+|\d+)\s*$/i.test(x.l.text)
+    )
+      out.add(x.l)
   // The same footer wrapped another way on a few pages (a portrait page among landscape ones):
   // lines of the foot made of words the running footer's lines carry, in a row.
   const feet = info.filter((x) => x.side === 'f' && out.has(x.l)).map((x) => x.k)

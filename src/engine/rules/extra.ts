@@ -18,7 +18,7 @@ const PLACEHOLDERS: [RegExp, string][] = [
   ],
   // The degree's name left as the word "Course" (or "Program").
   [
-    /for the degree,?\s*(course|program)\.?$/i,
+    /for the degree,?\s*(course|program)[.:]*$/i,
     '“Course” or “Program” in place of the degree on the Acceptance Page',
   ],
 ]

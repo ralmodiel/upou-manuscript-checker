@@ -2,7 +2,7 @@
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
 import type { Doc, HeaderFooter, Line, NumberFormat, Section } from '../model.ts'
-import { distance, fromRoman, garbled, norm, quote, roman } from '../text.ts'
+import { distance, fromRoman, norm, quote, roman } from '../text.ts'
 
 export interface Folio {
   raw: string
@@ -17,6 +17,8 @@ export interface Folio {
   label?: boolean
   /** Two items of the footer print over one another (a title over its number): not readable. */
   overlap?: boolean
+  /** Letters stand after the ellipsis where the number goes: a font's wrong glyphs for numerals. */
+  unreadNumber?: boolean
 }
 
 const PLACEHOLDER = /shortened (thesis |dissertation |manuscript |project )?title here/i
@@ -45,16 +47,23 @@ function unglue(t: string, words: Set<string>): { text: string; number: string }
 
 export function parseFolio(raw: string, words?: Set<string>): Folio | undefined {
   let t = norm(raw.replace(/\n/g, ' '))
-  // A re-encoded font may print the ellipsis as «: in a footer of such text it is one.
-  if (garbled(t)) t = t.replace(/«(?=\s*([ivxlcdm]+|\d+)$)/i, '…')
+  // A symbol font may print the ellipsis as «: before the number at a footer's end it is one.
+  t = t.replace(/«(?=\s*([ivxlcdm]+|\d+)$)/i, '…')
   if (!t) return undefined
   // A stray ".." printed over the end of the number (a second item at the same place).
   t = t.replace(/(\d|\b[ivxlcdm]+)\s*\.{2}$/i, '$1')
   // A number run into the word before it.
   if (words && !/\s([ivxlcdm]+|\d+)\s*$/i.test(t)) t = unglue(t, words)?.text ?? t
   const m = FOLIO.exec(t)
-  if (!m)
-    return { raw: t, title: t.replace(/(…|\.{2,})$/, '').trim(), ellipsis: /(…|\.{2,})$/.test(t) }
+  if (!m) {
+    const odd = /^(.*?)(…|\.{2,})\s*(\p{L}{1,5})$/u.exec(t)
+    return {
+      raw: t,
+      title: (odd?.[1] ?? t.replace(/(…|\.{2,})$/, '')).trim(),
+      ellipsis: !!odd || /(…|\.{2,})$/.test(t),
+      ...(odd ? { unreadNumber: true } : {}),
+    }
+  }
   let title = m[1].trim()
   // "p. 60", "page 7": the label of a number, which the template does not have.
   const label = /(?:^|\s)(?:p|pp|pg|page)\.?$/i.test(title)
@@ -136,6 +145,7 @@ export interface Problem {
     | 'ellipsis'
     | 'long'
     | 'typo'
+    | 'garbled'
     | 'changed'
     | 'label'
     | 'overlap'
@@ -166,6 +176,8 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
       : want.kind === 'roman'
         ? roman(want.value)
         : String(want.value)
+  if (folio?.unreadNumber)
+    return [{ type: 'unread', page, text: `${at}the page number could not be read` }]
   if (!folio || (folio.number === undefined && !folio.field))
     return [
       {
@@ -249,7 +261,7 @@ function titleGroups(doc: Doc, pages: number[], thesis = '') {
   const groups = new Map<string, { shown: string; pages: number[] }>()
   for (const p of pages) {
     const f = pdfFolio(doc, p)
-    const key = f?.number !== undefined ? titleKey(f.title) : ''
+    const key = f?.number !== undefined && !f.overlap ? titleKey(f.title) : ''
     if (!key) continue
     const g = groups.get(key) ?? { shown: norm(f!.title), pages: [] }
     g.pages.push(p)
@@ -275,6 +287,25 @@ const titleWords = (t: string) =>
   norm(t)
     .toLowerCase()
     .match(/[\p{L}\p{N}]+/gu) ?? []
+
+/** Letters a font printed wrongly: a capital inside a word ("LeaYninN") or a symbol against one. */
+const oddLetters = (t: string) =>
+  /\p{L}[\\^|~[\]{}]|[\\^|~[\]{}]\p{L}/u.test(t) ||
+  norm(t)
+    .split(' ')
+    .some((w) => /\p{Ll}\p{Lu}/u.test(w.replace(/^(Mc|Mac)/, '')))
+
+/** Two footer titles that differ only through unreadable letters (a font's wrong or dropped
+ *  glyphs): letters changed inside words, no whole word added or left out. Not a sure change. */
+export function garbledVariant(a: string, b: string): boolean {
+  const ka = titleKey(a)
+  const kb = titleKey(b)
+  if (!oddLetters(a) && !oddLetters(b)) return false
+  if (ka === kb || distance(ka, kb) > 0.25 * Math.max(ka.length, kb.length)) return false
+  const wa = new Set(titleWords(a))
+  const wb = new Set(titleWords(b))
+  return [...wa].some((w) => !wb.has(w)) && [...wb].some((w) => !wa.has(w))
+}
 
 /** The title most footers on `pages` carry, as first written; none without a majority. */
 export function mainTitle(doc: Doc, pages: number[]) {
@@ -328,13 +359,13 @@ function titleChanges(doc: Doc, pages: number[], thesis?: string, ref?: TitleRef
     return groups
       .filter((g) => g.key !== ref.key)
       .map((g) => ({
-        type: 'changed',
+        type: garbledVariant(g.shown, ref.shown) ? ('garbled' as const) : ('changed' as const),
         page: g.pages[0],
         text: `${pagesText(g.pages)}: the footer has another title, “${quote(g.shown, 40)}”, than the preliminary pages (“${quote(ref.shown, 40)}”); keep one shortened title`,
       }))
   const [main, ...others] = groups
   return others.map((g) => ({
-    type: 'changed',
+    type: garbledVariant(g.shown, main.shown) ? ('garbled' as const) : ('changed' as const),
     page: g.pages[0],
     text: `${pagesText(g.pages)}: the footer has another title, “${quote(g.shown, 40)}”, than the other pages (“${quote(main.shown, 40)}”); keep one shortened title`,
   }))
@@ -505,7 +536,7 @@ export function againstTitle(
       words: whole,
       text: `${at}has the whole ${whole}-word title before the number; shorten it`,
     })
-  if (typo)
+  if (typo && !oddLetters(folio.title))
     out.push({
       type: 'typo',
       page,
@@ -623,6 +654,7 @@ const LABEL: Record<Problem['type'], string> = {
   ellipsis: 'No ellipsis (…) after the shortened title on',
   long: 'A long title, not a shortened one, on',
   typo: 'A footer title spelled differently from the title page on',
+  garbled: 'A footer title that differs through unreadable letters on',
   changed: 'The title in the footer changes on',
   label: 'The number has “p.” or “page” before it on',
   overlap: 'The footer prints over itself, so it could not be read, on',
@@ -681,3 +713,26 @@ export function summarize(problems: Problem[]): string[] {
     return [`${LABEL[type]} ${pagesText(pages)}`]
   })
 }
+
+/** The problems of a footer audit are all for the student to look at, not sure faults: a title
+ *  spelled a little differently, or one a font printed with wrong letters. */
+export const lookOnly = (problems: Problem[]) =>
+  problems.length > 0 && problems.every((p) => p.type === 'typo' || p.type === 'garbled')
+
+/** The message for pages whose footers could not be read (no text layer, printed over itself, or
+ *  wrong glyphs for the number). */
+export function unreadNote(problems: Problem[]): string {
+  const pages = pagesText(problems.map((p) => p.page!))
+  const what = problems.every((p) => p.type === 'overlap')
+    ? 'have a footer that prints over itself'
+    : problems.some((p) => p.text.includes('no text layer'))
+      ? 'have no text layer (a picture or drawn letters)'
+      : 'have a footer whose page number is printed in letters that could not be read'
+  return `${pages} ${what}, so their page numbers could not be read. Check them yourself.`
+}
+
+/** What to tell when `lookOnly`: a misspelt title, or one the font printed with wrong letters. */
+export const lookNote = (problems: Problem[]) =>
+  problems.some((p) => p.type === 'garbled')
+    ? 'The title in the footers differs from the others only in letters the font printed wrongly, so it could not be compared. Check it yourself.'
+    : 'The title in the footers is spelled differently from the title page. Check it.'
