@@ -132,9 +132,3 @@ export const MoonIcon = (props: IconProps) => (
     <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
   </Icon>
 )
-
-export const ListIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
-  </Icon>
-)

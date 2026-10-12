@@ -35,8 +35,8 @@ covers the code only, not the materials described below.
 
 ## Program materials
 
-The checklist items the site checks against (quoted in `src/engine/checklist.ts`), the MDC thesis
-manuscript template and the MDC Format Checklist (`public/downloads/`) are materials of the UPOU
+The checklist items the site checks against (quoted in `src/engine/checklist.ts`), and the MDC thesis
+manuscript template (`public/downloads/`) are materials of the UPOU
 MDC program. They are reproduced unchanged for the convenience of students and reviewers, who
 should confirm with MDC Program Support that they have the latest versions. If you hold rights in
 any of these materials and want them removed, open an issue in this project's GitHub repository

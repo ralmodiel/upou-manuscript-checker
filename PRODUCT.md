@@ -48,7 +48,7 @@ writing advice.
 - Never say "upload": the file is read in the browser.
 - Only free-of-cost, open-source libraries (checked by scripts/licenses.mjs: MIT, Apache-2.0,
   BSD, ISC, 0BSD and the like; MPL-2.0 only in build tools that never ship).
-- Downloads offered: the MDC thesis manuscript template (.docx) and the Format Checklist (.xlsx).
+- Download offered: the MDC thesis manuscript template (.docx). The checklist is shown on the page, not offered as a file.
 
 ## Brand Commitments
 

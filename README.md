@@ -33,8 +33,8 @@ program's own review remains the official format check. See [NOTICE.md](NOTICE.m
 
 ## Programs and sources
 
-The checklist is the MDC program's copy of UPOU's central format checklist (`data/`, offered for
-download with the template that follows it). The title and acceptance pages are read for any UPOU
+The checklist is the MDC program's copy of UPOU's central format checklist (`data/`; its items are listed on the
+site, and the template that follows it is offered for download). The title and acceptance pages are read for any UPOU
 degree (Associate, Bachelor, Diploma, Master, Doctor; "of" or "in"), any of the three faculties and
 any manuscript type named before "Adviser:". Where UPOU's style guide (OVCAA 2017-4, issued by
 memorandum on 25 May 2022, the newest found) differs from the checklist, as in upper case versus
@@ -131,7 +131,7 @@ add one.
 ## License
 
 - **Code:** [MIT](LICENSE).
-- **Template and checklist** (`public/downloads/`): materials of the UPOU MDC program, offered for
+- **Template** (`public/downloads/`) **and checklist wording** (`src/engine/checklist.ts`): materials of the UPOU MDC program, offered for
   convenience. They are not covered by the MIT License.
 - **Bundled libraries and fonts:** see `public/THIRD_PARTY_LICENSES.txt` (also linked from the
   site's footer).

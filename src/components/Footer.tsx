@@ -41,15 +41,6 @@ export default function Footer() {
             <li>
               <a
                 className={LINK}
-                href={`${base}downloads/mdc-format-checklist.xlsx`}
-                download="Format Checklist.xlsx"
-              >
-                Format Checklist, MDC copy (.xlsx)
-              </a>
-            </li>
-            <li>
-              <a
-                className={LINK}
                 href="https://apastyle.apa.org/style-grammar-guidelines/tables-figures"
                 target="_blank"
                 rel="noopener noreferrer"

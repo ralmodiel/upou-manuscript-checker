@@ -3,7 +3,7 @@
 import { useRef } from 'react'
 import { CHECKLIST } from '../engine/checklist'
 import { PRIVATE_BODY, PRIVATE_HEAD, PRIVATE_SHORT } from '../notice'
-import { DownloadIcon, ExternalLinkIcon, ListIcon, PageIcon, ShieldIcon } from './icons'
+import { DownloadIcon, ExternalLinkIcon, PageIcon, ShieldIcon } from './icons'
 import { buttonClass } from './styles'
 
 const ACCEPT = [
@@ -31,14 +31,6 @@ const FILES = [
     href: 'downloads/mdc-thesis-manuscript-template.docx',
     save: 'MDC Thesis Manuscript_SURNAME, Given Name.docx',
     icon: PageIcon,
-  },
-  {
-    name: 'Format Checklist (MDC copy)',
-    kind: 'Excel workbook',
-    size: '7 KB',
-    href: 'downloads/mdc-format-checklist.xlsx',
-    save: 'Format Checklist.xlsx',
-    icon: ListIcon,
   },
 ]
 
@@ -146,13 +138,12 @@ export default function Prepare({
         <div className="grid gap-8 lg:grid-cols-12">
           <div className="lg:col-span-4">
             <h2 id="files-title" className="font-display text-3xl text-ink">
-              Start from the format files
+              Start from the template
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-ink-2">
-              The checklist this site checks against, drawn from UPOU’s central format checklist,
-              and a template that follows it, both as the MDC program shares them. Ask your program
-              office if you are unsure you have the latest version, or whether your program adds
-              rules.
+              A template that follows the checklist below (drawn from UPOU’s central format
+              checklist), as the MDC program shares it. Ask your program office if you are unsure
+              you have the latest version, or whether your program has its own.
             </p>
           </div>
           <ul className="grid gap-3 lg:col-span-8">
