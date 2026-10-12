@@ -99,9 +99,23 @@ export function distance(a: string, b: string): number {
  *  so capitals stand inside words ("MarYet", "StXdent"). Needs several such words, and a
  *  quarter of the words, so a name like "YouTube" or "McDonald" does not count. */
 export function garbled(s: string): boolean {
+  // Control characters where spaces and letters should be (a font's glyph numbers read as text).
+  let control = 0
+  for (const c of s) {
+    const k = c.charCodeAt(0)
+    if (k < 32 && k !== 9 && k !== 10 && k !== 13) control++
+  }
+  if (control >= 2) return true
+  // Backslashes and carets stuck to letters (a shifted font's "y" and "w"): not how text is written.
+  if ((s.match(/\p{L}[\\^|~]|[\\^|~]\p{L}/gu) ?? []).length >= 2) return true
   const words = s.split(/\s+/).filter((w) => w.replace(/[^\p{L}]/gu, '').length >= 3)
   const odd = words.filter((w) => /\p{Ll}\p{Lu}/u.test(w.replace(/^(Mc|Mac)/, '')))
-  return odd.length >= 3 && odd.length >= 0.25 * words.length
+  if (odd.length >= 3 && odd.length >= 0.25 * words.length) return true
+  // Letters shifted along the alphabet's code (a font's glyph numbers read as characters) leave
+  // hardly a vowel in a stretch of text; words of every language have them.
+  const letters = s.match(/\p{L}/gu) ?? []
+  const vowels = letters.filter((c) => /[aeiouyáéíóúàèìòùâêîôûäëïöüãõ]/i.test(c)).length
+  return letters.length >= 14 && vowels < 0.15 * letters.length
 }
 
 /** A title for comparing two copies: case, a hyphen broken at a line end ("SOCIO-" "CULTURAL")

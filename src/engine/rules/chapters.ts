@@ -4,6 +4,7 @@ import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, isList, justified, textSize } from './body.ts'
+import type { Caption } from './figures.ts'
 import { readTitlePage, thesisTitle } from './front.ts'
 import {
   auditPdf,
@@ -22,33 +23,46 @@ import {
   type Problem,
 } from './numbering.ts'
 
-const isArial = (font?: string) => !font || /arial|arimo|liberation sans|helvetica/i.test(font)
+const isArial = (font?: string) =>
+  !font || /arial|arimo|liberation sans|helvetica|nimbus san|freesans|tex gyre heros/i.test(font)
 
 /** A PDF paragraph set in a font whose name says nothing: its bold and typeface are unknown. */
 const faceUnknown = (p: Para) => p.runs.some((r) => r.unknown && r.text.trim())
 
-/** Bold, Arial and 12 pt over the paragraph's text: the problems found. */
-function typeface(p: Para, what: string): string[] {
-  if (p.plain) return []
-  const runs = p.runs.filter((r) => r.text.trim())
+/** A PDF whose running text is smaller than 12 pt all through (a page printed at 94 %: 11.26 pt,
+ *  11 pt) shows its chapter titles smaller too: their size is then the text's, not a fault of
+ *  theirs. The text's size, then. */
+const reducedScale = (ctx: Ctx) => {
+  if (ctx.doc.kind !== 'pdf') return undefined
+  const size = textSize(ctx.doc.paras)
+  return size > 9.5 && size < 11.8 ? size : undefined
+}
+
+/** Bold, Arial and 12 pt over the paragraph's text: the problems found, and whether the size is
+ *  only that of a reduced scale (`scale`: the text's own size). */
+function typeface(p: Para, what: string, scale?: number): { issues: string[]; scaled: boolean } {
   const out: string[] = []
+  if (p.plain) return { issues: out, scaled: false }
+  const runs = p.runs.filter((r) => r.text.trim())
   if (!bolded(p) && !faceUnknown(p)) out.push(`${what} is not bold`)
   const fonts = [...new Set(runs.map((r) => r.font).filter((f) => f && !isArial(f)))]
   if (fonts.length) out.push(`${what} is in ${fonts.join(', ')}, not Arial`)
-  const sizes = [
+  const off = [
     ...new Set(runs.map((r) => r.size).filter((z) => z !== undefined && Math.abs(z - 12) > 0.3)),
   ]
+  const sizes = off.filter((z) => scale === undefined || Math.abs(z! - scale) > 0.3)
   if (sizes.length) out.push(`${what} is ${sizes.join(', ')} pt, not 12 pt`)
-  return out
+  return { issues: out, scaled: scale !== undefined && off.length > sizes.length }
 }
 
-/** A special problem sets its sections "I. INTRODUCTION", "II. …" in some programs: the MDC
- *  thesis template’s “Chapter I” label is then for the student to weigh, not to correct. */
+/** Other programs set their sections "I. INTRODUCTION", "II. …" (a special problem, a capstone
+ *  project, a thesis): the MDC thesis template’s “Chapter I” label is then for the student to
+ *  weigh, not to correct. Only the MDC's own program is held to it. */
 const numberedSections = (ctx: Ctx) => {
   try {
-    return /^special problem$/i.test(readTitlePage(ctx).work)
+    return !/development communication/i.test(norm(readTitlePage(ctx).program?.text ?? ''))
   } catch {
-    return false
+    return true
   }
 }
 
@@ -154,6 +168,8 @@ function number(ctx: Ctx): Finding {
   const wrong: Para[] = []
   const unsure: string[] = []
   const soft: string[] = []
+  const scaled: string[] = []
+  const scale = reducedScale(ctx)
   const special = numberedSections(ctx)
   for (const c of chapters) {
     const p = paras[c.heading]
@@ -172,7 +188,9 @@ function number(ctx: Ctx): Finding {
       issues.push(`“${c.label}”: chapter numbers must be in Roman numerals (${right})`)
     if (word !== 'Chapter' || /^CHAPTER$/.test(shown(p).slice(0, 7)))
       issues.push(`“${c.label}”: write it in title case (${right})`)
-    for (const t of typeface(p, `“${c.label}”`)) issues.push(t)
+    const tf = typeface(p, `“${c.label}”`, scale)
+    issues.push(...tf.issues)
+    if (tf.scaled) scaled.push(chapterName(c))
     if (issues.length > before) wrong.push(p)
     if (faceUnknown(p)) unsure.push(chapterName(c))
   }
@@ -195,6 +213,12 @@ function number(ctx: Ctx): Finding {
       id,
       'The sections are numbered “I.”, “II.”… with no “Chapter” label. The thesis template labels each chapter (“Chapter I”, with its title on the next line); check with your program whether a special problem does too.',
       { details: soft.slice(0, 8), where: wrong.slice(0, 5).flatMap(at) },
+    )
+  if (!issues.length && scaled.length)
+    return review(
+      id,
+      `${list(scaled)} ${scaled.length > 1 ? 'are' : 'is'} set in the size of the body text (${scale} pt), so this PDF may have been printed at a reduced scale. Check in your file that the chapter numbers are 12 pt.`,
+      { where: [{ page: paras[chapters[0].heading].page }] },
     )
   if (!issues.length && unsure.length)
     return review(
@@ -226,23 +250,29 @@ function title(ctx: Ctx): Finding {
   const issues: string[] = []
   const where: ReturnType<typeof at> = []
   const unsure: string[] = []
-  const soft: string[] = []
-  const special = numberedSections(ctx)
+  // Titles written on their number's line ("I. INTRODUCTION"): the chapter number item says so.
+  const inline: string[] = []
+  const scaled: string[] = []
+  const scale = reducedScale(ctx)
   for (const c of chapters) {
     const name = chapterName(c)
-    if (c.unlabelled && !c.inlineTitle) {
-      // The heading is the title: the missing number is reported with the label.
+    if (c.unlabelled) {
+      // The heading is the title ("I. INTRODUCTION"): the missing number, and so the title's
+      // place below it, is reported with the label.
       const p = paras[c.heading]
-      const t = shown(p).replace(/^\s*(\d{1,2}|[IVXLCivxlc]+)[.)]\s+/, '')
+      const t = shown(p).replace(/^\s*(\d{1,2}|[IVXLCivxlc]+)\s*[.)]\s+/, '')
       const before = issues.length
       if (!isUpper(t)) issues.push(`${name}: write the title in upper case`)
-      for (const x of typeface(p, `${name} title`)) issues.push(x)
+      const tf = typeface(p, `${name} title`, scale)
+      issues.push(...tf.issues)
+      if (tf.scaled) scaled.push(name)
       if (issues.length > before) where.push(...at(p))
       if (faceUnknown(p)) unsure.push(name)
+      if (c.inlineTitle) inline.push(name)
       continue
     }
     if (c.inlineTitle) {
-      ;(special && c.unlabelled ? soft : issues).push(
+      issues.push(
         `${name}: enter the chapter title (“${quote(c.inlineTitle, 40)}”) into the next line, below the chapter number`,
       )
       where.push(...at(paras[c.heading]))
@@ -263,15 +293,25 @@ function title(ctx: Ctx): Finding {
       issues.push(
         `${name}: write the title in upper case (“${quote(t, 40)}”; if this is a subheading, add the chapter title above it)`,
       )
-    for (const x of typeface(p, `${name} title`)) issues.push(x)
+    const tf = typeface(p, `${name} title`, scale)
+    issues.push(...tf.issues)
+    if (tf.scaled) scaled.push(name)
     if (issues.length > before) where.push(...at(p))
     if (faceUnknown(p)) unsure.push(name)
   }
-  if (!issues.length && soft.length)
+  if (!issues.length && inline.length)
     return review(
       id,
-      'The sections are numbered “I.”, “II.”… with the title on the same line. The thesis template puts the title on its own line below the “Chapter I” label; check with your program whether a special problem does too.',
-      { details: soft.slice(0, 8), where: where.slice(0, 5) },
+      'The chapter titles share a line with their numbers (“I. INTRODUCTION”). The thesis template puts each title on its own line below the “Chapter I” label (see the chapter number item); the titles themselves are in upper case, bold Arial 12 pt.',
+      {
+        details: inline.slice(0, 8).map((n) => `${n}: title on the number’s line`),
+        where: where.slice(0, 5),
+      },
+    )
+  if (!issues.length && scaled.length)
+    return review(
+      id,
+      `The titles of ${list(scaled)} are set in the size of the body text (${scale} pt), so this PDF may have been printed at a reduced scale. Check in your file that they are 12 pt.`,
     )
   if (!issues.length && unsure.length)
     return review(
@@ -309,12 +349,14 @@ function noPageNumber(ctx: Ctx): Finding {
         ? 'Remove the footer (shortened title and page number) on the first page of each chapter.'
         : msg,
       {
-        details: shown
+        // (a chapter that begins mid-page stands on a numbered page: said too, once it goes on a
+        // page of its own, that page is to carry no number)
+        details: s.chapters
+          .filter((c) => folio(c) && (doc.paras[c.heading].newPage || shown.length))
           .map(
             (c) =>
-              `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}) shows “${clip(folio(c)!.raw)}”`,
-          )
-          .slice(0, 6),
+              `${chapterName(c)} (${pagesText([doc.paras[c.heading].page!])}${doc.paras[c.heading].newPage ? '' : ', mid-page'}) shows “${clip(folio(c)!.raw)}”`,
+          ),
         where: shown.slice(0, 5).map((c) => ({ page: doc.paras[c.heading].page })),
       },
     )
@@ -342,6 +384,11 @@ function noPageNumber(ctx: Ctx): Finding {
 
 // ---- Succeeding pages ----
 
+/** A figure's or table's note ("Source: …", "(Cruz, 2020)") and the closing lines of a letter,
+ *  a questionnaire or an acknowledgment: lines that end a page without hanging. */
+const NOTE_LINE =
+  /^((sources?|notes?|photos?|credits?|photo credit|image|retrieved from|adapted from|courtesy of)\b\s*[:.]|\((photo|source|image|credit|taken|retrieved).{0,150}\)$|\(.{2,60}\)$|(thank you|maraming salamat|salamat po|the researcher|respectfully|sincerely|very truly yours|yours truly|god bless|to god be)\b)/i
+
 const headingLike = (p: Para) => {
   const t = norm(p.text)
   return (
@@ -349,7 +396,12 @@ const headingLike = (p: Para) => {
     // Words, not a lone arrow or number from a diagram.
     /\p{L}.*\p{L}/u.test(t) &&
     t.length <= 100 &&
-    !/[.:;,]$/.test(t) &&
+    !/[.:;,!]$/.test(t) &&
+    !NOTE_LINE.test(t) &&
+    // (a code such as "EN2V-Ii-j-1", a scale's row of numbers)
+    !/^[A-Z0-9]{2,}(-[A-Za-z0-9]+){2,}$/.test(t) &&
+    (t.match(/\b\d+\b/g) ?? []).length < 4 &&
+    p.align !== 'right' &&
     // A heading opens with a capital or a number: a line starting with a small letter ends a
     // sentence (the last line of a quotation); a form's blank or placeholder is no heading.
     !/^\p{Ll}/u.test(t) &&
@@ -360,7 +412,7 @@ const headingLike = (p: Para) => {
   )
 }
 
-function hanging(ctx: Ctx): Finding {
+function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   const id = 'body.hanging'
   const { doc, s } = ctx
   const msg =
@@ -421,7 +473,27 @@ function hanging(ctx: Ctx): Finding {
   )
   const row = (q?: Para) => !!q && (!!q.inTable || q.text.includes('\t'))
   const bodySize = textSize(paras)
+  // Headings are judged in the chapters and after them; the preliminary pages hold prose, whose
+  // closing lines (a name, a date) are not headings. A dedication's lines are not paragraphs.
+  const firstBody = s.chapters[0]?.heading ?? s.references?.heading ?? doc.paras.length
+  const dedication = s.prelims.find((x) => x.key === 'dedication')
+  // Which side of its table or figure this document sets a caption: below it (closing it) or above
+  // it, as far as the captions whose object could be placed show.
+  const captionAbove = (kind: Caption['kind']) => {
+    const placed = captions.filter((c) => c.kind === kind && c.object !== 'unknown')
+    return (
+      placed.filter((c) => c.object === 'after').length >
+      placed.filter((c) => c.object === 'before').length
+    )
+  }
   for (const p of paras) {
+    if (dedication && p.i > dedication.heading && p.i < dedication.end) continue
+    // Numbered lines of a transcript, in an appendix, are lines of speech, not paragraphs.
+    if (
+      /^\d{1,3}\s+\p{Ll}/u.test(norm(p.text)) &&
+      s.appendices.some((a) => p.i > a.heading && p.i < a.end)
+    )
+      continue
     const lines = p.lines ?? []
     const next = doc.paras[p.i + 1]
     const pg = doc.pages?.[p.page ?? -1]
@@ -451,22 +523,64 @@ function hanging(ctx: Ctx): Finding {
     // Pictures in the text area (not a logo in the header or footer), above or below the heading.
     const pics = pg.images.filter((b) => b.y1 > 0.12 * pg.height && b.y0 < 0.88 * pg.height)
     const above = pics.some((b) => b.y1 <= lines[0].y)
+    // A caption under the table (its rows right above it) or under its picture closes the figure.
+    const belowTable =
+      !!before?.lines &&
+      before.page === p.page &&
+      row(before) &&
+      lines[0].y - before.lines.at(-1)!.y <= 2.2 * lines[0].size
     // The last thing on its page (no picture below it either), after text or a picture, and with
     // something to come on the pages after; not a caption under its picture, closing the figure.
     if (
-      (headingLike(p) || label) &&
+      ((headingLike(p) && (p.i >= firstBody || s.prelims.some((x) => x.heading === p.i))) ||
+        label) &&
+      // (a caption closing the page is judged below, by what opens the next one)
+      !(
+        caption &&
+        !captionAbove(
+          /^table/i.test(norm(before && continued ? before.text : p.text)) ? 'table' : 'figure',
+        )
+      ) &&
       end.page === p.page &&
       (!next || next.page !== p.page) &&
       !pics.some((b) => b.y0 >= end.y - 2) &&
       (texted.has(pg.n) || above) &&
       (next || (doc.pages?.[pg.n + 1]?.images.length ?? 0) > 0) &&
-      !((caption || label) && above)
+      !((caption || label) && (above || belowTable))
     ) {
       details.push(
         `${place(pg.n, p)}: the heading “${quote(p.text, 40)}” is the last line of the page`,
       )
       where.push({ page: pg.n, quote: quote(p.text, 40) })
       continue
+    }
+    // A caption (or its number alone, then its title) closing the page, its picture or table
+    // opening the next one.
+    if (caption && !continued && end.page === p.page && !above && !belowTable) {
+      const title = /^(table|fig(ure)?\.?|chart)\s*\S*\d\S*$/i.test(norm(p.text))
+        ? doc.paras[p.i + 1]
+        : undefined
+      const tail = title && title.page === p.page && !row(title) ? title : p
+      const after = doc.paras[tail.i + 1]
+      const last = tail.lines?.at(-1)
+      const upper = doc.pages?.[pg.n + 1]
+      const top = upper && doc.paras[upper.paras[0]]
+      const topY = top?.lines?.[0]?.y
+      if (
+        last &&
+        last.page === p.page &&
+        (!after || after.page !== p.page) &&
+        !pics.some((b) => b.y0 >= last.y - 2) &&
+        !!upper &&
+        (upper.images.some((b) => b.x1 - b.x0 > 40 && (topY === undefined || b.y1 <= topY + 2)) ||
+          row(top))
+      ) {
+        details.push(
+          `${place(pg.n, p)}: “${quote(p.text, 40)}” is at the bottom of the page, its ${/^table/i.test(norm(p.text)) ? 'table' : 'figure'} on the next page`,
+        )
+        where.push({ page: pg.n, quote: quote(p.text, 40) })
+        continue
+      }
     }
     // A table's title with no more than an inch of its table under it at the foot of the page,
     // the table going on at the next page.
@@ -507,52 +621,23 @@ function hanging(ctx: Ctx): Finding {
       const after = next?.lines?.[0]
       const closes =
         !after || after.page !== pages[1] || after.x0 <= lines[0].x0 + 3 || headingLike(next)
-      if (onFirst === 1 || (onNext === 1 && closes)) {
+      // The next paragraph opening with a small letter goes on with this one (its lines were
+      // told apart by a line that stopped a little short): more than one line is carried over.
+      const goesOn =
+        !!next && next.page === pages[1] && /^\p{Ll}/u.test(norm(next.text)) && !isList(next)
+      // A paragraph opening mid-sentence (its first line was told from the line above), a
+      // caption, and a link wrapped onto a line of its own are not paragraphs left short.
+      const stray =
+        (/^\p{Ll}/u.test(norm(p.text)) && !isList(p)) ||
+        caption ||
+        /^(https?:\/\/|www\.)/i.test(norm(p.text))
+      if ((onFirst === 1 && !stray) || (onNext === 1 && closes && !goesOn)) {
         details.push(
           onFirst === 1
             ? `${place(pages[0], p)}: one line of the paragraph “${quote(p.text, 35)}” is left at the bottom of the page`
             : `${place(pages[1], p)}: the last line of the paragraph “${quote(p.text, 35)}” (from ${pagesText([pages[0]])}) stands alone at the top of the page`,
         )
         where.push({ page: pages[onFirst === 1 ? 0 : 1], quote: quote(p.text, 40) })
-      }
-    }
-    // A list of one-line items (each its own paragraph) that a page break leaves with one item
-    // alone on a page.
-    const x0 = lines[0].x0
-    const item = (q?: Para): q is Para =>
-      !!q &&
-      q.lines?.length === 1 &&
-      isList(q) &&
-      !bolded(q) &&
-      // (two bullets on a line: the cells of a table)
-      !/[•●▪◦].*[•●▪◦]/.test(q.text) &&
-      Math.abs(q.lines[0].x0 - x0) <= 3
-    // The last thing on its page (no picture under it), the list going on at the next page.
-    if (item(p) && item(next) && next.page === pg.n + 1 && !pics.some((b) => b.y0 >= end.y - 2)) {
-      // Items set further in (sub-items) belong to the same list.
-      const count = (k: number, step: number, page: number) => {
-        let c = 0
-        const q = (j: number) => doc.paras[j]
-        while (
-          q(k)?.lines?.length === 1 &&
-          isList(q(k)) &&
-          q(k).lines![0].x0 >= x0 - 3 &&
-          q(k).page === page
-        ) {
-          c++
-          k += step
-        }
-        return c
-      }
-      const one =
-        count(next.i, 1, pg.n + 1) === 1 ? next : count(p.i, -1, pg.n) === 1 ? p : undefined
-      // A sentence that goes on under the item (the options of a question, then the rest of it).
-      const resumes = one === next && /^\p{Ll}/u.test(norm(doc.paras[next.i + 1]?.text ?? ''))
-      if (one && !resumes) {
-        details.push(
-          `${place(one.page!, one)}: the list item “${quote(one.text, 35)}” ${one === next ? 'stands alone at the top of the page' : 'is left alone at the bottom of the page'}`,
-        )
-        where.push({ page: one.page, quote: quote(one.text, 40) })
       }
     }
   }
@@ -667,7 +752,7 @@ export function bodyNumbers(
   return fix(id, msg, { details: summarize(problems) })
 }
 
-export function chapterRules(ctx: Ctx): Finding[] {
+export function chapterRules(ctx: Ctx, captions: Caption[] = []): Finding[] {
   const { s, doc } = ctx
   if (!s.chapters.length) {
     // Without a chapter label the chapters cannot be told apart: nothing here was checked.
@@ -675,7 +760,7 @@ export function chapterRules(ctx: Ctx): Finding[] {
       'No chapter label (Chapter I, Chapter II…) was found, so this was not checked. Label the chapters as in the template, or check this item yourself.'
     return [
       number(ctx),
-      hanging(ctx),
+      hanging(ctx, captions),
       ...[
         'chapterStart.newPage',
         'chapterStart.title',
@@ -701,6 +786,14 @@ export function chapterRules(ctx: Ctx): Finding[] {
   )
   const bodyEnd =
     s.references?.start ?? s.appendicesHeading ?? s.appendices[0]?.start ?? doc.paras.length
+  // The contents lists more chapters than were found: what passed was passed for those found only.
+  const unsure = (f: Finding): Finding =>
+    f.status === 'ok' && f.id !== 'body.hanging' && (s.listedChapters ?? 0) > s.chapters.length
+      ? review(
+          f.id,
+          `Only ${s.chapters.length} of the ${s.listedChapters} chapters in the table of contents could be found (the others may be headed in an unusual way), so this was not checked for all of them. Check it yourself.`,
+        )
+      : f
   return [
     newPage(ctx),
     number(ctx),
@@ -708,9 +801,9 @@ export function chapterRules(ctx: Ctx): Finding[] {
     justified(ctx, 'chapterStart.justified', firstParas, 'the first page of each chapter'),
     doubleSpaced(ctx, 'chapterStart.spacing', firstParas, 'the first page of each chapter'),
     noPageNumber(ctx),
-    hanging(ctx),
+    hanging(ctx, captions),
     justified(ctx, 'body.justified', restParas, 'the chapters'),
     doubleSpaced(ctx, 'body.spacing', restParas, 'the chapters'),
     bodyNumbers(ctx, 'body.pageNumbers', s.chapters[0].start, bodyEnd, 'chapter pages'),
-  ]
+  ].map(unsure)
 }

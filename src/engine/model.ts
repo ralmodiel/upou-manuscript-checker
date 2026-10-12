@@ -91,11 +91,17 @@ export interface Page {
   /** Paragraph indices whose first line is on this page. */
   paras: number[]
   /** Pictures; `ink` (0 white to 1 black) for the small ones on the first pages (tick boxes). */
-  images: (Box & { ink?: number })[]
+  images: (Box & {
+    ink?: number
+    /** Drawing order on the page: a later white shape may cover it. */
+    z?: number
+  })[]
   /** Ink, stamps, free text and drawn shapes: anything a signature or a tick could be. */
   marks: (Box & {
     kind: string
     count?: number
+    /** Drawing order on the page (not for annotations, which come after the page's content). */
+    z?: number
     /** A filled path's colour ('#rrggbb'). */
     fill?: string
     /** A form field: filled in (ticked, chosen, typed) or not. */

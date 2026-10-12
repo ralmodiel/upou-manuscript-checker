@@ -142,7 +142,7 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
   const found = [
     ...(await safely(idsOf('title', 'permission', 'acceptance'), () => frontRules(ctx))),
     ...(await safely(idsOf('prelims'), () => prelimRules(ctx, captions))),
-    ...(await safely(idsOf('chapterStart', 'body'), () => chapterRules(ctx))),
+    ...(await safely(idsOf('chapterStart', 'body'), () => chapterRules(ctx, captions))),
     ...(await safely(idsOf('figures'), () => figureRules(ctx, captions))),
     ...(await safely(idsOf('references', 'appendices'), () => backRules(ctx))),
     ...(await safely(idsOf('extra'), () => extraRules(ctx))),

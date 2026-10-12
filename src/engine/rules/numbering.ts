@@ -13,21 +13,50 @@ export interface Folio {
   kind?: 'roman' | 'arabic' | 'other'
   /** The number is Word's PAGE field (its value depends on the page). */
   field?: boolean
+  /** The number has "p." or "page" before it. */
+  label?: boolean
 }
 
 const PLACEHOLDER = /shortened (thesis |dissertation |manuscript |project )?title here/i
 // The number after an ellipsis, a space, or a bar or dot set where the ellipsis goes ("Title │ii").
 const FOLIO = /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s*[|│¦•·]\s*|\s+|^)([ivxlcdm]+|\d+)\s*$/i
 
-export function parseFolio(raw: string): Folio | undefined {
+/** The number run into the last word of a footer ("Learningii", "Studies12"): split off when the
+ *  word without it is one the manuscript uses and the whole is not. */
+function unglue(t: string, words: Set<string>): { text: string; number: string } | undefined {
+  // (the last word, set off by a space: not the number after dots or an ellipsis)
+  const w = /(?:^|\s)([\p{L}\d]+)$/u.exec(t)?.[1] ?? ''
+  for (let k = 1; k <= 6 && k < w.length; k++) {
+    const tail = w.slice(-k)
+    const stem = w.slice(0, -k).toLowerCase()
+    if (!(/^\d{1,3}$/.test(tail) || fromRoman(tail) !== undefined)) continue
+    if (
+      stem.length >= 3 &&
+      !/^[ivxlcdm\d]+$/.test(stem) &&
+      words.has(stem) &&
+      !words.has(w.toLowerCase())
+    )
+      return { text: `${t.slice(0, t.length - k)} ${tail}`, number: tail }
+  }
+  return undefined
+}
+
+export function parseFolio(raw: string, words?: Set<string>): Folio | undefined {
   let t = norm(raw.replace(/\n/g, ' '))
   // A re-encoded font may print the ellipsis as «: in a footer of such text it is one.
   if (garbled(t)) t = t.replace(/«(?=\s*([ivxlcdm]+|\d+)$)/i, '…')
   if (!t) return undefined
+  // A stray ".." printed over the end of the number (a second item at the same place).
+  t = t.replace(/(\d|\b[ivxlcdm]+)\s*\.{2}$/i, '$1')
+  // A number run into the word before it.
+  if (words && !/\s([ivxlcdm]+|\d+)\s*$/i.test(t)) t = unglue(t, words)?.text ?? t
   const m = FOLIO.exec(t)
   if (!m)
     return { raw: t, title: t.replace(/(…|\.{2,})$/, '').trim(), ellipsis: /(…|\.{2,})$/.test(t) }
   let title = m[1].trim()
+  // "p. 60", "page 7": the label of a number, which the template does not have.
+  const label = /(?:^|\s)(?:p|pp|pg|page)\.?$/i.test(title)
+  if (label) title = title.replace(/\s*(?:p|pp|pg|page)\.?$/i, '').trim()
   let ellipsis = !!m[2]
   if (!ellipsis && /(…|\.{2,})$/.test(title)) {
     ellipsis = true
@@ -42,6 +71,7 @@ export function parseFolio(raw: string): Folio | undefined {
     number,
     kind: /^\d+$/.test(number) ? 'arabic' : r !== undefined ? 'roman' : 'other',
     value: /^\d+$/.test(number) ? +number : r,
+    ...(label ? { label: true } : {}),
   }
 }
 
@@ -104,6 +134,7 @@ export interface Problem {
     | 'ellipsis'
     | 'long'
     | 'changed'
+    | 'label'
     | 'unread'
   page?: number
   text: string
@@ -160,6 +191,12 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
       page,
       text: `${at}shows ${folio.number}; it should be ${expected}`,
       diff: folio.value - (want.value ?? 0),
+    })
+  if (folio.label)
+    out.push({
+      type: 'label',
+      page,
+      text: `${at}the number has “p.” or “page” before it; write the number alone`,
     })
   const words = folio.title.split(/\s+/).filter(Boolean).length
   if (PLACEHOLDER.test(folio.title))
@@ -295,25 +332,64 @@ function titleChanges(doc: Doc, pages: number[], thesis?: string, ref?: TitleRef
 /** A number standing by itself: a span of its own, or a line of its own. */
 const NUMBER = /^([ivxlcdm]+|\d+)$/i
 
+/** The words the manuscript uses, for telling a number run into a word from the word. */
+const wordCache = new WeakMap<Doc, Set<string>>()
+function docWords(doc: Doc): Set<string> {
+  let w = wordCache.get(doc)
+  if (!w) {
+    w = new Set()
+    for (const p of doc.paras)
+      for (const m of p.text.matchAll(/\p{L}{3,}/gu)) w.add(m[0].toLowerCase())
+    wordCache.set(doc, w)
+  }
+  return w
+}
+
 /** A footer of several lines whose number is not at the end of the last: the title wrapped below
- *  a number that ends its first line, or a number alone on a line above the title. The title is
- *  then the other lines' text, read in order, and the number the one found. */
-function wrappedFolio(lines: Line[]): Folio | undefined {
+ *  a number that ends its first line (as an item of its own, or the end of its text), a number
+ *  alone on a line above the title, or a Roman numeral broken over two lines ("vii" and "i" for
+ *  "viii"). The title is then the other lines' text, read in order, and the number the one found. */
+function wrappedFolio(lines: Line[], words: Set<string>, brokenOnly = false): Folio | undefined {
+  const reach = Math.max(...lines.map((l) => l.x1))
   for (const [k, l] of lines.entries()) {
     const last = l.spans.at(-1)
-    const before = l.spans.at(-2)
-    // A span of its own, set apart from the words before it (or printed over their end), as a
-    // field is: a roman numeral ending a title ("Part II") is spaced like a word.
+    // A span of its own, whatever the gap (a field is one item; a roman numeral ending a title is
+    // part of the title's own item).
     const alone = l.spans.length === 1 && NUMBER.test(l.text.trim())
-    const gap = last && before ? last.x0 - before.x1 : 0
-    const apart = !!last && !!before && (gap >= 0.4 * l.size || gap < -0.2 * l.size)
-    if (!alone && !(apart && NUMBER.test(last!.text) && k < lines.length - 1)) continue
-    const number = alone ? l.text.trim() : last!.text
+    const apart = l.spans.length >= 2 && !!last && NUMBER.test(last.text) && k < lines.length - 1
+    // The longest line of the footer, ending in the number: the title wrapped after it.
+    const inText =
+      l.spans.length === 1 &&
+      k < lines.length - 1 &&
+      l.x1 >= reach - 3 &&
+      /\s([ivxlcdm]+|\d{1,3})$/i.test(l.text)
+    if (!alone && !apart && !inText) continue
+    let number = alone ? l.text.trim() : apart ? last!.text : /[^\s]+$/.exec(l.text)![0]
     if (!/^\d+$/.test(number) && fromRoman(number) === undefined) continue
-    const rest = lines.map((x, j) =>
-      j !== k ? x.text : alone ? '' : x.text.slice(0, x.text.lastIndexOf(number)),
+    // The rest of a Roman numeral on a line below, under the first part.
+    const x0 = last?.x0
+    const piece = lines.findIndex(
+      (q, j) =>
+        j > k &&
+        x0 !== undefined &&
+        q.spans.length >= 2 &&
+        /^[ivxlc]+$/i.test(q.spans.at(-1)!.text) &&
+        Math.abs(q.spans.at(-1)!.x0 - x0) <= 3 &&
+        fromRoman(number + q.spans.at(-1)!.text) !== undefined,
     )
-    const f = parseFolio(`${rest.filter((t) => t.trim()).join(' ')} ${number}`)
+    if (brokenOnly && piece < 0) continue
+    const tail = piece >= 0 ? lines[piece].spans.at(-1)!.text : ''
+    number += tail
+    const rest = lines.map((x, j) =>
+      j === piece
+        ? x.text.slice(0, x.text.lastIndexOf(tail))
+        : j !== k
+          ? x.text
+          : alone
+            ? ''
+            : x.text.slice(0, x.text.lastIndexOf(number.slice(0, number.length - tail.length))),
+    )
+    const f = parseFolio(`${rest.filter((t) => t.trim()).join(' ')} ${number}`, words)
     return f?.number === number ? f : undefined
   }
   return undefined
@@ -322,11 +398,14 @@ function wrappedFolio(lines: Line[]): Folio | undefined {
 /** The page's footer, or a page number printed at the top of the page instead. */
 export function pdfFolio(doc: Doc, page: number): Folio | undefined {
   const pg = doc.pages?.[page]
+  const words = docWords(doc)
   const top = parseFolio(pg?.header ?? '')
-  let foot = parseFolio(pg?.footer ?? '')
-  if (foot && foot.number === undefined && (pg?.footerLines.length ?? 0) > 1)
-    foot = wrappedFolio(pg!.footerLines) ?? foot
-  return foot ?? (top?.value !== undefined ? top : undefined)
+  let foot = parseFolio(pg?.footer ?? '', words)
+  // (a footer ending in a number may still have it broken over two lines: "vii" and "i")
+  if (foot && (pg?.footerLines.length ?? 0) > 1)
+    foot = wrappedFolio(pg!.footerLines, words, foot.number !== undefined) ?? foot
+  // (a line of text taken for a footer does not hide a page number set at the top)
+  return foot?.number !== undefined ? foot : top?.value !== undefined ? top : foot
 }
 
 /** PDF pages with no text layer: their writing is a picture or drawn outlines, so nothing on
@@ -448,6 +527,7 @@ const LABEL: Record<Problem['type'], string> = {
   ellipsis: 'No ellipsis (…) after the shortened title on',
   long: 'A long title, not a shortened one, on',
   changed: 'The title in the footer changes on',
+  label: 'The number has “p.” or “page” before it on',
   unread: 'No text layer (the page number could not be read) on',
 }
 

@@ -38,7 +38,8 @@ interface Span {
   unknown?: boolean
 }
 
-const OPAQUE_FONT = /^(CIDFont\+)?(F|Font|g_d\d+_f)\d+$/i
+// ("font000000002c3bae3e": a name a converter made up)
+const OPAQUE_FONT = /^(CIDFont\+)?(F|Font|g_d\d+_f)\d+$|^font[0-9a-f]{8,}$/i
 const BOLD = /bold|black|heavy|semibold|demibold/i
 const ITALIC = /italic|oblique/i
 // Lines that open a paragraph of their own: list markers ("1. ", "a) ", "(A) ", bullets; not "M. ",
@@ -58,7 +59,9 @@ const OUTSIDE = /^(note[.:]|(table|fig(ure)?\.?)\s*\d)/i
  *  "Table 3.1." too. A heading wholly in bold, then a label that is not (a table's number under
  *  the section heading), opens one as well. */
 const opens = (l: Line, prev: Line) =>
-  MARKER.test(l.text) ||
+  // (a line opening "(3) …" after one that already numbers its parts in the sentence — "(1) X,
+  // (2) Y," — goes on with it)
+  (MARKER.test(l.text) && !/\S\s\(\d{1,2}\)\s/.test(prev.text)) ||
   LIST_HEADING.test(l.text.trim()) ||
   (LABEL.test(l.text) &&
     (!!l.runs.find((r) => r.text.trim())?.bold ||
@@ -169,7 +172,7 @@ export async function readPdf(
 
       // Drawing operations: pictures, paths and coloured text, placed by tracking the graphics
       // state (transform and fill colour) through save and restore.
-      const images: (Box & { id?: string })[] = []
+      const images: (Box & { id?: string; z: number })[] = []
       const marks: Page['marks'] = []
       const colored: Page['colored'] = []
       // The coloured text being read: black text in between ends it.
@@ -220,6 +223,7 @@ export async function readPdf(
           images.push({
             ...boxOf(ctm, 0, 0, 1, 1),
             id: typeof args[0] === 'string' ? args[0] : undefined,
+            z: k,
           })
         else if (fn === OPS.constructPath) {
           const path = (args[1] as (Float32Array | null)[] | undefined)?.[0]
@@ -229,6 +233,7 @@ export async function readPdf(
               ...boxOf(ctm, mm[0], mm[1], mm[2], mm[3]),
               kind: 'path',
               count: path.length,
+              z: k,
               ...(FILLS.has(args[0] as number) ? { fill } : {}),
             })
         }
@@ -297,8 +302,22 @@ export async function readPdf(
       for (const item of text.items) {
         if (!('str' in item) || !item.str) continue
         const [a, b, c, d, e, f] = item.transform as Matrix
-        // Rotated text (a turned table, a chart label) is not part of the running text.
-        if (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0) continue
+        // Rotated text (a turned table, a chart label) is not part of the running text. A mark
+        // set at an angle (a slanted "/" in a tick box) is still a mark.
+        if (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0) {
+          if (item.str.trim().length === 1) {
+            const [rx, ry] = toView(e, f)
+            const rs = Math.hypot(a, b) * Math.abs(vp.transform[3] || 1)
+            glyphs.push({
+              x0: rx,
+              x1: rx + item.width,
+              y0: ry - rs * 0.8,
+              y1: ry + rs * 0.2,
+              text: item.str.trim(),
+            })
+          }
+          continue
+        }
         const [x0, y] = toView(e, f)
         const [x1] = toView(e + item.width, f)
         const size = Math.abs(d) * Math.abs(vp.transform[3] || 1)
@@ -356,7 +375,7 @@ export async function readPdf(
         footer: '',
         footerLines: [],
         paras: [],
-        images: images.map(({ x0, y0, x1, y1 }) => ({ x0, y0, x1, y1 })),
+        images: images.map(({ x0, y0, x1, y1, z }) => ({ x0, y0, x1, y1, z })),
         marks,
         glyphs,
         colored: own.map(readable),
@@ -369,15 +388,24 @@ export async function readPdf(
         // seal, and a tick box is too small to be it.
         const w = (b: Box) => b.x1 - b.x0
         const h = (b: Box) => b.y1 - b.y0
-        const round = images.filter(
+        // A picture drawn in strips, one above the next (a seal cut in three): put back together.
+        const strips = stackedStrips(images)
+        const all: (Box & { id?: string; ids?: string[] })[] = [...images, ...strips]
+        const round = all.filter(
           (b) => Math.min(w(b), h(b)) >= 36 && Math.max(w(b), h(b)) < 1.5 * Math.min(w(b), h(b)),
         )
         // It heads the page: a square photo of a signature further down is not it either.
         const top = round.filter((b) => b.y0 < vp.height / 2)
         const big = (top.length ? top : round.length ? round : images).reduce((p, q) =>
           w(q) * h(q) > w(p) * h(p) ? q : p,
-        )
-        const pixels = big.id ? await imagePixels(page, big.id) : undefined
+        ) as Box & { id?: string; ids?: string[] }
+        let pixels: Pixels | undefined
+        if (big.ids && big.ids.length > 1) {
+          const parts = await Promise.all(big.ids.map((id) => imagePixels(page, id)))
+          pixels = parts.every((q) => q && q.width === parts[0]!.width)
+            ? stackPixels(parts as Pixels[])
+            : undefined
+        } else pixels = big.id ? await imagePixels(page, big.id) : undefined
         pictures.push({
           para: -1,
           page: n,
@@ -407,6 +435,25 @@ export async function readPdf(
   const strict =
     allLines.filter((ls, n) => ls.some((l) => surelyFoot(l, pages[n].height, running))).length >=
     0.5 * pages.length
+  // Where the writer's feet are set smaller than the text, a line in the text's size down there
+  // is text that ran into the foot, not a footer.
+  const footSizes = allLines.flatMap((ls, n) =>
+    ls
+      .filter(
+        (l) =>
+          (running.has(l) && l.y > pages[n].height / 2) ||
+          (l.y > pages[n].height - 72 && looksLikeNumber(l.text)),
+      )
+      .map((l) => l.size),
+  )
+  const footSize = footSizes.length >= 3 ? median(footSizes) : undefined
+  const bodySize = mode(allLines.flat().map((l) => l.size))
+  const bodyish = (l: Line) =>
+    footSize !== undefined &&
+    bodySize - footSize >= 0.8 &&
+    l.size >= bodySize - 0.3 &&
+    !looksLikeNumber(l.text) &&
+    !running.has(l)
   for (const [n, lines] of allLines.entries()) {
     const { body, footer, header } = splitBands(
       lines,
@@ -414,6 +461,7 @@ export async function readPdf(
       pages[n].height,
       running,
       strict,
+      bodyish,
     )
     allLines[n] = body
     pages[n].header = header.map((l) => l.text).join('\n')
@@ -448,8 +496,21 @@ function toLines(spans: Span[], page: number): Line[] {
     groups.push([s])
   }
   const lines: Line[] = []
-  for (const g of groups) {
-    g.sort((a, b) => a.x0 - b.x0)
+  for (const g0 of groups) {
+    g0.sort((a, b) => a.x0 - b.x0)
+    // A text drawn twice (a second layer of the same words, cut into pieces in another place):
+    // what lies within another piece's width and is part of its words is read once.
+    const g = g0.filter((s, k) => {
+      if (s.text.trim().length < 4) return true
+      return !g0.some(
+        (q, j) =>
+          j !== k &&
+          (q.text.length > s.text.length || (q.text.length === s.text.length && j < k)) &&
+          q.text.includes(s.text) &&
+          s.x0 >= q.x0 - 2 &&
+          s.x1 <= q.x1 + 2,
+      )
+    })
     const ink = g.filter((s) => s.text.trim())
     if (!ink.length) continue
     // The baseline and size of the line are those of its longest span (not a superscript).
@@ -469,7 +530,18 @@ function toLines(spans: Span[], page: number): Line[] {
           text = text.trimEnd()
           const last = runs.at(-1)
           if (last) last.text = last.text.trimEnd()
-        } else if (gap > 0.2 * main.size && !/\s$/.test(text) && !/^\s/.test(piece))
+        } else if (
+          (gap > 0.2 * main.size ||
+            // a page number set in its own item right after the title ("among" + "105")
+            (gap >= -1 &&
+              s === ink.at(-1) &&
+              // (not the second half of a number cut in two: "x" and "iv")
+              !/^(\d{1,3}|[ivxlc]{1,5})$/i.test(prev.text.trim()) &&
+              Math.abs(s.size - main.size) < 1 &&
+              /^(\d{1,3}|[ivxlc]{1,5})$/i.test(s.text))) &&
+          !/\s$/.test(text) &&
+          !/^\s/.test(piece)
+        )
           piece = ' ' + piece
       }
       text += piece
@@ -529,23 +601,45 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
     })
     // Words, and not a caption or note: "Table 3" opening page after page is still a caption.
     .filter((x) => /\p{L}/u.test(x.k) && !OUTSIDE.test(x.l.text.trim()))
+  // Pages of one size are read together (turned pages with a wide table have their own feet).
+  const sizeOf = (n: number) => `${Math.round(pages[n].width)}x${Math.round(pages[n].height)}`
+  const same = new Map<string, number>()
+  for (const pg of pages) same.set(sizeOf(pg.n), (same.get(sizeOf(pg.n)) ?? 0) + 1)
   const anywhere = new Map<string, Set<number>>()
   const near = new Map<string, Set<number>>()
+  const inSide = new Map<string, Set<number>>()
   const add = (m: Map<string, Set<number>>, k: string, page: number) =>
     m.set(k, (m.get(k) ?? new Set()).add(page))
   for (const x of info) {
-    add(anywhere, x.k, x.l.page)
-    if (x.side) add(near, `${x.side}${x.d}|${x.k}`, x.l.page)
+    add(anywhere, `${sizeOf(x.l.page)}|${x.k}`, x.l.page)
+    if (x.side) {
+      add(near, `${sizeOf(x.l.page)}|${x.side}${x.d}|${x.k}`, x.l.page)
+      add(inSide, `${sizeOf(x.l.page)}|${x.side}|${x.k}`, x.l.page)
+    }
   }
-  const min = Math.max(3, Math.ceil(pages.length / 4))
   const out = new Set<Line>()
   for (const x of info) {
     if (!x.side) continue
-    // At about the same height: a footer moves a little with the size of its page number.
+    const sz = sizeOf(x.l.page)
+    // (a long title coming back at the same place on a few pages is a foot, however many pages
+    // the document has: a part of it may carry another)
+    const min =
+      x.side === 'f' && x.k.length >= 20 && x.d < 100
+        ? 3
+        : Math.max(3, Math.ceil(same.get(sz)! / 4))
+    // At about the same height: a footer moves a little with the size of its page number (and a
+    // long title, unlike a filler line, is no coincidence: a footer that rides the page's text
+    // may stand anywhere in the foot).
+    const reach = x.k.length >= 12 ? 30 : 2
     const at = new Set<number>()
-    for (let d = x.d - 2; d <= x.d + 2; d++)
-      for (const p of near.get(`${x.side}${d}|${x.k}`) ?? []) at.add(p)
-    if (at.size >= min && at.size >= 0.8 * anywhere.get(x.k)!.size) out.add(x.l)
+    for (let d = x.d - reach; d <= x.d + reach; d++)
+      for (const p of near.get(`${sz}|${x.side}${d}|${x.k}`) ?? []) at.add(p)
+    // (hardly anywhere else: nearly every page that has the words has them in the foot)
+    if (
+      at.size >= min &&
+      inSide.get(`${sz}|${x.side}|${x.k}`)!.size >= 0.8 * anywhere.get(`${sz}|${x.k}`)!.size
+    )
+      out.add(x.l)
   }
   return out
 }
@@ -568,6 +662,7 @@ function splitBands(
   height: number,
   running: Set<Line>,
   strict: boolean,
+  bodyish: (l: Line) => boolean,
 ) {
   const footer: Line[] = []
   const header: Line[] = []
@@ -577,7 +672,7 @@ function splitBands(
     for (let k = lines.length - 1; k >= 0; k--) {
       const l = lines[k]
       const under = lines[k + 1]
-      if (surelyFoot(l, height, running)) foot.add(l)
+      if (surelyFoot(l, height, running) && !bodyish(l)) foot.add(l)
       else if (
         under &&
         foot.has(under) &&
@@ -644,7 +739,11 @@ function splitBands(
     else body.push(l)
   }
   // Once a line is footer, everything under it is too.
-  return { body: body.filter((l) => !footer.some((f) => f.y <= l.y)), footer, header }
+  return {
+    body: body.filter((l) => bodyish(l) || !footer.some((f) => f.y <= l.y)),
+    footer,
+    header,
+  }
 }
 
 /** Lines inside ruled tables: between the first and the last of two or more horizontal rules of
@@ -730,7 +829,12 @@ function rightEdges(lines: Line[], size: number): number[] {
   for (const d of dense) {
     if (d.n < 0.2 * long.length) break
     if (out.some((e) => Math.abs(e - d.x) <= 2 * EDGE)) continue
-    out.push(Math.max(...near(d.x)))
+    const win = near(d.x)
+    out.push(Math.max(...win))
+    // The point most lines end at, when it stands a little short of the longest (a text set to
+    // 520 where a wider line reaches 523): lines there are justified too.
+    const common = mode(win)
+    if (Math.abs(common - Math.max(...win)) > 1.5) out.push(common)
   }
   return out
 }
@@ -771,7 +875,7 @@ function marginsOf(
 
 /** The start of a reference entry: "Surname, I." or an author then "(year)". */
 const ENTRY =
-  /^(\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\.|[^()]{2,100}?\.\s\(((1[89]|20)\d{2}[a-z]?|n\.\s?d\.)[),])/u
+  /^(\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\.|[^()]{2,100}?\.\s\(((1[89]|20)\d{2}[a-z]?|n\.\s?d\.?|no date)[),])/u
 
 /** 1 when every word of a line is bold, 0 when none is (a bold title and "Thesis Adviser:"). */
 const boldness = (l: Line) => {
@@ -868,10 +972,14 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
     [-1, 0, 1].reduce((n, d) => n + (starts[l.page].get(Math.round(l.x0) + d) ?? 0), 0) >= 3
   const kindOf = (l: Line, m: Margins): typeof kind => {
     const width = m.right - m.left
+    // Centred on the page's text, or on the document's (a page of ragged reference lines may
+    // end short of the margin it is set to).
+    const mid = (l.x0 + l.x1) / 2
     if (
-      Math.abs((l.x0 + l.x1) / 2 - (m.left + m.right) / 2) < 8 &&
+      (Math.abs(mid - (m.left + m.right) / 2) < 8 ||
+        Math.abs(mid - (docMargins.left + docMargins.right) / 2) < 8) &&
       l.x0 > m.left + 12 &&
-      l.x1 < m.right - 12 &&
+      l.x1 < Math.max(m.right, docMargins.right) - 12 &&
       !shared(l)
     )
       return 'center'
@@ -887,13 +995,25 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
       if (draft.every((l) => tables.has(l))) para.inTable = true
       paras.push(para)
       if (draft.length > 1) {
-        lastHanging = (para.indent?.firstLine ?? 0) < -18
-        hangX = lastHanging ? draft[0].x0 : undefined
+        const hang = (para.indent?.firstLine ?? 0) < -18
+        // The tail of an entry above (a link in two lines, set in its hanging indent) keeps
+        // that list going.
+        const tail =
+          !hang &&
+          lastHanging &&
+          hangX !== undefined &&
+          draft[0].x0 > hangX + 18 &&
+          draft[0].x0 < hangX + 60
+        lastHanging = hang || tail
+        hangX = hang ? draft[0].x0 : tail ? hangX : undefined
       } else
-        // A one-line entry ("Collins, R. (2020)…", "UNESCO. (n.d.)…") keeps the list going;
-        // another line (a paragraph's first, a title) ends it.
+        // A one-line entry ("Collins, R. (2020)…", "UNESCO. (n.d.)…") keeps the list going, and so
+        // does the tail of an entry (a link) that stands in the hanging indent; another line (a
+        // paragraph's first, a title) ends it.
         lastHanging &&=
-          hangX !== undefined && Math.abs(draft[0].x0 - hangX) <= 3 && ENTRY.test(draft[0].text)
+          hangX !== undefined &&
+          ((Math.abs(draft[0].x0 - hangX) <= 3 && ENTRY.test(draft[0].text)) ||
+            (draft[0].x0 > hangX + 18 && draft[0].x0 < hangX + 60))
     }
     draft = []
     cont = undefined
@@ -914,9 +1034,13 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
         const ended = roomFor(prev, c, pm.right)
         const offCont = cont !== undefined && Math.abs(c.x0 - cont) > 8
         // Where entries start: a line there after a one-line entry starts the next entry.
+        // (a line with no year yet that ends on a comma or an initial is a list of authors that
+        // goes on.)
         const newEntry =
           lastHanging &&
           draft.length === 1 &&
+          (/\(((1[89]|20)\d{2}[a-z]?|n\.\s?d\.?|no date|in press)[),]/i.test(prev.text) ||
+            !/(^|[\s,])\p{Lu}\.,?$|,$/u.test(prev.text)) &&
           Math.abs(c.x0 - prev.x0) <= 3 &&
           (hangX === undefined || Math.abs(prev.x0 - hangX) <= 3)
         // On a page of justified text, a line stopping short of the margin after lines that all ran
@@ -1000,7 +1124,9 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
               opens(c, prev) ||
               offCont ||
               newEntry ||
-              (draft.length === 1 && prev.x0 > c.x0 + 72)
+              (draft.length === 1 && prev.x0 > c.x0 + 72) ||
+              // A line wholly in bold against one that is not: a heading ends or begins there.
+              (boldness(prev) === 1) !== (boldness(c) === 1)
         }
         if (!split && draft.length === 1) cont = c.x0
       }
@@ -1037,7 +1163,14 @@ function toPara(lines: Line[], i: number, m: Margins, centered: boolean, edges: 
     // to go by, less is allowed. The margin, or another edge the document's text is set to (a
     // paragraph indented from the right as well).
     const tol = body.length >= 2 ? EDGE : 2.5
+    // Lines that all end at one point of their own, short of the margin (a paragraph or
+    // quotation set in from the right, to a width of its own), are as justified as any.
+    const own =
+      body.length >= 3
+        ? Math.max(...body.map((a) => body.filter((l) => Math.abs(l.x1 - a.x1) <= 1.5).length))
+        : 0
     const full = Math.max(
+      own,
       body.filter((l) => l.x1 >= m.right - tol).length,
       ...edges.map((e) => body.filter((l) => Math.abs(l.x1 - e) <= tol).length),
     )
@@ -1054,6 +1187,54 @@ function toPara(lines: Line[], i: number, m: Margins, centered: boolean, edges: 
   const cont = lines[1]?.x0 ?? m.left
   para.indent = { left: cont - m.left, firstLine: lines[0].x0 - cont }
   return para
+}
+
+/** Pictures of one width standing one right under the next, two or more: the strips of one picture
+ *  (a seal cut into bands), as the box they make together. */
+function stackedStrips(images: (Box & { id?: string })[]): (Box & { ids: string[] })[] {
+  const sorted = images.filter((b) => b.id).sort((a, b) => a.y0 - b.y0)
+  const out: (Box & { ids: string[] })[] = []
+  let chain: typeof sorted = []
+  const close = () => {
+    if (chain.length >= 2)
+      out.push({
+        x0: chain[0].x0,
+        x1: chain[0].x1,
+        y0: chain[0].y0,
+        y1: chain.at(-1)!.y1,
+        ids: chain.map((b) => b.id!),
+      })
+    chain = []
+  }
+  for (const b of sorted) {
+    const last = chain.at(-1)
+    if (
+      last &&
+      Math.abs(b.x0 - last.x0) <= 2 &&
+      Math.abs(b.x1 - last.x1) <= 2 &&
+      b.y0 - last.y1 <= 2
+    )
+      chain.push(b)
+    else {
+      close()
+      chain = [b]
+    }
+  }
+  close()
+  return out
+}
+
+/** Strips of one width as one picture, the first on top. */
+function stackPixels(parts: Pixels[]): Pixels {
+  const width = parts[0].width
+  const height = parts.reduce((n, q) => n + q.height, 0)
+  const data = new Uint8ClampedArray(width * height * 4)
+  let at = 0
+  for (const q of parts) {
+    data.set(q.data.subarray(0, width * q.height * 4), at)
+    at += width * q.height * 4
+  }
+  return { width, height, data }
 }
 
 /** Decoded pixels of a painted image object (RGBA, shrunk to at most 64 px a side). */

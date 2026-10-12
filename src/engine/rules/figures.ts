@@ -17,9 +17,10 @@ export interface Caption {
   object: 'after' | 'before' | 'unknown'
 }
 
-// "Chart S1:", "Figure 4a" and "Table 3 .1" (a stray space) are labels too.
+// "Chart S1:", "Figure 4a", "Figure 6-A" and "Table 3 .1" (a stray space) are labels too; "Figure 5.
+// 3D model" is Figure 5, then its title.
 const LABEL =
-  /^(fig(?:ure)?\.?|table|chart)\s*(\d+(?:\s?[.-]\s?\d+)*[a-z]?|[A-Z]-?\d+(?:[.-]\d+)*)\s*[.:–—-]?\s*(.*)$/i
+  /^(fig(?:ure)?\.?|table|chart)\s*(\d+(?:\s?[.-]\s?\d+(?![a-z]))*(?:-?[a-z](?![a-z]))?|[A-Z]-?\d+(?:[.-]\d+)*)\s*[.:–—-]?\s*(.*)$/i
 /** "Table 1 (continued)": a long table carried over to the next page, not a caption of its own. */
 const CONTINUED = /^(figure|table)\s+\S+\s*\(?cont(inued|['’]d|\.)?\)?\.?$/i
 /** A PDF paragraph set in a font whose name says nothing: its bold and italics are unknown. */
@@ -44,7 +45,8 @@ const labelBold = (p: Para) => {
   let seen = ''
   for (const r of p.runs) {
     if (seen.length >= head.trim().length) break
-    if (r.text.trim() && !r.bold) return false
+    // (the full stop or colon after the number may be set apart from it, not in bold)
+    if (r.text.trim() && !/^[.:–—-]+$/.test(r.text.trim()) && !r.bold) return false
     seen += r.text
   }
   return true
@@ -148,8 +150,20 @@ export function findCaptions(ctx: Ctx): Caption[] {
         !/^[A-Za-z.]+\s*[A-Z]?\d[\d.a-z -]*?\s?[.:]\s/i.test(t)) ||
       (p.page !== undefined && listed.has(p.page)) ||
       // (a bare label in the small type of a table's cell or a diagram is no caption)
-      (!m[3] && !!p.lines?.[0] && p.lines[0].size < size - 1) ||
-      inShape(ctx, p)
+      // (unless it is in bold and its title stands right under it: a writer's smaller caption type)
+      (!m[3] &&
+        !!p.lines?.[0] &&
+        p.lines[0].size < size - 1 &&
+        !(
+          bolded(p) &&
+          /^fig/i.test(t) &&
+          doc.paras[k + 1]?.page === p.page &&
+          !doc.paras[k + 1].inTable &&
+          !doc.paras[k + 1].text.includes('\t') &&
+          norm(doc.paras[k + 1].text).split(' ').length >= 3
+        )) ||
+      (!m[3] && inShape(ctx, p)) ||
+      /^(fig(ure)?\.?|table|chart)\s*\d+[A-Za-z]{2,}/i.test(t)
     )
       continue
     const number = m[2].replace(/\s/g, '')
@@ -172,7 +186,10 @@ export function findCaptions(ctx: Ctx): Caption[] {
     }
     // A long table carried over the pages with its caption repeated on each (APA asks for
     // "(continued)", but it is still one table): same number and title on the page before or this one.
-    const text = (rest || norm(title?.text ?? '')).toLowerCase()
+    // ("Table 6 (Continued) List of…" is the same table's caption again)
+    const text = (rest || norm(title?.text ?? ''))
+      .toLowerCase()
+      .replace(/^\(?cont(inued|['’]d|\.)?\)?[\s.:-]*/, '')
     const key = `${kind}${number}`
     const lastPage = seen.get(key)
     seen.set(key, p.page ?? -1)
@@ -198,6 +215,19 @@ export function findCaptions(ctx: Ctx): Caption[] {
       continue
     }
     out.push(caption)
+    // Captions standing side by side, on one line of a PDF ("Figure 4. Trees. Figure 5. Roots."):
+    // each is a caption.
+    if (p.lines && rest)
+      for (const x of p.text.matchAll(
+        /(?:\.|\t|(?<=[a-z0-9)])\s)\s*(Fig(?:ure)?\.?|Table)\s*(\d+(?:-?[a-z](?![a-z]))?)\s*[.:]\s+(?=\p{Lu})/gu,
+      ))
+        out.push({
+          para: p,
+          kind: /^table/i.test(x[1]) ? 'table' : 'figure',
+          number: x[2],
+          inline: norm(p.text.slice(x.index + x[0].length)),
+          object: caption.object,
+        })
   }
   return out
 }
@@ -263,7 +293,7 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
       bottoms.set(l.page, Math.max(bottoms.get(l.page) ?? l.y, l.y))
     }
   const captioned = (n: number, i?: number) =>
-    caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i))
+    caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i || c.title?.i === i))
   const out: number[] = []
   const unread = noTextPages(doc)
   for (const pg of pages.slice(from, to)) {
@@ -397,7 +427,7 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     const found = caps
       .filter((c) => c.kind === kind)
       .flatMap((c) => {
-        const m = /^(\d+)(?:[.-](\d+))?([a-z])?$/i.exec(c.number)
+        const m = /^(\d+)(?:[.-](\d+))?(?:-?([a-z]))?$/i.exec(c.number)
         return m ? [{ text: c.number, a: +m[1], b: m[2] === undefined ? undefined : +m[2] }] : []
       })
     const texts = found.map((f) => f.text)

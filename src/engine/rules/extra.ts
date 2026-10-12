@@ -54,6 +54,18 @@ function placeholders(ctx: Ctx): Finding {
     )
       hit(TOC_ZEROS, p)
   }
+  // The line above the permission page's signature label, left as the template has it.
+  const perm = ctx.s.permission
+  const nameDate =
+    perm &&
+    ctx.doc.paras
+      .slice(perm.start, perm.end)
+      .find((p) => /^(student )?name and date$/i.test(norm(p.text)))
+  if (nameDate)
+    hits.set('“Name and Date” above the signature label on the Permission Page', {
+      page: nameDate.page,
+      quote: quote(nameDate.text, 40),
+    })
   // The date under the Dean's name (the title page's date has a check of its own).
   const acc = ctx.s.acceptance
   const day =

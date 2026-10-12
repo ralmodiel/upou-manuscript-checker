@@ -51,6 +51,15 @@ const tableNote = (prev: Para | undefined, p: Para) =>
  *  (a label, then its text in the next column). */
 const tableRow = (p: Para) => Math.abs(p.indent?.firstLine ?? 0) >= 100
 
+/** A list of abbreviations or definitions: several lines opening with a term, a full stop or
+ *  colon, then its meaning ("IRD. Industrial Research Department"). */
+const glossary = (p: Para) =>
+  (p.lines ?? []).filter((l) => /^[A-Z][A-Za-z0-9&/-]{1,12}\s*[.:=–—-]\s+\p{Lu}/u.test(l.text))
+    .length >= 2
+
+/** A row of figures read as a paragraph (an item, then its mean and its deviation). */
+const figureRow = (t: string) => t.length < 200 && /\d+([.,]\d+)?\s+\(?\d+([.,]\d+)?\)?\s*$/.test(t)
+
 /** An excerpt of a transcript: numbered lines (007, 034…), an annotation in double parentheses,
  *  or the caption "Extracted Lines". */
 const transcript = (t: string) => /^(0\d{1,3}\s|\(\(|extracted lines?\b)/i.test(t)
@@ -109,6 +118,8 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !tableNote(paras[p.i - 1], p) &&
       !tableRow(p) &&
       !transcript(t) &&
+      !glossary(p) &&
+      !figureRow(t) &&
       !inShape(ctx, p) &&
       !/^key\s?words?\s*:/i.test(t) &&
       !apart(ctx, p) &&

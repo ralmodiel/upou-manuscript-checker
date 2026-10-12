@@ -41,6 +41,8 @@ export interface Structure {
   prelims: Prelim[]
   chapters: Chapter[]
   references?: Heading
+  /** How many chapters (or numbered sections) the table of contents lists. */
+  listedChapters?: number
   appendicesHeading?: number
   appendices: Appendix[]
 }
@@ -63,12 +65,19 @@ const PRELIMS: [PrelimKey, RegExp][] = [
   ['ack', /^acknowledge?ments?$/i],
   ['dedication', /^dedications?$/i],
   ['toc', /^(table of contents?|contents)$/i],
-  ['tables', /^list of tables( and (figures|illustrations))?$/i],
-  ['figures', /^list of (figures|illustrations)$|^list of tables and (figures|illustrations)$/i],
+  // (a list's heading is often miswritten: "LISTS OF FIGURES", "List of Table", "LIST OF TABLE/S")
+  ['tables', /^lists? of tables?(\/s)?( and (figures?|illustrations?))?$/i],
+  [
+    'figures',
+    /^lists? of (figures?|illustrations?)(\/s)?$|^lists? of tables?(\/s)? and (figures?|illustrations?)$/i,
+  ],
   ['abstract', /^(research |executive )?abstract$/i],
 ]
 
 export const LIST_HEADING =
+  /^lists? of (tables?|figures?|illustrations?)(\/s)?( and (figures?|illustrations?))?$/i
+/** The template's own spelling of the list headings: any other is a slip for the student to look at. */
+export const LIST_HEADING_EXACT =
   /^list of (tables|figures|illustrations)( and (figures|illustrations))?$/i
 
 /** A table of contents line: a title, then a page number after a tab, dot leaders or spaces. */
@@ -84,8 +93,16 @@ const CHAPTER =
 /** A chapter's title, standing alone or after its numeral ("I. INTRODUCTION"). */
 const CHAPTER_TITLE =
   /^(introduction|(review of )?(related )?(literature|studies)|(research )?methodology|methods?|(presentation, )?(results?|analysis|findings)\b.*|discussion|(summary,? )?conclusions?\b.*|summary\b.*|recommendations)$/i
-const NUMBERED_TITLE = /^([ivxlc]+|\d{1,2})[.)]\s+(\S.*)$/i
-const APPENDIX = /^(appendix|annex)(?:\s+([a-z]{1,2}|\d{1,2})\b)?[\s.:–—-]*(.*)$/i
+// ("II . REVIEW…": a space may stand before the period)
+const NUMBERED_TITLE = /^([ivxlc]+|\d{1,2})\s*[.)]\s+(\S.*)$/i
+const APPENDIX =
+  /^(appendix|appendices|appendixes|annex|annexes)(?:\s+([a-z]{1,2}\d?|\d{1,2}[a-z]?)\b)?[\s.:–—-]*(.*)$/i
+/** A reference list's heading, under any of its names, with the number of a numbered section
+ *  ("XII. REFERENCES"). */
+const REFERENCES =
+  /^(?:([ivxlc]+|\d{1,2})\s*[.)]\s*)?(references?|reference list|bibliography|literature cited|works cited|references cited|cited references)$/i
+/** What follows the references and is not one of them. */
+const GLOSSARY = /^(glossary( of terms)?|list of abbreviations|abbreviations)$/i
 
 export const bolded = (p: Para) => {
   let all = 0
@@ -157,6 +174,7 @@ export function findStructure(doc: Doc): Structure {
     appendices: [],
   }
 
+  const stops: number[] = []
   const lists = listPages(doc)
   for (const p of paras) {
     const t = headingText(p)
@@ -167,6 +185,27 @@ export function findStructure(doc: Doc): Structure {
     // (a list's heading may stand in the middle of a page, in plain type)
     const plainList =
       LIST_HEADING.test(t) && norm(p.text).length < 45 && !p.inTable && !isTocLine(p.text)
+    // An appendix's label in capitals with its title after it ("APPENDIX A. SUMMARY OF FINDINGS"),
+    // set in plain type (a turned page): not mistaken for a sentence about an appendix.
+    if (
+      !isHeadingish(p) &&
+      !plainList &&
+      !entry &&
+      !p.inTable &&
+      p.lines?.length === 1 &&
+      (s.chapters.length || s.references || s.prelims.length) &&
+      /^APPENDIX\s+([A-Z]{1,2}\d?|\d{1,2})\s*[.:]\s+\S/.test(p.text) &&
+      !/[a-z]{3}/.test(p.text.slice(0, 60))
+    ) {
+      s.appendices.push({
+        heading: p.i,
+        start: p.i,
+        end: paras.length,
+        label: t,
+        mark: /^APPENDIX\s+(\S+?)\s*[.:]/.exec(p.text)?.[1],
+      })
+      continue
+    }
     if (!isHeadingish(p) && !plainList) continue
     if (!s.permission && /^(university )?permission page$/i.test(t)) {
       s.permission = { heading: p.i, start: p.i, end: paras.length }
@@ -202,10 +241,15 @@ export function findStructure(doc: Doc): Structure {
     }
     if (entry) continue
     if (!s.references && (s.chapters.length || s.prelims.length)) {
-      if (/^(references?|reference list|bibliography|literature cited|works cited)$/i.test(t)) {
+      if (REFERENCES.test(t)) {
         s.references = { heading: p.i, start: p.i, end: paras.length }
         continue
       }
+    }
+    // A glossary after the references is not part of the list.
+    if (s.references && GLOSSARY.test(t)) {
+      stops.push(p.i)
+      continue
     }
     // (appendices may stand before the references, so the front matter having been read is enough)
     if (s.chapters.length || s.references || s.prelims.length) {
@@ -214,12 +258,20 @@ export function findStructure(doc: Doc): Structure {
         continue
       }
       const ap = APPENDIX.exec(t)
-      if (ap && t.length <= 100)
+      // ("Annex Table 3." is a table's caption in an annex, not an appendix's label)
+      // (a table's header row of a list of appendices — "APPENDIX", "Description", "Page" — is not one)
+      if (
+        ap &&
+        t.length <= 100 &&
+        !/^(table|fig(ure|\.)?)\s*\d/i.test(ap[3]) &&
+        !(p.text.includes('\t') && !ap[2] && ap[3])
+      )
         s.appendices.push({ heading: p.i, start: p.i, end: paras.length, label: t, mark: ap[2] })
     }
   }
 
-  findUnlabelled(doc, s)
+  findUnlabelled(doc, s, lists)
+  s.listedChapters = listedChapters(doc)
 
   // Pages found by their wording when the heading is missing.
   const find = (re: RegExp, from = 0) =>
@@ -249,6 +301,7 @@ export function findStructure(doc: Doc): Structure {
   for (const x of s.chapters) add(x.start, (e) => (x.end = e))
   add(s.references?.start, (e) => s.references && (s.references.end = e))
   add(s.appendicesHeading, () => {})
+  for (const at of stops) add(at, () => {})
   for (const x of s.appendices) add(x.start, (e) => (x.end = e))
   marks.sort((a, b) => a.at - b.at)
   for (let k = 0; k < marks.length; k++) {
@@ -311,10 +364,53 @@ function listPages(doc: Doc): Set<number> {
   return out
 }
 
+const letters = (t: string) => t.toLowerCase().replace(/[^a-z]/g, '')
+
+/** Front and back matter, which a contents lists beside the chapters. */
+const NOT_CHAPTER = new RegExp(
+  '^(acceptance|approval|permission|biograph|bio-?sketch|curriculum|acknowledge?ment|dedication|abstract|table of contents?|contents|lists?\\s+of|references?\\b|reference list|bibliography|literature cited|works cited|cited references|appendi|annex|glossary|declaration)',
+  'i',
+)
+
+/** The sections the contents lists as chapters: "Chapter IV …" lines, else numbered sections in
+ *  capitals ("IV. METHODS …"); the numbered lists of the front matter and the references are not
+ *  chapters. */
+function tocChapters(doc: Doc): { numeral: string; key: string }[] {
+  const labelled: { numeral: string; key: string }[] = []
+  const numbered: { numeral: string; key: string }[] = []
+  // Roman numerals in sequence before titles in any case ("I. Introduction"): chapters as well.
+  const cased: { numeral: string; key: string; n: number }[] = []
+  for (const p of doc.paras) {
+    if (!isTocLine(p.text) || p.page === undefined) continue
+    const t = norm(p.text.replace(TOC_ENTRY, ''))
+    const c = CHAPTER.exec(t)
+    if (c) {
+      if (!NOT_CHAPTER.test(c[2].trim()))
+        labelled.push({ numeral: c[1].toLowerCase(), key: letters(c[2]) })
+      continue
+    }
+    const m = NUMBERED_TITLE.exec(t)
+    if (!m || NOT_CHAPTER.test(m[2])) continue
+    // (a lettered section, "C.", is no Roman numeral of a chapter)
+    const n = /^\d+$/.test(m[1]) ? +m[1] : fromRoman(m[1])
+    if (n === undefined || n > 40) continue
+    const e = { numeral: m[1].toLowerCase(), key: letters(m[2]), n }
+    if (isUpper(m[2])) numbered.push(e)
+    else if (!/^\d+$/.test(m[1]) && m[1] === m[1].toUpperCase()) cased.push(e)
+  }
+  const sequence = [1, 2, 3].every((k) => cased.some((e) => e.n === k))
+  const found =
+    labelled.length >= 2 ? labelled : numbered.length >= 2 ? numbered : sequence ? cased : []
+  return found.length >= 2 ? found : []
+}
+
+/** How many chapters the contents lists. */
+const listedChapters = (doc: Doc) => new Set(tocChapters(doc).map((c) => c.numeral)).size
+
 /** Chapters headed by their title alone, after the front matter and before the first labelled
  *  chapter ("I. INTRODUCTION", "REVIEW OF RELATED LITERATURE" opening a page): found for the
  *  ranges' sake; the missing label is still the student's to fix. */
-function findUnlabelled(doc: Doc, s: Structure) {
+function findUnlabelled(doc: Doc, s: Structure, lists: Set<number>) {
   const { paras } = doc
   const front = Math.max(
     s.permission?.heading ?? -1,
@@ -328,6 +424,7 @@ function findUnlabelled(doc: Doc, s: Structure) {
     s.appendicesHeading ?? paras.length,
     s.appendices[0]?.heading ?? paras.length,
   )
+  const listed = tocChapters(doc).map((c) => c.key)
   const found: Chapter[] = []
   for (let k = front + 1; k < stop; k++) {
     const p = paras[k]
@@ -342,19 +439,32 @@ function findUnlabelled(doc: Doc, s: Structure) {
     // A numeral must be the next in sequence ("C." heads a lettered section, not chapter 100).
     const number = found.length + 1
     const named = CHAPTER_TITLE.test(title.toLowerCase())
-    if (!isUpper(title) || !(m ? given === number && (opens || named) : opens && named)) continue
-    // Contents entries have the next entries after them, not text.
+    // The contents lists it as a numbered section: it is one, wherever it stands and whatever
+    // numeral it carries (a typo repeats one).
+    const key = letters(title)
+    const inToc =
+      !!m &&
+      key.length >= 5 &&
+      (given ?? 99) <= 40 &&
+      listed.some((t) => t.startsWith(key) || key.startsWith(t))
+    if (
+      !(isUpper(title) || inToc) ||
+      !(m ? (given === number || inToc) && (opens || named || inToc) : opens && named)
+    )
+      continue
+    // Contents entries have the next entries after them, not text (a heading the contents lists,
+    // off the contents' own pages, may be followed by tables and subheadings only).
     const prose = paras
       .slice(k + 1, k + 12)
       .some((q) => norm(q.text).length > 80 && !isTocLine(q.text) && !q.inTable)
-    if (!prose) continue
+    if (!prose && !(inToc && !(p.page !== undefined && lists.has(p.page)))) continue
     found.push({
       heading: k,
       start: k,
       end: paras.length,
       label: t,
-      numeral: roman(number).toUpperCase(),
-      number,
+      numeral: m && given ? m[1].toUpperCase() : roman(number).toUpperCase(),
+      number: given ?? number,
       ...(m ? { inlineTitle: title } : { titlePara: k }),
       unlabelled: true,
     })

@@ -1,6 +1,15 @@
 // Other preliminary pages: all there, justified, double-spaced, numbered in Roman numerals.
+import type { Para } from '../model.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
-import { PRELIM_NAMES, titlePage, type PrelimKey } from '../structure.ts'
+import {
+  headingText,
+  isHeadingish,
+  isTocLine,
+  LIST_HEADING_EXACT,
+  PRELIM_NAMES,
+  titlePage,
+  type PrelimKey,
+} from '../structure.ts'
 import { list, norm, quote, roman } from '../text.ts'
 import { bodyParas, doubleSpaced, justified } from './body.ts'
 import { readTitlePage, thesisTitle } from './front.ts'
@@ -27,14 +36,28 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
   const issues: string[] = []
   const statuses: Finding['status'][] = []
   // A dedication page without its heading: it opens "Dedicated to:".
+  const inPrelims = (p: Para) =>
+    p.i >= (s.acceptance?.end ?? s.title.end) &&
+    p.i < (s.chapters[0]?.start ?? s.references?.start ?? doc.paras.length)
+  // (or a page of a few words under no heading at all, set among the preliminary pages)
+  const shortPage = (p: Para) => {
+    if (doc.kind !== 'pdf' || !p.newPage || p.page === undefined) return false
+    const onPage = doc.paras.filter((q) => q.page === p.page)
+    return (
+      !s.prelims.some((x) => onPage.some((q) => q.i === x.heading)) &&
+      onPage.reduce((n, q) => n + norm(q.text).split(' ').length, 0) <= 40 &&
+      !onPage.some((q) => isTocLine(q.text) || q.inTable) &&
+      s.prelims.some((x) => x.heading > p.i)
+    )
+  }
   const dedicated = found.includes('dedication')
     ? undefined
     : doc.paras.find(
         (p) =>
-          p.i >= (s.acceptance?.end ?? s.title.end) &&
-          p.i < (s.chapters[0]?.start ?? s.references?.start ?? doc.paras.length) &&
+          inPrelims(p) &&
           p.newPage &&
-          /^dedicated\s+to\b/i.test(norm(p.text)),
+          (/^dedicated\s+to\b/i.test(norm(p.text)) || shortPage(p)) &&
+          !(s.acceptance && p.i <= s.acceptance.heading),
       )
   const absent = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
   // The MDC template has a biographical sketch and a dedication; UPOU's style guide (2022)
@@ -43,7 +66,48 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
   const mdc = /development communication/i.test(norm(readTitlePage(ctx).program?.text ?? ''))
   const optional: PrelimKey[] = mdc ? [] : absent.filter((k) => k === 'bio' || k === 'dedication')
   const missing = absent.filter((k) => !optional.includes(k))
-  if (missing.length) {
+  // What a page that cannot be read (a picture, a heading in a font that was re-encoded, a
+  // "Summary" for an abstract) may be hiding: said as a check, not a correction.
+  const first =
+    (doc.paras[s.acceptance?.heading ?? s.permission?.heading ?? s.title.start]?.page ?? -1) + 1
+  const last = s.chapters[0] ? doc.paras[s.chapters[0].heading].page : undefined
+  const unread: string[] = []
+  if (doc.kind === 'pdf' && first > 0 && last !== undefined) {
+    const pics = (doc.pages ?? []).filter(
+      (pg) => pg.n >= first && pg.n < last && !pg.paras.length && pg.images.length,
+    )
+    if (pics.length)
+      unread.push(
+        `${pagesText(pics.map((pg) => pg.n))} ${pics.length > 1 ? 'are pictures' : 'is a picture'} with no text`,
+      )
+    const odd = doc.paras.filter(
+      (p) =>
+        p.page !== undefined &&
+        p.page >= first &&
+        p.page < last &&
+        p.newPage &&
+        norm(p.text).length <= 30 &&
+        isHeadingish(p) &&
+        /\p{L}[%$&#@*+!<>=]|[%$&#@*+!<>=]\p{L}/u.test(p.text),
+    )
+    if (odd.length)
+      unread.push(
+        `the heading on ${pagesText(odd.map((p) => p.page!))} is in a font that cannot be read`,
+      )
+  }
+  // (a training report's summary stands for its abstract)
+  if (
+    missing.includes('abstract') &&
+    /on-the-job|\bojt\b|internship|practicum/i.test(thesisTitle(ctx)) &&
+    doc.paras.some((p) => isHeadingish(p) && /^(summary|executive summary)$/i.test(headingText(p)))
+  )
+    unread.push('a “Summary” stands where the abstract goes')
+  if (missing.length && unread.length) {
+    issues.push(
+      `Check for the preliminary pages not found (${list(missing.map((k) => PRELIM_NAMES[k]))}): ${list(unread)}, so they may be there.`,
+    )
+    statuses.push('review')
+  } else if (missing.length) {
     issues.push(
       `Include the missing preliminary pages: ${list(missing.map((k) => PRELIM_NAMES[k]))}.`,
     )
@@ -57,9 +121,22 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
   }
   if (dedicated) {
     issues.push(
-      `The Dedication page opens “${quote(dedicated.text, 30)}” with no “Dedication” heading: check that it is set as in the template.`,
+      /^dedicated\s+to\b/i.test(norm(dedicated.text))
+        ? `The Dedication page opens “${quote(dedicated.text, 30)}” with no “Dedication” heading: check that it is set as in the template.`
+        : `${pagesText([dedicated.page!])} opens “${quote(dedicated.text, 30)}” under no heading: if it is the Dedication, give it the heading “Dedication”, as in the template.`,
     )
     statuses.push('review')
+  }
+  // A list under a heading worded otherwise ("LISTS OF FIGURES", "List of Table"): found, but the
+  // template's words are "List of Tables" and "List of Figures".
+  for (const x of s.prelims) {
+    const t = headingText(doc.paras[x.heading])
+    if ((x.key === 'tables' || x.key === 'figures') && !LIST_HEADING_EXACT.test(t)) {
+      issues.push(
+        `The heading “${quote(t, 30)}” is not worded as the template’s “${PRELIM_NAMES[x.key]}”.`,
+      )
+      statuses.push('review')
+    }
   }
   // Duplicates, as two abstracts (one heading may stand for two keys: "List of Tables and Figures").
   for (const key of ORDER) {

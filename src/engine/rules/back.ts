@@ -5,9 +5,10 @@ import { bolded, isHeadingish, nextText } from '../structure.ts'
 import { list, norm, plural, quote } from '../text.ts'
 import { DOUBLE } from './body.ts'
 import { bodyNumbers, pushedDown } from './chapters.ts'
+import { readTitlePage } from './front.ts'
 import { more, pagesText } from './numbering.ts'
 
-const YEAR = /\((\d{4}[a-z]?|n\.\s?d\.|in press|forthcoming)(?!\w)/i
+const YEAR = /\((\d{4}[a-z]?|n\.\s?d\.?|no date|in press|forthcoming)(?!\w)/i
 const SAMPLE = /author last name|first initial|year of publication|title of work/i
 /** A surname with a small particle, then an initial: "van Daal, R.", "de la Cruz, J.". */
 const PARTICLE =
@@ -39,7 +40,18 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
   for (const p of paras) {
     const t = norm(p.text)
     if (!t) continue
-    if (isHeadingish(p) && bolded(p) && t.length <= 80 && !YEAR.test(t)) {
+    if (
+      (isHeadingish(p) && bolded(p) && t.length <= 80 && !YEAR.test(t)) ||
+      // A plain line of a few words, with no year, link or full stop: the name of a group of
+      // sources ("1. Book", "Journal Articles and Books"), not an entry.
+      (p.lines?.length === 1 &&
+        // (not in the hanging indent: the tail of an entry)
+        (edge === undefined || x0(p) === undefined || x0(p)! <= edge + 3) &&
+        t.length <= 60 &&
+        !/\d{4}|https?:|doi|[.?!),;:–-]$/i.test(t) &&
+        /^(\d{1,2}[.)]\s+)?\p{Lu}/u.test(t) &&
+        !/,\s*\p{Lu}\b/u.test(t))
+    ) {
       groups++
       continue
     }
@@ -56,11 +68,16 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
     // an entry that is not finished (no closing full stop, page or link), goes on with it: the
     // writer's second line stands at the margin too.
     const goesOn =
-      placed === true &&
-      !startsEntry(t) &&
-      !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t) &&
-      !!out.length &&
-      unfinished(out.at(-1)!.text)
+      (placed === true &&
+        !startsEntry(t) &&
+        !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t) &&
+        !!out.length &&
+        unfinished(out.at(-1)!.text)) ||
+      // The end of an entry that lost its indent: a journal, then volume, issue and pages.
+      (!!out.length &&
+        !startsEntry(t) &&
+        !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t) &&
+        /,\s*\d{1,3}(\(\d+\)?)?,\s*[A-Za-z]?\d+[-–]\d+\.?(\s+(https?:\/\/|doi:)\S+)?$/.test(t))
     const opens =
       !out.length ||
       (placed !== false && PARTICLE.test(t)) ||
@@ -96,6 +113,14 @@ const key = (e: Entry) =>
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
+    // (letters of other alphabets sort with the nearest of ours: "Arı" after "Arathi")
+    .replace(/ı/g, 'i')
+    .replace(/ß/g, 'ss')
+    .replace(/[æǽ]/g, 'ae')
+    .replace(/œ/g, 'oe')
+    .replace(/[øǿ]/g, 'o')
+    .replace(/[đð]/g, 'd')
+    .replace(/ł/g, 'l')
     .replace(/[^a-z ]/g, '')
     .trim()
 
@@ -118,7 +143,11 @@ function order(ctx: Ctx, refs: Entry[]): Finding {
   const unreadable: Entry[] = []
   const keyed = refs.filter((e) => {
     if (!key(e)) return false
-    if (/\p{L}[\]\\^{}|~¶³´@#$%*+=<>_]\p{L}/u.test(e.text.split(/[,(]/)[0])) {
+    // (a digit in the name, "W3Schools": where it goes among the letters is for the writer)
+    if (
+      /\p{L}[\]\\^{}|~¶³´@#$%*+=<>_]\p{L}/u.test(e.text.split(/[,(]/)[0]) ||
+      /\p{L}\d|\d\p{L}/u.test(e.text.split(/[,(]/)[0])
+    ) {
       unreadable.push(e)
       return false
     }
@@ -479,11 +508,19 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     statuses.push(sure ? 'fix' : 'review')
   }
   // APA and the template call the list "References" (a bibliography lists other reading too).
-  if (!/^references$/i.test(norm(head.text).replace(/[:.]$/, ''))) {
+  const named = norm(head.text).replace(/[:.]$/, '')
+  const bareName = named.replace(/^([ivxlc]+|\d{1,2})\s*[.)]\s*/i, '')
+  if (!/^references$/i.test(bareName)) {
     issues.push(
       `Title the list “References”, as APA style and the template do (not “${quote(head.text, 30)}”).`,
     )
     statuses.push('fix')
+  } else if (bareName !== named) {
+    // A numbered section of a special problem or a thesis: for the writer to weigh.
+    issues.push(
+      `The heading reads “${quote(head.text, 30)}”; the template’s is “References” alone, with no number.`,
+    )
+    statuses.push('review')
   }
   if (pushedDown(ctx, head)) {
     issues.push(
@@ -677,12 +714,30 @@ function labels(ctx: Ctx): Finding {
   const statuses: Finding['status'][] = []
   const marks = aps.map((a) => a.mark ?? '')
   const words = new Set(aps.map((a) => (/^annex/i.test(a.label) ? 'Annex' : 'Appendix')))
+  // The MDC template says “Appendix”; another program may say “Annex” throughout.
+  const mdc = /development communication/i.test(norm(readTitlePage(ctx).program?.text ?? ''))
   if (words.size > 1) {
     issues.push(
       `Label every appendix alike, “Appendix A”, “Appendix B”…, not “Annex” for some: ${list(aps.slice(0, 6).map((a) => a.label))}.`,
     )
-    statuses.push('fix')
+    statuses.push(mdc ? 'fix' : 'review')
+  } else if (words.has('Annex') && !mdc) {
+    issues.push(
+      'The appendices are labelled “Annex”; the template says “Appendix A”, “Appendix B”…. Check which your program uses.',
+    )
+    statuses.push('review')
   }
+  // Pages that are pictures with no text, among the appendices: a label may be in one of them.
+  const picturePages =
+    doc.kind === 'pdf'
+      ? (doc.pages ?? []).filter(
+          (pg) =>
+            pg.n >= (doc.paras[aps[0].heading].page ?? 0) - 12 &&
+            !pg.paras.length &&
+            pg.images.length &&
+            pg.n < (doc.paras[aps.at(-1)!.heading].page ?? 0),
+        )
+      : []
   if (aps.length > 1 && marks.some((m) => !m)) {
     issues.push('Give each appendix its letter (Appendix A, Appendix B…).')
     statuses.push('fix')
@@ -694,14 +749,18 @@ function labels(ctx: Ctx): Finding {
   const letters = marks.filter((m) => /^[a-z]$/i.test(m)).map((m) => m.toUpperCase().charCodeAt(0))
   if (letters.some((c, k) => k > 0 && c !== letters[k - 1] + 1)) {
     issues.push(`The appendix letters skip or repeat (${marks.join(', ')}).`)
-    statuses.push('fix')
+    statuses.push(picturePages.length ? 'review' : 'fix')
   } else if (letters.length && marks[0] && letters[0] !== 65) {
     // The first appendix is unlabelled, or the letters begin further on.
     issues.push(
       `The appendix letters should begin at A (the first labelled one is ${aps[0].label}): label every appendix in order, Appendix A, Appendix B…`,
     )
-    statuses.push('fix')
+    statuses.push(picturePages.length ? 'review' : 'fix')
   }
+  if (picturePages.length && statuses.includes('review'))
+    issues.push(
+      `${pagesText(picturePages.slice(0, 5).map((pg) => pg.n))} ${picturePages.length > 1 ? 'are pictures' : 'is a picture'} with no text, so an appendix label may be there.`,
+    )
   // As the template sets them: the label, then its title on the line below, both centred.
   const untitled: Para[] = []
   const sameLine: Para[] = []
@@ -718,11 +777,13 @@ function labels(ctx: Ctx): Finding {
     )
   }
   const labelOf = (p: Para) =>
-    /^(appendix|annex)\s*([a-z]{1,2}|\d{1,2})?\b/i.exec(norm(p.text))?.[0] ?? quote(p.text, 30)
+    /^(appendix|appendices|annex)\s*([a-z]{1,2}\d?|\d{1,2}[a-z]?)?\b/i
+      .exec(norm(p.text))?.[0]
+      .trim() || quote(p.text, 30)
   for (const a of aps) {
     const head = doc.paras[a.heading]
     const inline = norm(head.text).replace(
-      /^(appendix|annex)\s*([a-z]{1,2}|\d{1,2})?\b[\s.:–—-]*/i,
+      /^(appendix|appendices|annex)\s*([a-z]{1,2}\d?|\d{1,2}[a-z]?)?\b[\s.:–—-]*/i,
       '',
     )
     const next = nextText(doc.paras, a.heading + 1, a.end)
