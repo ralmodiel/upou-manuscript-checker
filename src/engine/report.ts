@@ -65,6 +65,16 @@ export const review = make('review')
 export const ok = make('ok')
 export const na = make('na')
 
+/** A fault read from strong evidence (measured on clear running text, repeated or large) is a fix;
+ *  from weaker evidence the same finding is a review whose message says it may be so. */
+export const weigh = (
+  strong: boolean,
+  id: string,
+  message: string,
+  check: string,
+  extra: Omit<Finding, 'id' | 'status' | 'message'> = {},
+): Finding => (strong ? fix(id, message, extra) : review(id, `Check: ${check}`, extra))
+
 /** At most `n` places, in their order: each page's first before a second on one page, so the
  *  places cover the pages the details name. */
 export function spread<T extends Where>(xs: T[], n = 5): T[] {

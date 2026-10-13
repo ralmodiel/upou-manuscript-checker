@@ -1,6 +1,6 @@
 // First page of each chapter, and the succeeding pages.
 import type { Para } from '../model.ts'
-import { fix, na, ok, review, type Ctx, type Finding } from '../report.ts'
+import { fix, na, ok, review, weigh, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, inShape, isList, justified, textSize } from './body.ts'
@@ -875,19 +875,33 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   }
   if (!details.length)
     return ok(id, 'No hanging headings or single lines at the top or bottom of a page.')
-  return fix(id, msg, {
-    details: details.slice(0, 8).concat(
-      details.length > 8
-        ? [
-            more(
-              details.length - 8,
-              where.slice(8).map((w) => w.page),
-            ),
-          ]
-        : [],
-    ),
-    where: where.slice(0, 6),
-  })
+  // Firm evidence: a heading, caption or single line left at the foot of a page in the chapters,
+  // or many places. A last line at the top of a page (two may be there), an item of a list, and
+  // places in the references or appendices (forms, transcripts, code) may be misread.
+  const strong =
+    details.length > 8 ||
+    details.some(
+      (d) => !/^p. d+, /.test(d) && !/stands alone at the top|: the item “|: the line “/.test(d),
+    )
+  return weigh(
+    strong,
+    id,
+    msg,
+    `these places may hold hanging (sub)headings or lines; ${msg[0].toLowerCase()}${msg.slice(1)}`,
+    {
+      details: details.slice(0, 8).concat(
+        details.length > 8
+          ? [
+              more(
+                details.length - 8,
+                where.slice(8).map((w) => w.page),
+              ),
+            ]
+          : [],
+      ),
+      where: where.slice(0, 6),
+    },
+  )
 }
 
 export function bodyNumbers(

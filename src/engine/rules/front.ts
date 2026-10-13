@@ -1065,6 +1065,12 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
       details: ['Every row still reads “Yes or No” with a tick before it: no code was chosen.'],
       where,
     })
+  if (both.length === 4)
+    return review(
+      id,
+      'Check the permission table: every row reads as marked both “Yes” and “No”, so which code is chosen could not be told here. Mark one code “Yes” and the others “No”.',
+      { where },
+    )
   if (both.length)
     details.push(`Both “Yes” and “No” are marked for ${list(both.map((r) => r.name))}.`)
   if (yes.length > 1)

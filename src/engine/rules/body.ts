@@ -1,6 +1,6 @@
 // Body text: which paragraphs count, and whether they are justified and double-spaced.
 import type { Para } from '../model.ts'
-import { fix, na, ok, review, spread, type Ctx, type Finding } from '../report.ts'
+import { na, ok, review, spread, weigh, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, isTocLine } from '../structure.ts'
 import { garbled, norm, plural, quote } from '../text.ts'
 import { pagesText } from './numbering.ts'
@@ -265,28 +265,28 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
   // PDF lines short of the page's margin.
   const short = (p: Para) =>
     (p.lines ?? []).filter((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 2.5)
-  // Three lines or more and not one reaching the margin: left-aligned, whatever the line breaks.
-  // (or four lines or more, with two of them more than a few points short)
-  const raggedP = (p: Para) =>
-    ((p.lines?.length ?? 0) >= 3 && short(p).length === p.lines!.length) ||
-    ((p.lines?.length ?? 0) >= 4 &&
-      p
-        .lines!.slice(0, -1)
-        .filter((l) => l.x1 < (ctx.doc.pages?.[l.page].margins?.right ?? Infinity) - 8).length >= 2)
-  const status = bad.length >= 2 || share >= 0.1 || bad.some(raggedP) ? fix : review
+  // A PDF's alignment is read from where its lines end: a few ragged paragraphs among justified
+  // ones may be a table's text, a quotation or a list read as body text, or text justified to a
+  // narrower edge. Only a large share of the body text is firm evidence.
+  const strong = ctx.doc.kind === 'pdf' ? share >= 0.15 : bad.length >= 2 || share >= 0.1
   // One paragraph with one short line before its last: left-aligned, or a line break typed there.
   const one = bad.length === 1 ? short(bad[0]).filter((l) => l !== bad[0].lines?.at(-1)) : []
   if (one.length === 1)
-    return status(
+    return weigh(
+      strong,
       id,
       `A line stops short of the margin on ${pagesText([one[0].page])}: justify the paragraph, or remove the line break there.`,
+      `a line stops short of the margin on ${pagesText([one[0].page])}: the paragraph may not be justified, or a line break may be typed there.`,
       // No "not justified" count: the paragraph may be justified, with a line break typed there.
       { where: where(bad) },
     )
-  return status(id, `Justify the body text of ${name} (Home > Justify, or Ctrl+J).`, {
-    details,
-    where: where(bad),
-  })
+  return weigh(
+    strong,
+    id,
+    `Justify the body text of ${name} (Home > Justify, or Ctrl+J).`,
+    `${plural(bad.length, 'paragraph')} of body text in ${name} may not be justified (Home > Justify, or Ctrl+J). Some may be tables, lists or quotations, which need not be.`,
+    { details, where: where(bad) },
+  )
 }
 
 const spacingName = (x: number) =>
@@ -348,9 +348,25 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
       !isList(p) &&
       (ctx.doc.kind === 'pdf' ? (p.lines?.length ?? 0) >= 3 : norm(p.text).length >= 300),
   )
-  return (bad.length >= 2 || share >= 0.1 || solid ? fix : review)(
+  // A PDF's spacing is read from the gaps between its lines: a table's cells, a caption, a note or
+  // a heading read as body text can look single-spaced. Firm evidence is a paragraph of running
+  // text, three lines or more and not in italics, ending a sentence, clearly single or 1.5-spaced.
+  const strong =
+    (bad.length >= 2 || share >= 0.1 || solid) &&
+    (ctx.doc.kind !== 'pdf' ||
+      bad.some(
+        (p) =>
+          (p.lines?.length ?? 0) >= 3 &&
+          p.spacing! <= 1.55 &&
+          !isList(p) &&
+          !p.runs.filter((r) => r.text.trim()).every((r) => r.italic) &&
+          /[.!?]["”’)]*$/.test(norm(p.text)),
+      ))
+  return weigh(
+    strong,
     id,
     `Double-space the body text of ${name} (Line spacing: Double).`,
+    `some body text of ${name} may not be double-spaced (Line spacing: Double). Some may be tables, captions or notes read as body text, which need not be.`,
     {
       details: [
         `${bad.length} of ${plural(checked.length, 'paragraph')} ${bad.length === 1 ? 'is' : 'are'} spaced ${kinds.slice(0, 3).join(' or ')}${onPages(bad)}.`,

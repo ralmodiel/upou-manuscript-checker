@@ -999,3 +999,64 @@ describe('consistency guard', () => {
     expect(kept.map((f) => f.status)).toEqual(['fix', 'fix', 'fix'])
   })
 })
+
+describe('evidence strength', () => {
+  const line = (y: number, x1: number) => ({
+    page: 0,
+    y,
+    x0: 72,
+    x1,
+    size: 12,
+    text: 'w',
+    runs: [],
+    spans: [],
+  })
+  // PDF paragraphs of running text, three lines each: `ragged` of them left-aligned.
+  const pdfCtx = (n: number, ragged: number, spacing = 2) =>
+    ({
+      doc: {
+        kind: 'pdf',
+        pages: [{ n: 0, width: 612, height: 792, margins: { left: 72, right: 540 } }],
+        paras: Array.from({ length: n }, (_, i) => ({
+          i,
+          page: 0,
+          text: 'Some made-up running text that goes on for three lines and ends here.',
+          runs: [{ text: 'Some made-up running text.' }],
+          align: i < ragged ? 'left' : 'justify',
+          spacing: i < ragged ? 1 : spacing,
+          indent: { left: 0, firstLine: 0 },
+          lines: [
+            line(100, i < ragged ? 500 : 540),
+            line(124, i < ragged ? 510 : 540),
+            line(148, 300),
+          ],
+        })),
+      },
+    }) as unknown as Ctx
+
+  it('weighs a finding: fix on strong evidence, a “Check:” review on weak', async () => {
+    const { weigh } = await import('./report.ts')
+    expect(weigh(true, 'x', 'Do it.', 'it may be so.').status).toBe('fix')
+    const weak = weigh(false, 'x', 'Do it.', 'it may be so.')
+    expect([weak.status, weak.message]).toEqual(['review', 'Check: it may be so.'])
+  })
+
+  it('reviews a few ragged PDF paragraphs among justified ones, fixes a large share', async () => {
+    const { justified } = await import('./rules/body.ts')
+    expect(
+      justified(pdfCtx(40, 2), 'body.justified', pdfCtx(40, 2).doc.paras, 'the chapters').status,
+    ).toBe('review')
+    expect(
+      justified(pdfCtx(40, 10), 'body.justified', pdfCtx(40, 10).doc.paras, 'the chapters').status,
+    ).toBe('fix')
+  })
+
+  it('fixes PDF spacing only on a clear single-spaced paragraph of running text', async () => {
+    const { doubleSpaced } = await import('./rules/body.ts')
+    const ctx = pdfCtx(40, 1)
+    expect(doubleSpaced(ctx, 'body.spacing', ctx.doc.paras, 'the chapters').status).toBe('fix')
+    // (the same paragraph in italics: a caption or note read as body text)
+    ctx.doc.paras[0].runs = [{ text: 'Some made-up running text.', italic: true }]
+    expect(doubleSpaced(ctx, 'body.spacing', ctx.doc.paras, 'the chapters').status).toBe('review')
+  })
+})

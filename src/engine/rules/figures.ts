@@ -573,8 +573,12 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       if (bad) odd.push(`${name}s are numbered by chapter, but not in order (${list}).`)
     } else {
       const wholes = found.map((f) => f.a).filter((n, k, all) => k === 0 || n !== all[k - 1])
-      if (wholes.some((n, k) => k > 0 && n !== wholes[k - 1] + 1))
-        order.push(`${name}s are not numbered in order (${list}).`)
+      // (PDF numbers that only skip, 1, 3, 4, may be a caption not read here: for the student to
+      // check; numbers going back are a fault whatever was missed)
+      const skips = wholes.some((n, k) => k > 0 && n !== wholes[k - 1] + 1)
+      if (skips && ctx.doc.kind === 'pdf' && wholes.every((n, k) => k === 0 || n > wholes[k - 1]))
+        odd.push(`${name} numbers skip (${list}): check that none is missing or misnumbered.`)
+      else if (skips) order.push(`${name}s are not numbered in order (${list}).`)
     }
   }
   const apaStatus = worst([
