@@ -302,6 +302,7 @@ export async function readPdf(
               count: path.length,
               z: k,
               ...(FILLS.has(args[0] as number) ? { fill } : {}),
+              ...(args[0] === OPS.endPath ? { clip: true } : {}),
             })
         }
       }

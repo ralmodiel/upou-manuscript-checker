@@ -104,6 +104,8 @@ export interface Page {
     z?: number
     /** A filled path's colour ('#rrggbb'). */
     fill?: string
+    /** A path neither stroked nor filled (a clipping outline): nothing of it shows. */
+    clip?: boolean
     /** A form field: filled in (ticked, chosen, typed) or not. */
     on?: boolean
   })[]
