@@ -114,7 +114,12 @@ export interface Page {
   /** Letters of text set turned (a landscape table's cells): not part of the lines, but on the page. */
   turned?: number
   /** Text painted in a colour other than black ('#rrggbb'). */
-  colored: { text: string; color: string }[]
+  colored: {
+    text: string
+    color: string
+    /** White words set on a coloured filled shape (a box of a diagram, a table's header row). */
+    shape?: boolean
+  }[]
   /** Coloured text inside hyperlinks was left out of `colored` (a link keeps its colour). */
   linked?: boolean
   /** Its text is drawn invisibly over a picture of the page (a scan's machine-read layer): its

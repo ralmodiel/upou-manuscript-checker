@@ -199,12 +199,24 @@ function colour(ctx: Ctx): Finding {
     const shown = pages.flatMap((pg) =>
       (scan(pg) ? [] : pg.colored)
         .filter((c) => coloured(c.color.replace('#', '').toLowerCase()))
-        .map((c) => ({ page: pg.n, text: c.text, color: c.color })),
+        .map((c) => ({ page: pg.n, text: c.text, color: c.color, shape: c.shape })),
     )
+    // White words on the coloured boxes of a figure (a diagram) are part of it; on a page with a
+    // table they may be a header row set in colour, so those stay for a look.
+    const figurePage = (n: number) => {
+      const said = (pages.find((pg) => pg.n === n)?.paras ?? []).map((i) =>
+        norm(doc.paras[i]?.text ?? ''),
+      )
+      return (
+        said.some((t) => /^(figure|fig\.)\s*[\dA-Z]/i.test(t)) &&
+        !said.some((t) => /^table\s*[\dA-Z]/i.test(t))
+      )
+    }
     // (white shares, "73% 24%", are a chart's value labels set on its coloured slices)
     const hits = shown.filter(
       (h) =>
         !URL.test(h.text) &&
+        !(h.shape && figurePage(h.page)) &&
         !(/^#?f{6}$/i.test(h.color) && /^(\s*\d+([.,]\d+)?\s?%)+\s*$/.test(h.text)) &&
         // (nor a slice's label with its share, "19-25 25%", in the slice's colour)
         !(h.text.trim().length <= 30 && /\d\s?%$/.test(h.text.trim())),

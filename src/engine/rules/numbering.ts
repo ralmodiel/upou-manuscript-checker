@@ -833,3 +833,13 @@ export const lookNote = (problems: Problem[]) =>
   problems.some((p) => p.type === 'garbled')
     ? 'The title in the footers differs from the others only in letters the font printed wrongly, so it could not be compared. Check it yourself.'
     : 'The title in the footers is spelled differently from the title page. Check it.'
+
+/** The fix for footers that are there, number and all, whose title lacks only the shortening or
+ *  the ellipsis: said as that, not as a footer to add. Undefined when anything else is wrong. */
+export function titleOnlyFix(problems: Problem[], name: string): string | undefined {
+  if (!problems.length || !problems.every((p) => p.type === 'ellipsis' || p.type === 'long'))
+    return undefined
+  return problems.some((p) => p.type === 'long')
+    ? `Shorten the title in the footer on the ${name} and end it with an ellipsis (…) before the page number.`
+    : `Add an ellipsis (…) after the shortened title in the footer on the ${name}.`
+}

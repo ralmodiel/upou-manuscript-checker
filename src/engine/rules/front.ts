@@ -26,6 +26,7 @@ import {
   garbledVariant,
   judge,
   lookOnly,
+  titleOnlyFix,
   mainTitle,
   pagesText,
   pdfFolio,
@@ -1475,7 +1476,12 @@ function folioCheck(
       id,
       problems.length === 1 && problems[0].type === 'changed'
         ? `Use the same shortened title in the footer of the ${name} as on the other preliminary pages.`
-        : wantMessage(here, name, folio?.title ? (whole ? 'title' : 'shortened title') : undefined),
+        : (titleOnlyFix(problems, name) ??
+            wantMessage(
+              here,
+              name,
+              folio?.title ? (whole ? 'title' : 'shortened title') : undefined,
+            )),
       { details: problems.map((p) => p.text), where: [{ page }] },
     )
   }
@@ -1485,7 +1491,7 @@ function folioCheck(
   const problems = judge(folio, w)
   if (!problems.length)
     return ok(id, want === 'none' ? `No page number on the ${name}.` : `${name}: “${folio?.raw}”`)
-  return fix(id, wantMessage(want, name), {
+  return fix(id, titleOnlyFix(problems, name) ?? wantMessage(want, name), {
     details: problems.map((p) => p.text.charAt(0).toUpperCase() + p.text.slice(1)),
     where: at(para),
   })

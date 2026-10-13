@@ -10,6 +10,7 @@ import {
   auditPdf,
   lookNote,
   lookOnly,
+  titleOnlyFix,
   unreadNote,
   clip,
   judge,
@@ -1164,7 +1165,10 @@ export function bodyNumbers(
       })
     if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
       return review(id, unreadNote(problems), { where: [{ page: problems[0].page }] })
-    return fix(id, msg, { details, where: [{ page: problems[0].page }] })
+    return fix(id, titleOnlyFix(problems, name) ?? msg, {
+      details,
+      where: [{ page: problems[0].page }],
+    })
   }
   if (!doc.sections) return review(id, `Check the page numbers of the ${name} in the PDF version.`)
   const secs = [...new Set(doc.paras.slice(start, end).map((p) => p.section ?? 0))]
