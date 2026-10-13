@@ -116,7 +116,7 @@ describe('check', () => {
     expect(finding(good, 'title.date').status).toBe('ok')
     const bad = await page('a study of community radio', 'October 15, 2026')
     expect(finding(bad, 'title.title').status).toBe('fix')
-    expect(finding(bad, 'title.date').status).toBe('review')
+    expect(finding(bad, 'title.date').status).toBe('fix')
   })
 
   it('reports template text left in', async () => {
@@ -928,7 +928,7 @@ describe('check', () => {
       'Dean',
     )
     expect(finding(mix, 'acceptance.convention').status).toBe('fix')
-    // One degree written two ways is a mix for the student to look at, not a pass.
+    // One degree written two ways on the committee is a mix to make uniform.
     const twoWays = await names(
       'MARIA B. SANTOS, Ph.D.',
       'Adviser',
@@ -937,7 +937,27 @@ describe('check', () => {
       'JOSE R. REYES, Ph.D.',
       'Dean',
     )
-    expect(finding(twoWays, 'acceptance.convention').status).toBe('review')
+    expect(finding(twoWays, 'acceptance.convention').status).toBe('fix')
+    // Only the Dean's line (the template's) writes it the other way: the student looks.
+    const deanWay = await names(
+      'MARIA B. SANTOS, Ph.D.',
+      'Adviser',
+      'ANA D. LIM, Ph.D.',
+      'Member',
+      'JOSE R. REYES, PhD',
+      'Dean',
+    )
+    expect(finding(deanWay, 'acceptance.convention').status).toBe('review')
+    // A committee member bare beside members with a degree: a mix.
+    const oneBare = await names(
+      'MARIA B. SANTOS',
+      'Adviser',
+      'ANA D. LIM, Ph.D.',
+      'Member',
+      'JOSE R. REYES, DProfSt',
+      'Dean',
+    )
+    expect(finding(oneBare, 'acceptance.convention').status).toBe('fix')
   })
 
   it('accepts the list headings written “LISTS OF FIGURES” or “List of Table”, with a note', async () => {

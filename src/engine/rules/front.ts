@@ -845,10 +845,10 @@ function dateOf(p: Para | undefined, id: string, where: string): Finding {
         `Write the month of the date of submission in full (15 October 2026): “${quote(p.text, 40)}”.`,
         { where: at(p) },
       )
-    // (the checklist asks only that the date be indicated: the form of it is the template's, not a rule)
-    return review(
+    // Every UPOU template writes Day Month Year: another order, or no day, is a fault.
+    return fix(
       id,
-      `Write the date of submission as Day Month Year (15 October 2026) on the ${where}: “${quote(p.text, 40)}”.`,
+      `Write the date of submission as Day Month Year (15 October 2026) on the ${where}, not “${quote(p.text, 40)}”.`,
       { where: at(p) },
     )
   }
@@ -2226,6 +2226,26 @@ function convention(names: Names): Finding {
     if (d && key) forms.set(key, (forms.get(key) ?? new Map()).set(d.replace(/\.$|\s/g, ''), d))
   }
   const twoWays = [...forms.values()].find((f) => f.size > 1)
+  // The committee's own names (the Dean's line comes from the template) writing one degree two
+  // ways, its capitals aside ("Ph.D." and "PhD."): a mix the student is to make uniform.
+  const peerForms = new Map<string, Set<string>>()
+  for (const s of styles) {
+    if (s.para === names.dean?.para) continue
+    const d = SUFFIX.exec(s.name.replace(/[,;]\s*$/, ''))?.[0].replace(/^,\s*/, '')
+    const key = d?.replace(/\W/g, '').toLowerCase()
+    if (d && key)
+      peerForms.set(
+        key,
+        (peerForms.get(key) ?? new Set()).add(d.replace(/\.$|\s/g, '').toLowerCase()),
+      )
+  }
+  const peerTwoWays = [...peerForms.values()].find((f) => f.size > 1)
+  if (kinds.size === 1 && kinds.has('degree') && twoWays && peerTwoWays)
+    return fix(
+      id,
+      `A degree is written two ways (${list([...twoWays.values()].map((d) => `“${d}”`))}) on the Acceptance Page. Write it the same way after every name.`,
+      { details: styles.map((s) => s.name) },
+    )
   if (kinds.size === 1 && kinds.has('degree') && twoWays)
     return review(
       id,
@@ -2251,8 +2271,21 @@ function convention(names: Names): Finding {
   const rank = (n: string) => /^(asst|assistant|assoc|associate)?\.?\s*prof/i.test(n)
   const bare = styles.filter((x) => x.style === 'none')
   const others = new Set(styles.filter((x) => x.style !== 'none').map((x) => x.style))
+  // (but committee members, the Dean aside, some bare and some with a title or degree: a mix,
+  // where each bare one reads plainly as a name: not a date, a sentence, a signature line, a
+  // degree without its comma or a name repeated beside its titled line)
+  const plainName = (n: string) =>
+    /^[\p{L}.'’ -]+$/u.test(n) &&
+    n.split(/\s+/).length <= 6 &&
+    !SUFFIX_ANY.test(n) &&
+    !styles.some((y) => y.name !== n && y.name.toLowerCase().includes(n.toLowerCase()))
+  const barePeers = peers.filter((x) => x.style === 'none')
+  const peersMixed =
+    barePeers.length > 0 &&
+    barePeers.every((x) => plainName(x.name)) &&
+    peers.some((x) => x.style !== 'none')
   const soft =
-    (bare.length > 0 && others.size === 1 && !others.has('both')) ||
+    (bare.length > 0 && others.size === 1 && !others.has('both') && !peersMixed) ||
     (!!names.dean &&
       peers.length > 0 &&
       peers.every((x) => x.style === 'title') &&
