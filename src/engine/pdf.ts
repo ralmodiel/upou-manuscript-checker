@@ -596,6 +596,20 @@ export async function readPdf(
             )
           : shown,
       )
+      // Words in the foot that are in the file but do not show (white, or under a white box): a
+      // footer covered rather than removed.
+      const footShown = flat(
+        allLines
+          .at(-1)!
+          .filter((l) => l.y > vp.height - 110)
+          .map((l) => l.text)
+          .join(''),
+      )
+      const hiddenFoot = spans
+        .filter((s) => s.y > vp.height - 100 && /[\p{L}\p{N}]/u.test(s.text))
+        .filter((s) => !footShown.includes(flat(s.text)))
+        .map((s) => s.text.trim())
+        .join(' ')
       const own = linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored
       // Coloured text quoted as the page's lines read it, spaces and all.
       const said = own.length
@@ -627,6 +641,7 @@ export async function readPdf(
         colored: own.map(readable),
         ...(own.length < colored.length ? { linked: true } : {}),
         ...(hidden > visible ? { ocr: true } : {}),
+        ...(hiddenFoot ? { hiddenFoot } : {}),
       })
 
       // The title page's picture is kept small, for the seal check (a cover page may come first).
@@ -734,8 +749,17 @@ export async function readPdf(
   }
   // How far each page's words can be trusted: words a font printed with wrong glyphs.
   for (const [n, lines] of allLines.entries()) {
-    const words = lines.flatMap((l) => l.text.split(/\s+/)).filter((w) => /\p{L}/u.test(w))
-    const odd = words.filter(oddWord).length
+    // (a control character between words is a font's space, glyph 3, and odd in itself)
+    const words = lines
+      .flatMap((l) =>
+        [...l.text]
+          .map((c) => (c.charCodeAt(0) < 32 ? ' ' : c))
+          .join('')
+          .split(/\s+/),
+      )
+      .filter((w) => /\p{L}/u.test(w))
+    const controls = lines.some((l) => [...l.text].some((c) => c.charCodeAt(0) < 32 && c !== '\t'))
+    const odd = words.filter(oddWord).length + (controls ? 2 : 0)
     if (odd >= 4 && odd >= 0.03 * words.length) pages[n].unreliable = odd / words.length
   }
   const paras = toParas(allLines, pages, tableLines(allLines, pages))

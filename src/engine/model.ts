@@ -118,6 +118,8 @@ export interface Page {
   /** Its text is drawn invisibly over a picture of the page (a scan's machine-read layer): its
    *  words may be read, its fonts, sizes and line positions are guesses. */
   ocr?: boolean
+  /** Footer words in the file that do not show (white, or under a white box drawn over them). */
+  hiddenFoot?: string
   /** The share of its words a font printed with wrong glyphs (only where that is several): what
    *  rests on its words may be misread. */
   unreliable?: number

@@ -47,7 +47,8 @@ function unglue(t: string, words: Set<string>): { text: string; number: string }
 }
 
 export function parseFolio(raw: string, words?: Set<string>): Folio | undefined {
-  let t = norm(raw.replace(/\n/g, ' '))
+  // (a font's glyph numbers read as control characters: the space is glyph 3)
+  let t = norm([...raw.replace(/\n/g, ' ')].map((c) => (c.charCodeAt(0) < 32 ? ' ' : c)).join(''))
   // A symbol font may print the ellipsis as «: before the number at a footer's end it is one.
   t = t.replace(/«(?=\s*([ivxlcdm]+|\d+)$)/i, '…')
   if (!t) return undefined

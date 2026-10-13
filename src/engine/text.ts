@@ -24,15 +24,13 @@ export const oddWord = (w: string) =>
   /\p{Ll}\p{Lu}{3}/u.test(w)
 
 /** A PDF's text with what a font's glyph numbers stand for put back where that is sure: the
- *  space (glyph 3), the ellipsis of a Calibri font (U+0359), a font's digits read as Coptic
+ *  ellipsis of a Calibri font (U+0359), a font's digits read as Coptic
  *  letters ("Ϯ0ϭϳ" for 2017). */
 export const mend = (s: string) =>
-  s
-    .replaceAll(String.fromCharCode(3), ' ')
-    .replace(/\u0359/g, '…')
-    .replace(/[\d\u03ec-\u03f5]{2,}/gu, (m) =>
-      m.replace(/[\u03ec-\u03f5]/gu, (c) => String(c.charCodeAt(0) - 0x3ec)),
-    )
+  s.replace(/\u0359/g, '…').replace(/[\d\u03ec-\u03f5]{2,}/gu, (m) =>
+    // (with a digit read right among them: a run of such letters alone may be words)
+    /\d/.test(m) ? m.replace(/[\u03ec-\u03f5]/gu, (c) => String(c.charCodeAt(0) - 0x3ec)) : m,
+  )
 
 /** A page number's first digit or letter read with the ellipsis, apart from the rest ("…1 4"
  *  for "…14", "…i ii" for "…iii"): put back together. */
