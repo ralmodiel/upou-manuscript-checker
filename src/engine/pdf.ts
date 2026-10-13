@@ -1550,6 +1550,8 @@ function toParas(pagesLines: Line[][], pages: Page[], tables: Set<Line>): Para[]
                 Math.abs(c.x0 - m.left) <= 3 ||
                 (c.x0 > draft[0].x0 + 8 && (lastHanging || shared(c)))
           split =
+            // (not over a page between with no text, a picture: what it held is not read)
+            c.page !== prev.page + 1 ||
             kind !== 'left' ||
             ended ||
             shortEnd ||

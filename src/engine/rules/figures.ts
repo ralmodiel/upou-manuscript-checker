@@ -316,7 +316,8 @@ export function findCaptions(ctx: Ctx): Caption[] {
     if (
       (rest && /^\p{Ll}/u.test(rest) && !bolded(p)) ||
       // (a sentence in a font read wrongly: its first word, "shows", has capitals inside it)
-      (rest.length > 40 && garbled(rest) && !bolded(p) && !faceUnknown(p)) ||
+      // (a caption whose title alone is garbled keeps its label in bold: "Table 8. ReVSRQ…")
+      (rest.length > 40 && garbled(rest) && !bolded(p) && !labelBold(p) && !faceUnknown(p)) ||
       /^[,;)]/.test(rest) ||
       // ("Table 3 (see below) presents…", "Figure 2 (next page) shows…": a sentence)
       /^\((see|below|above|next|on p)/i.test(rest) ||
@@ -407,7 +408,10 @@ const at = (c: Caption) => ({ page: c.para.page, quote: quote(c.para.text, 50) }
 
 /** Tables and pictures in the body that no caption sits beside, and (PDF) pages whose pictures
  *  may belong to a figure captioned elsewhere. */
-function unlabelled(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe: number[] } {
+function unlabelled(
+  ctx: Ctx,
+  caps: Caption[],
+): { sure: string[]; maybe: number[]; renamed?: string[] } {
   const { doc } = ctx
   if (doc.kind === 'pdf') return unlabelledPictures(ctx, caps)
   const [start, end] = bodyRange(ctx)
@@ -431,10 +435,13 @@ function unlabelled(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe: number[
  *  none on their page, nor one closing the page before (when the picture opens its page) or
  *  opening the page after (when it closes its page). Logos, symbols and the seal are smaller or
  *  elsewhere; scanned documents in the appendices need no caption. */
-function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe: number[] } {
+function unlabelledPictures(
+  ctx: Ctx,
+  caps: Caption[],
+): { sure: string[]; maybe: number[]; renamed: string[] } {
   const { doc, s } = ctx
   const pages = doc.pages ?? []
-  if (!s.chapters.length) return { sure: [], maybe: [] }
+  if (!s.chapters.length) return { sure: [], maybe: [], renamed: [] }
   const from = doc.paras[s.chapters[0].heading].page ?? 0
   const end = s.references?.heading ?? s.appendicesHeading ?? s.appendices[0]?.heading
   const to = end === undefined ? pages.length : (doc.paras[end].page ?? pages.length)
@@ -450,6 +457,8 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
     caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i || c.title?.i === i))
   const out: number[] = []
   const maybe: number[] = []
+  // Pictures under a label of another name below them ("Exhibit 1."): numbered, not as figures.
+  const renamed: string[] = []
   // Pages whose pictures go on from a figure captioned on the page before.
   const carried = new Set<number>()
   const size = textSize(doc.paras)
@@ -547,19 +556,29 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
           norm(q.text),
         ),
     )
+    const under = texts.find(
+      (q) =>
+        norm(q.text).length <= 160 &&
+        !!q.lines?.length &&
+        big.some((b) => q.lines![0].y >= b.y1 - 2) &&
+        /^(graph|plate|map|photo(graph)?|diagram|illustration|exhibit|extract|image|picture|screenshot)\s*\d+\s*[.:]/i.test(
+          norm(q.text),
+        ),
+    )
     if (runsOn || named || other) maybe.push(pg.n)
+    else if (under) renamed.push(`“${quote(under.text, 30)}” (${pagesText([pg.n])})`)
     else out.push(pg.n)
   }
-  return { sure: out.map((n) => `a picture on ${pagesText([n])}`), maybe }
+  return { sure: out.map((n) => `a picture on ${pagesText([n])}`), maybe, renamed }
 }
 
 export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
-  const { sure: lonely, maybe } = unlabelled(ctx, caps)
+  const { sure: lonely, maybe, renamed = [] } = unlabelled(ctx, caps)
   if (!caps.length) {
-    if (lonely.length)
+    if (lonely.length || renamed.length)
       return [
         fix('figures.number', 'Add a figure/table number (in bold) above each figure and table.', {
-          details: lonely.slice(0, 5),
+          details: [...lonely, ...renamed].slice(0, 5),
         }),
         fix(
           'figures.title',
@@ -580,6 +599,39 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
         ),
         review('figures.apa', 'Check the APA style figure and table setup.'),
       ]
+    // A List of Tables or Figures with entries: the captions are there, in pictures or in letters
+    // that could not be read.
+    const { s, doc } = ctx
+    const listed = s.prelims
+      .filter((x) => x.key === 'tables' || x.key === 'figures')
+      .flatMap((x) => doc.paras.slice(x.heading + 1, x.end))
+      .filter((p) => isTocLine(p.text) && /^(table|figure|fig\.)\s*\d/i.test(norm(p.text))).length
+    // A table with no number or title: a page of the chapters with a table's rows (cells side by
+    // side) and no caption on it.
+    const from = s.chapters[0]?.start ?? doc.paras.length
+    const to = s.references?.start ?? s.appendices[0]?.start ?? doc.paras.length
+    const rows = new Map<number, number>()
+    for (const p of doc.paras.slice(from, to))
+      if (p.inTable && p.page !== undefined && p.text.includes('\t'))
+        rows.set(p.page, (rows.get(p.page) ?? 0) + 1)
+    const tablePages = [...rows].filter(([, n]) => n >= 3).map(([pg]) => pg)
+    if (listed || tablePages.length) {
+      const why = listed
+        ? `The list of tables or figures has ${listed} ${listed > 1 ? 'entries' : 'entry'}, but no caption was found in the text (it may be inside a picture)`
+        : `${pagesText(tablePages.slice(0, 5))} ${tablePages.length > 1 ? 'have tables' : 'has a table'} with no table number or title found`
+      return [
+        review(
+          'figures.number',
+          `${why}: check that each table and figure has its number (in bold) above it.`,
+          { where: tablePages.slice(0, 5).map((page) => ({ page })) },
+        ),
+        review(
+          'figures.title',
+          `${why}: check that each table and figure has a title (in italics) right below its number.`,
+        ),
+        review('figures.apa', 'Check the APA style figure and table setup.'),
+      ]
+    }
     return [
       na('figures.number', 'No figures or tables found.'),
       na('figures.title', 'No figures or tables found.'),
@@ -596,6 +648,10 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     )
   if (notBold.length) numberIssues.push(`Not in bold: ${names(notBold)}.`)
   if (lonely.length) numberIssues.push(`No number at all: ${list(lonely.slice(0, 3))}.`)
+  if (renamed.length)
+    numberIssues.push(
+      `Labelled by another name below the picture: ${list(renamed.slice(0, 3))}; number ${renamed.length > 1 ? 'each' : 'it'} as a figure, above it.`,
+    )
   // An old .doc is read for its text only, and a PDF may name no font: bold and italics are for
   // the student to check.
   const plain = ctx.doc.kind === 'doc' || caps.some((c) => faceUnknown(c.para))

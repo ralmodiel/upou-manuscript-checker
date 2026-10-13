@@ -482,6 +482,8 @@ const headingLike = (p: Para) => {
     // A heading opens with a capital or a number: a line starting with a small letter ends a
     // sentence (the last line of a quotation); a form's blank or placeholder is no heading.
     !/^\p{Ll}/u.test(t) &&
+    // (nor one opening a bracket in small letters, "(intranet): …", the rest of a sentence)
+    !/^\(\p{Ll}/u.test(t) &&
     // (nor does one with a sentence closed inside quotation marks: a quotation's end, its source)
     !/[.!?,;]["”]/.test(t) &&
     // (nor one closing a bracket it did not open, the end of a quotation's translation, nor two
@@ -688,8 +690,9 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     // The last thing on its page (no picture below it either), after text or a picture, and with
     // something to come on the pages after; not a caption under its picture, closing the figure.
     if (
-      ((headingLike(p) && (p.i >= firstBody || s.prelims.some((x) => x.heading === p.i))) ||
-        label) &&
+      // (an italic line of the preliminary pages, a dedication's, is no heading either)
+      (headingLike(p) || label) &&
+      (p.i >= firstBody || s.prelims.some((x) => x.heading === p.i)) &&
       // (a caption closing the page is judged below, by what opens the next one)
       !(
         caption &&
@@ -881,7 +884,10 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       continue
     }
     const pages = [...new Set(lines.map((l) => l.page))]
-    if (pages.length === 2 && !p.inTable && p.align !== 'center') {
+    // (a paragraph set far in throughout, an inch and a half or more: a table's cell beside its
+    // term, ruled or not, not running text)
+    const cell = lines.every((l) => l.x0 > (pg.margins?.left ?? 72) + 100)
+    if (pages.length === 2 && !p.inTable && !cell && p.align !== 'center') {
       const onFirst = lines.filter((l) => l.page === pages[0]).length
       const onNext = lines.length - onFirst
       // A line carried over counts only when what follows starts no further in than this
@@ -940,7 +946,20 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         lines[0].x0 <= prevLast.x0 + 3 &&
         lines[0].y - prevLast.y <= 1.3 * prevPitch &&
         prevLast.x1 + wordWidth > (pg.margins?.right ?? Infinity) - 6
+      // (the line above, the paragraph's own first line told apart by its indent, runs on into
+      // this one mid-sentence: two lines of it stand at the foot)
+      const bl = before?.lines?.[0]
+      const firstLine =
+        !!bl &&
+        before!.lines!.length === 1 &&
+        bl.page === p.page &&
+        !before!.inTable &&
+        lines[0].y > bl.y &&
+        lines[0].y - bl.y <= 2.4 * bl.size &&
+        !/[.!?:]["”’)]?$/.test(norm(before!.text)) &&
+        bl.x1 - bl.x0 >= 0.7 * ((pg.margins?.right ?? pg.width - 72) - lines[0].x0)
       const stray =
+        firstLine ||
         goesOnAbove ||
         (/^\p{Ll}/u.test(norm(p.text)) && !isList(p)) ||
         fragment ||

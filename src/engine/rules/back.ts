@@ -67,7 +67,14 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
         !YEAR.test(t) &&
         !/^retrieved\b|\bretrie?ve?d\s+from$/i.test(t) &&
         /^(\d{1,2}[.)]\s+)?\p{Lu}/u.test(t) &&
-        !/,\s*\p{Lu}\b/u.test(t))
+        !/,\s*\p{Lu}\b/u.test(t)) ||
+      // (or such a name closed by a colon: "Books:", "Journal Articles:", "Chapter of a Book:")
+      (p.lines?.length === 1 &&
+        (edge === undefined || x0(p) === undefined || x0(p)! <= edge + 3) &&
+        !/^retrieved\b/i.test(t) &&
+        t.length <= 40 &&
+        /^(\d{1,2}[.)]\s+)?\p{Lu}[\p{L} '’&/-]*:$/u.test(t) &&
+        t.split(' ').length <= 5)
     ) {
       groups++
       continue
@@ -279,6 +286,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
   const behind: [Entry, Entry, number][] = []
   // Where the list starts the alphabet over.
   const restarts: (number | undefined)[] = []
+  const undated: string[] = []
   for (const [k, e] of keyed.entries()) {
     const prev = keyed[k - 1] as Entry | undefined
     const [y0, y1] = [prev && byline(prev), byline(e)]
@@ -288,7 +296,11 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
       kept.has(k) || (y0 && y1 && y0.who === y1.who)
         ? []
         : ks.slice(0, k).flatMap((_, j) => (sooner(k, j) ? [j] : []))
-    if (prev && sooner(k, k - 1)) {
+    // (one author's works with no year: their order, by title, rests on what is read as the title)
+    const author = (x: Entry) => x.text.split(/\.\s/)[0]
+    if (prev && sooner(k, k - 1) && !y0 && !y1 && author(prev) === author(e)) {
+      undated.push(`${at}“${quote(e.text, 45)}” and “${quote(prev.text, 45)}”`)
+    } else if (prev && sooner(k, k - 1)) {
       pairs.push(`${at}“${quote(e.text, 45)}” should come before “${quote(prev.text, 45)}”`)
       misplaced.push(e)
       restarts.push(e.paras[0].page)
@@ -298,9 +310,28 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
         keyed[above.reduce((m, j) => (ks[j].localeCompare(ks[m], 'en') < 0 ? j : m))],
         pairs.length,
       ])
-    else if (y0 && y1 && y0.who === y1.who && y1.year < y0.year) {
+    else if (y0 && y1 && y0.who === y1.who && y1.year.slice(0, 4) < y0.year.slice(0, 4)) {
       pairs.push(
         `${at}“${y1.cite}” should come before “${y0.cite}”: one author's works go from the earliest year`,
+      )
+      misplaced.push(e)
+    } else if (y0 && y1 && y0.who === y1.who && y1.year < y0.year && y1.year.length > 4) {
+      // ("2021b" before "2021a")
+      pairs.push(
+        `${at}“${y1.cite}” should come before “${y0.cite}”: one author's works go from the earliest year`,
+      )
+      misplaced.push(e)
+    } else if (
+      y0 &&
+      y1 &&
+      y0.who === y1.who &&
+      y1.year.slice(0, 4) === y0.year.slice(0, 4) &&
+      y0.year.length > 4 &&
+      y1.year.length === 4
+    ) {
+      // ("2021a" then "2021": one year's works lettered for some only)
+      pairs.push(
+        `${at}“${y0.cite}” and “${y1.cite}”: give every work of one author and year its letter (2021a, 2021b…), in the order of their titles`,
       )
       misplaced.push(e)
     } else if (
@@ -338,6 +369,10 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
       ks[k - 1] === ks[k] &&
       y0.who !== y1.who &&
       namesBefore(y1.names, y0.names) &&
+      // (a surname's particle, "de Vreese", may be sorted under either letter: both must agree)
+      (y1.pnames.length !== y1.names.length ||
+        y0.pnames.length !== y0.names.length ||
+        namesBefore(y1.pnames, y0.pnames)) &&
       // ("et al." cuts the authors short: such a list goes by year, not by the names)
       (etal(e) || etal(prev!) ? flagEtAl() : true)
     ) {
@@ -366,6 +401,12 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
         `${plural(unreadable.length, 'reference')} could not be placed, the author's name being unreadable or holding a number (${list(unreadable.slice(0, 3).map((e) => `“${quote(e.text, 25)}”`))}): check ${unreadable.length === 1 ? 'its' : 'their'} place yourself.`,
       ]
     : []
+  if (!pairs.length && !lead.length && undated.length)
+    return review(
+      id,
+      'Check the order of one author’s works that have no year: APA lists them as “n.d.”, by title.',
+      { details: [...undated.slice(0, 3), ...skipped] },
+    )
   if (!pairs.length && !lead.length && unsureEtAl)
     return review(
       id,
@@ -473,6 +514,17 @@ function byline(e: Entry) {
               .toLowerCase()
               .replace(/[^a-z]/g, ''),
           ),
+        // The same, each surname with its particle ("de Vreese" → "devreese").
+        pnames: [
+          ...by.matchAll(
+            /((?:(?:van|von|der|den|de|del|della|di|da|du|le|la|ter|ten|dos|das)\s+)*\p{Lu}[\p{L}'’-]*(?:\s\p{L}[\p{L}'’-]*)*),\s+(?:\p{Lu}\.[\s-]*)+/gu,
+          ),
+        ].map((n) =>
+          n[1]
+            .normalize('NFD')
+            .toLowerCase()
+            .replace(/[^a-z]/g, ''),
+        ),
         by: cite,
         from: quote(rest, 40),
         cite: `${cite} (${m[1]})`,
@@ -923,7 +975,8 @@ function labels(ctx: Ctx): Finding {
   }
   if (marks.some((m) => /^\d+$/.test(m))) {
     issues.push('Label appendices with capital letters (Appendix A, B, C), as APA style does.')
-    statuses.push('review')
+    // (the MDC template letters them; another program may number its own)
+    statuses.push(mdc ? 'fix' : 'review')
   }
   // Roman numerals (I, II, III…) are a different system, not letters that skip.
   const romans = marks.some((m) => /^[ivx]{2,5}$/i.test(m))
@@ -931,7 +984,7 @@ function labels(ctx: Ctx): Finding {
     issues.push(
       'Label appendices with capital letters (Appendix A, B, C), as APA style does, not Roman numerals.',
     )
-    statuses.push('review')
+    statuses.push(mdc ? 'fix' : 'review')
   }
   // A label misspelt ("APPENDX B"): not read as one, its letter seems to be skipped.
   const typos = doc.paras.filter(

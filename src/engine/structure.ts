@@ -91,7 +91,8 @@ export const isTocLine = (text: string) => TOC_ENTRY.test(text.slice(-256))
 
 const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 const CHAPTER =
-  /^chapter\s+([ivxlcdm]+|\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b\.?\s*[:.\-–—]?\s*(.*)$/i
+  // ("Chapter1:": a digit may come glued to the word)
+  /^chapter(?:\s+|(?=\d))([ivxlcdm]+|\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b\.?\s*[:.\-–—]?\s*(.*)$/i
 /** A chapter's title, standing alone or after its numeral ("I. INTRODUCTION"). */
 const CHAPTER_TITLE =
   /^(introduction|(review of )?(related )?(literature|studies)|(research )?methodology|methods?|(presentation, )?(results?|analysis|findings)\b.*|discussion|(summary,? )?conclusions?\b.*|summary\b.*|recommendations)$/i
@@ -228,6 +229,19 @@ export function findStructure(doc: Doc): Structure {
       doc.kind === 'pdf'
     )
       stops.push(pageStartOn(doc, p.i))
+    // An appendix's bare label, bold and centred, that a table's rows took in ("Appendix C" over
+    // the table it opens): the next in sequence after the one before.
+    const prevMark = s.appendices.at(-1)?.mark
+    const mark = /^appendix\s+([a-z]|\d{1,2})$/i.exec(t)?.[1]
+    if (p.inTable && prevMark && mark && bolded(p) && p.align === 'center') {
+      const after = /^\d+$/.test(prevMark)
+        ? String(+prevMark + 1)
+        : String.fromCharCode(prevMark.toUpperCase().charCodeAt(0) + 1)
+      if (mark.toUpperCase() === after) {
+        s.appendices.push({ heading: p.i, start: p.i, end: paras.length, label: t, mark })
+        continue
+      }
+    }
     if (!isHeadingish(p) && !plainList) continue
     // (on a contents page, a plain entry whose page number fell to the next line is no heading)
     if (
@@ -285,6 +299,31 @@ export function findStructure(doc: Doc): Structure {
         numeral,
         number: word >= 0 ? word + 1 : /^\d+$/.test(numeral) ? +numeral : fromRoman(numeral),
         inlineTitle: ch[2] || undefined,
+      })
+      continue
+    }
+    // The chapters after labelled ones headed by their numeral alone ("V. FINDINGS"), in sequence,
+    // in capitals, opening a page: chapters still, their missing label the student's to fix.
+    const last = s.chapters.at(-1)
+    const nm =
+      !entry && last?.number && !s.references && !s.appendices.length && p.newPage && styled
+        ? NUMBERED_TITLE.exec(t)
+        : null
+    if (
+      nm &&
+      isUpper(nm[2]) &&
+      !NOT_CHAPTER.test(nm[2]) &&
+      (/^\d+$/.test(nm[1]) ? +nm[1] : fromRoman(nm[1])) === last!.number! + 1
+    ) {
+      s.chapters.push({
+        heading: p.i,
+        start: p.i,
+        end: paras.length,
+        label: t,
+        numeral: nm[1].toUpperCase(),
+        number: last!.number! + 1,
+        inlineTitle: nm[2],
+        unlabelled: true,
       })
       continue
     }
@@ -378,9 +417,15 @@ export function findStructure(doc: Doc): Structure {
   }
   if (!s.acceptance) {
     const k = find(
-      /\b(paper|thesis|dissertation|study|manuscript|special problem|special project|capstone project) (prepared|written|entitled|attached hereto)\b.*\bby\b|is hereby accepted/i,
+      // ("is hereb\ accepted": a font re-encoded may garble a letter)
+      /\b(paper|thesis|dissertation|study|manuscript|special problem|special project|capstone project) (prepared|written|entitled|attached hereto)\b.*\bby\b|is hereb\S? accepted/i,
     )
-    if (k > 0)
+    // (before the preliminary pages and chapters: a sentence of a chapter is no acceptance page)
+    const front = Math.min(
+      s.prelims[0]?.heading ?? paras.length,
+      s.chapters[0]?.heading ?? paras.length,
+    )
+    if (k > 0 && k < front)
       s.acceptance = {
         heading: pageStartOn(doc, k),
         start: pageStartOn(doc, k),
