@@ -20,9 +20,10 @@ export interface Caption {
 }
 
 // "Chart S1:", "Figure 4a", "Figure 6-A" and "Table 3 .1" (a stray space) are labels too; "Figure 5.
-// 3D model" is Figure 5, then its title.
+// 3D model" is Figure 5, then its title, and so are "Figure 7. 10-Point Plan" and
+// "Figure 1. 10 Regions" (a stop then a space: only a number closed by a stop or colon goes on).
 const LABEL =
-  /^(fig(?:ure)?\.?|table|chart)\s*(\d+(?:\s?[.-]\s?\d+(?![a-z]))*(?:-?[a-z](?![a-z]))?|[A-Z]-?\d+(?:[.-]\d+)*)\s*[.:–—-]?\s*(.*)$/i
+  /^(fig(?:ure)?\.?|table|chart)\s*(\d+(?:\s?[.-]\d+(?![a-z])|\s?[.-]\s\d+(?=\s*[.:–—]\s|\s*$))*(?:-?[a-z](?![a-z]))?|[A-Z]-?\d+(?:[.-]\d+)*)\s*[.:–—-]?\s*(.*)$/i
 /** "Table 1 (continued)": a long table carried over to the next page, not a caption of its own. */
 const CONTINUED = /^(figure|table)\s+\S+\s*\(?cont(inued|['’]d|\.)?\)?\.?$/i
 /** A PDF paragraph set in a font whose name says nothing: its bold and italics are unknown. */
@@ -314,10 +315,17 @@ export function findCaptions(ctx: Ctx): Caption[] {
     // "Table 1 shows that…" and "Table 1, the…" are sentences about the table, not its caption;
     // nor is a continued table's.
     if (
-      (rest && /^\p{Ll}/u.test(rest) && !bolded(p)) ||
+      // (a title opening with a name written so, "eGov Services", is a title still)
+      (rest && /^\p{Ll}/u.test(rest) && !/^\p{Ll}+\p{Lu}\S*\s+\S/u.test(rest) && !bolded(p)) ||
       // (a sentence in a font read wrongly: its first word, "shows", has capitals inside it)
-      // (a caption whose title alone is garbled keeps its label in bold: "Table 8. ReVSRQ…")
-      (rest.length > 40 && garbled(rest) && !bolded(p) && !labelBold(p) && !faceUnknown(p)) ||
+      // (a caption whose title alone is garbled keeps its label in bold, "Table 8. ReVSRQ…", or
+      // closed by a stop or a colon, "Table 8: Scores of 3UDFWLFH")
+      (rest.length > 40 &&
+        garbled(rest) &&
+        !bolded(p) &&
+        !labelBold(p) &&
+        !faceUnknown(p) &&
+        !/^\S+\s*[A-Z]?[\d.\s-]*?\d\s*[.:]\s/i.test(t)) ||
       /^[,;)]/.test(rest) ||
       // ("Table 3 (see below) presents…", "Figure 2 (next page) shows…": a sentence)
       /^\((see|below|above|next|on p)/i.test(rest) ||
@@ -378,7 +386,7 @@ export function findCaptions(ctx: Ctx): Caption[] {
     // each is a caption.
     if (p.lines && rest)
       for (const x of p.text.matchAll(
-        /(?:\.|\t|(?<=[a-z0-9)])\s)\s*(Fig(?:ure)?\.?|Table)\s*(\d+(?:-?[a-z](?![a-z]))?)\s*[.:]\s+(?=\p{Lu})/gu,
+        /(?:\.|\t|(?<=[a-z0-9)])\s)\s*(Fig(?:ure)?\.?|Table)\s*(\d+(?:\.\d+)?(?:-?[a-z](?![a-z]))?)\s*[.:]\s+(?=\p{Lu})/gu,
       ))
         out.push({
           para: p,
@@ -465,7 +473,13 @@ function unlabelledPictures(
   const unread = noTextPages(doc)
   for (const pg of pages.slice(from, to)) {
     // (a page of picture or drawn letters: its captions cannot be read)
-    if (captioned(pg.n) || unread.has(pg.n)) continue
+    // (nor one with its caption set sideways, beside a landscape figure)
+    if (
+      captioned(pg.n) ||
+      unread.has(pg.n) ||
+      /\b(fig(ure)?\.?|table)\s*\d+/i.test(pg.turnedText ?? '')
+    )
+      continue
     // (not an icon in the cell of a table: a drawn box around it)
     const cell = (b: Box) =>
       pg.marks.some(
@@ -728,19 +742,74 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
   // the number (4a, 4b) marks parts of one figure. Anything else, as S1, is the writer's own.
   const order: string[] = []
   const odd: string[] = []
+  const { doc } = ctx
+  const back = ctx.s.appendicesHeading ?? ctx.s.appendices[0]?.heading
+  // Numbers the lists of tables and figures name (before the body): one missing among the
+  // captions but listed may be a caption not read here, or one left out of the text.
+  const listedNums = new Set(
+    doc.paras.slice(0, bodyRange(ctx)[0]).flatMap((p) => {
+      // (an entry ends with its page number)
+      const m = /\s\d{1,3}$/.test(norm(p.text)) && LABEL.exec(norm(p.text))
+      return m ? [`${/^table/i.test(m[1]) ? 'table' : 'figure'}${m[2].replace(/\s/g, '')}`] : []
+    }),
+  )
+  // Pages whose captions may not be read: no text layer, scanned, or set in a garbled font.
+  const blind = new Set([
+    ...noTextPages(doc),
+    ...(doc.pages ?? []).filter((pg) => pg.ocr).map((pg) => pg.n),
+    ...doc.paras.flatMap((p) => (p.page !== undefined && garbled(p.text) ? [p.page] : [])),
+  ])
+  const blindBetween = (from?: number, to?: number) =>
+    from === undefined || to === undefined ? [] : [...blind].filter((n) => n >= from && n <= to)
+  /** "Figure numbers skip (8 then 10): …", naming the pages that could not be read and the
+   *  missing numbers the list names. */
+  const skipText = (name: string, gaps: string[], pages: number[], listed: string[]) => {
+    const ps = [...new Set(pages)].sort((x, y) => x - y)
+    return `${name} numbers skip (${gaps.slice(0, 4).join(', ')})${
+      listed.length
+        ? `; the list names ${name} ${list(listed.slice(0, 4))}, but no caption for ${listed.length > 1 ? 'them' : 'it'} was found in the text`
+        : ''
+    }${
+      ps.length
+        ? `; ${pagesText(ps.slice(0, 6))} ${ps.length > 1 ? 'have' : 'has'} text that could not be read (a garbled font or a scanned page), so a caption there may be missed`
+        : ''
+    }: check that none is missing or misnumbered.`
+  }
   for (const kind of ['table', 'figure'] as const) {
     const name = kind === 'table' ? 'Table' : 'Figure'
-    const found = caps
-      .filter((c) => c.kind === kind)
-      .flatMap((c) => {
-        const m = /^(\d+)(?:[.-](\d+))?(?:-?([a-z]))?$/i.exec(c.number)
-        return m ? [{ text: c.number, a: +m[1], b: m[2] === undefined ? undefined : +m[2] }] : []
-      })
-    const texts = found.map((f) => f.text)
+    let mine = caps.filter((c) => c.kind === kind)
+    // An appendix numbering its own from 1 again: APA numbers them A1, A2… (an appended document
+    // of its own may keep its numbers: for the student to check).
+    const first =
+      back === undefined
+        ? -1
+        : mine.findIndex(
+            (c, k) => k > 0 && c.para.i > back && /^1(?:[.-]1)?(?:-?[a-z])?$/i.test(c.number),
+          )
+    if (first > 0) {
+      odd.push(
+        `Number the appendix ${kind}s A1, A2… (APA), unless the appendix is a document of its own.`,
+      )
+      mine = mine.slice(0, first)
+    }
+    // (no number with a stop inside: "Figure 6-7" is two figures under one caption, 6 and 7)
+    const dotted = mine.some((c) => /^\d+\.\d/.test(c.number))
+    const found = mine.flatMap((c) => {
+      const m = /^(\d+)(?:([.-])(\d+))?(?:-?([a-z]))?$/i.exec(c.number)
+      if (!m) return []
+      const range = !dotted && m[2] === '-' && +m[3] > +m[1]
+      const one = { text: c.number, page: c.para.page }
+      return range
+        ? [
+            { ...one, a: +m[1], b: undefined },
+            { ...one, a: +m[3], b: undefined },
+          ]
+        : [{ ...one, a: +m[1], b: m[3] === undefined ? undefined : +m[3] }]
+    })
+    const texts = mine.map((c) => c.number)
     const dup = texts.filter((t, k) => texts.indexOf(t) !== k)
     if (dup.length) {
       // (numbers starting over in the appendices: an appended document may number its own)
-      const back = ctx.s.appendicesHeading ?? ctx.s.appendices[0]?.heading
       const inBack = (t: string) =>
         back !== undefined &&
         caps.filter((c) => c.kind === kind && c.number === t).every((c, k) => !k || c.para.i > back)
@@ -751,31 +820,53 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       else order.push(`${name} ${dup[0]} is used twice.`)
       continue
     }
-    const list = `${texts.slice(0, 8).join(', ')}`
+    const all = `${texts.slice(0, 8).join(', ')}`
     if (found.some((f) => f.b !== undefined)) {
       // By chapter: the first numbers never go back, and a chapter's second numbers run 1, 2, 3…
+      // (one that only jumps ahead, 8.8 then 9.2, may be a caption not read here)
       let bad = false
+      const gaps: string[] = []
+      const pages: number[] = []
+      const listed: string[] = []
       for (const [k, f] of found.entries()) {
         const prev = found[k - 1]
         if (prev && f.a < prev.a) bad = true
-        if (f.b !== undefined && f.b !== (prev && prev.a === f.a ? (prev.b ?? 0) + 1 : 1))
-          bad = true
+        const want = prev && prev.a === f.a ? (prev.b ?? 0) + 1 : 1
+        if (f.b !== undefined && f.b < want) bad = true
+        if (f.b !== undefined && f.b > want) {
+          gaps.push(prev ? `${prev.text} then ${f.text}` : `${f.text} first`)
+          pages.push(...blindBetween(prev?.page ?? f.page, f.page))
+          for (let b = want; b < f.b; b++)
+            if (listedNums.has(`${kind}${f.a}.${b}`)) listed.push(`${f.a}.${b}`)
+        }
         if (f.b === undefined && prev && prev.a === f.a) bad = true
       }
-      if (bad) odd.push(`${name}s are numbered by chapter, but not in order (${list}).`)
+      if (bad || (gaps.length && ctx.doc.kind !== 'pdf'))
+        odd.push(`${name}s are numbered by chapter, but not in order (${all}).`)
+      else if (gaps.length) odd.push(skipText(name, gaps, pages, listed))
     } else {
-      const wholes = found.map((f) => f.a).filter((n, k, all) => k === 0 || n !== all[k - 1])
+      const wholes = found.filter((f, k, all) => k === 0 || f.a !== all[k - 1].a)
       // (PDF numbers that only skip, 1, 3, 4, may be a caption not read here: for the student to
       // check; numbers going back are a fault whatever was missed)
-      const skips = wholes.some((n, k) => k > 0 && n !== wholes[k - 1] + 1)
       // (the numbers on each side of every break, not the first few, which may run in order)
-      const gaps = wholes
-        .flatMap((n, k) => (k > 0 && n !== wholes[k - 1] + 1 ? [`${wholes[k - 1]} then ${n}`] : []))
-        .slice(0, 4)
-        .join(', ')
-      if (skips && ctx.doc.kind === 'pdf' && wholes.every((n, k) => k === 0 || n > wholes[k - 1]))
-        odd.push(`${name} numbers skip (${gaps}): check that none is missing or misnumbered.`)
-      else if (skips) order.push(`${name}s are not numbered in order (${gaps}).`)
+      const breaks = wholes.filter((f, k) => k > 0 && f.a !== wholes[k - 1].a + 1)
+      const gaps = breaks.map((f) => `${wholes[wholes.indexOf(f) - 1].a} then ${f.a}`)
+      if (
+        breaks.length &&
+        ctx.doc.kind === 'pdf' &&
+        wholes.every((f, k) => !k || f.a > wholes[k - 1].a)
+      ) {
+        const listed: string[] = []
+        const pages: number[] = []
+        for (const f of breaks) {
+          const prev = wholes[wholes.indexOf(f) - 1]
+          pages.push(...blindBetween(prev.page, f.page))
+          for (let n = prev.a + 1; n < f.a; n++)
+            if (listedNums.has(`${kind}${n}`)) listed.push(`${n}`)
+        }
+        odd.push(skipText(name, gaps, pages, listed))
+      } else if (breaks.length)
+        order.push(`${name}s are not numbered in order (${gaps.slice(0, 4).join(', ')}).`)
     }
   }
   for (const c of caps.filter((x) => x.split))
@@ -895,6 +986,12 @@ function apaSetup(
   }
   let notes = 0
   let tables = 0
+  // The body's left margin: where most lines start.
+  const starts = new Map<number, number>()
+  for (const p of doc.paras)
+    for (const l of p.lines ?? [])
+      starts.set(Math.round(l.x0), (starts.get(Math.round(l.x0)) ?? 0) + 1)
+  const left = [...starts].sort((x, y) => y[1] - x[1])[0]?.[0] ?? 0
   for (const [n, c] of caps.entries()) {
     const page = c.para.page === undefined ? undefined : doc.pages?.[c.para.page]
     if (page?.ocr) {
@@ -904,7 +1001,22 @@ function apaSetup(
     const t = c.inline || norm(c.title?.text ?? '')
     const tc = t && !garbled(t) ? titleCase(t) : undefined
     if (tc) add(tc, c, `${name(c)}: “${quote(t, 50)}”`)
-    if (c.para.align === 'center' || (!c.inline && c.title?.align === 'center')) add('centred', c)
+    // (a PDF line is centred only off the page's left margin by a clear amount, and a title
+    // starting where its own uncentred number starts is set flush with it, however wide)
+    const off = (q: Para) => !page || !q.lines?.[0] || q.lines[0].x0 - left >= 9
+    const numberCentred = c.para.align === 'center' && off(c.para)
+    const titleCentred =
+      !c.inline &&
+      c.title?.align === 'center' &&
+      off(c.title) &&
+      !(
+        !numberCentred &&
+        page &&
+        c.para.lines?.[0] &&
+        c.title.lines?.[0] &&
+        Math.abs(c.title.lines[0].x0 - c.para.lines[0].x0) <= 4
+      )
+    if (numberCentred || titleCentred) add('centred', c)
     // A note right below the figure or table: after the caption, before the next one or any
     // running text, on the caption's page or the next.
     const from = (c.title ?? c.para).i + 1
