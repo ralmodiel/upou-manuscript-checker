@@ -291,6 +291,9 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
     const prev = keyed[k - 1] as Entry | undefined
     const [y0, y1] = [prev && byline(prev), byline(e)]
     const at = e.paras[0].page === undefined ? '' : `${pagesText([e.paras[0].page])}: `
+    // (the entry above on another page is named with its own page)
+    const pp = prev?.paras[0].page
+    const there = pp !== undefined && pp !== e.paras[0].page ? ` (${pagesText([pp])})` : ''
     // The earlier entries it sorts before, for an entry that has to move.
     const above =
       kept.has(k) || (y0 && y1 && y0.who === y1.who)
@@ -301,7 +304,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
     if (prev && sooner(k, k - 1) && !y0 && !y1 && author(prev) === author(e)) {
       undated.push(`${at}“${quote(e.text, 45)}” and “${quote(prev.text, 45)}”`)
     } else if (prev && sooner(k, k - 1)) {
-      pairs.push(`${at}“${quote(e.text, 45)}” should come before “${quote(prev.text, 45)}”`)
+      pairs.push(`${at}“${quote(e.text, 45)}” should come before “${quote(prev.text, 45)}”${there}`)
       misplaced.push(e)
       restarts.push(e.paras[0].page)
     } else if (above.length)
@@ -312,13 +315,13 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
       ])
     else if (y0 && y1 && y0.who === y1.who && y1.year.slice(0, 4) < y0.year.slice(0, 4)) {
       pairs.push(
-        `${at}“${y1.cite}” should come before “${y0.cite}”: one author's works go from the earliest year`,
+        `${at}“${y1.cite}” should come before “${y0.cite}”${there}: one author's works go from the earliest year`,
       )
       misplaced.push(e)
     } else if (y0 && y1 && y0.who === y1.who && y1.year < y0.year && y1.year.length > 4) {
       // ("2021b" before "2021a")
       pairs.push(
-        `${at}“${y1.cite}” should come before “${y0.cite}”: one author's works go from the earliest year`,
+        `${at}“${y1.cite}” should come before “${y0.cite}”${there}: one author's works go from the earliest year`,
       )
       misplaced.push(e)
     } else if (
@@ -331,7 +334,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
     ) {
       // ("2021a" then "2021": one year's works lettered for some only)
       pairs.push(
-        `${at}“${y0.cite}” and “${y1.cite}”: give every work of one author and year its letter (2021a, 2021b…), in the order of their titles`,
+        `${at}“${y0.cite}”${there} and “${y1.cite}”: give every work of one author and year its letter (2021a, 2021b…), in the order of their titles`,
       )
       misplaced.push(e)
     } else if (
@@ -344,7 +347,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
       y1.title < y0.title
     ) {
       pairs.push(
-        `${at}${y1.by}: “${y1.from}” should come before “${y0.from}”: one author's works of the same year go by title, with a, b after the year`,
+        `${at}${y1.by}: “${y1.from}” should come before “${y0.from}”${there}: one author's works of the same year go by title, with a, b after the year`,
       )
       misplaced.push(e)
     } else if (

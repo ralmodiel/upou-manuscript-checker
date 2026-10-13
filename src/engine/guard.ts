@@ -182,10 +182,36 @@ function scanDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
     return n >= 2 && n >= 0.2 * scope.length
   }
   const share = { all: material(true), own: material(false) }
+  // (the prelims, the chapter starts and the references are judged on their own pages: their pass
+  // is not doubted when no unread page lies among those pages or could be an unseen one of them)
+  const at = (i?: number) => (i === undefined ? undefined : doc.paras[i]?.page)
+  const unreadIn = (from: number, to: number) => [...unread].some((n) => n >= from && n < to)
+  const chPages = s.chapters.map((c) => at(c.heading))
+  const firstCh = chPages[0]
+  const lastCh = chPages[chPages.length - 1]
+  const refPage = at(s.references?.heading)
+  const endPage = appxPage ?? pages.length
+  // (chapters numbered 1, 2, 3... with none missing, and no unread page after the last one before
+  // the references, leave no chapter start unseen)
+  const allChapters =
+    s.chapters.length > 0 &&
+    s.chapters.every((c, i) => c.number === i + 1) &&
+    lastCh !== undefined &&
+    refPage !== undefined &&
+    (s.listedChapters === s.chapters.length || !unreadIn(lastCh + 1, refPage))
+  const scoped = (id: string): boolean | undefined =>
+    id.startsWith('prelims.') && firstCh !== undefined
+      ? unreadIn(0, firstCh)
+      : id.startsWith('chapterStart.') && allChapters
+        ? chPages.some((p) => p === undefined || unread.has(p))
+        : id.startsWith('references.') && refPage !== undefined
+          ? unreadIn(refPage, endPage)
+          : undefined
   for (const f of found)
     if (
       f.status === 'ok' &&
       !PART.test(f.id) &&
+      scoped(f.id) !== false &&
       (/^(extra|appendices)\./.test(f.id) ? share.all : share.own)
     )
       out.set(f.id, PARTLY)

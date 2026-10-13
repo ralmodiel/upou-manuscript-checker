@@ -1,7 +1,7 @@
 // First page of each chapter, and the succeeding pages.
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, weigh, type Ctx, type Finding } from '../report.ts'
-import { bolded, isHeadingish, type Chapter } from '../structure.ts'
+import { bolded, isHeadingish, isTocLine, type Chapter } from '../structure.ts'
 import { garbled, isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, inShape, isList, justified, textSize } from './body.ts'
 import type { Caption } from './figures.ts'
@@ -781,7 +781,16 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     }
     // A caption (or its number alone, then its title) closing the page, its picture or table
     // opening the next one.
-    if (caption && !continued && end.page === p.page && !above && !belowTable) {
+    // (not one with a table's rows right above it on its page: its table is there, the caption
+    // under it, or a line of text that names it)
+    if (
+      caption &&
+      !continued &&
+      end.page === p.page &&
+      !above &&
+      !belowTable &&
+      !(before?.page === p.page && row(before))
+    ) {
       const bare = /^(table|fig(ure)?\.?|chart)\s*\S*\d\S*$/i.test(norm(p.text))
       const title = bare ? doc.paras[p.i + 1] : undefined
       const tail = title && title.page === p.page && !row(title) ? title : p
@@ -1103,8 +1112,30 @@ export function bodyNumbers(
       end < doc.paras.length
         ? (doc.paras[end].page ?? 0) - (doc.paras[end].newPage ? 1 : 0)
         : doc.pages!.length - 1
+    // (a page with no footer opened by a heading in capitals that the table of contents lists, as
+    // the unnumbered parts of a project report, "PROJECT DETAILS", is a chapter's first page too)
+    const key = (t: string) => t.toLowerCase().replace(/[^a-z]/g, '')
+    const listed = new Set(
+      doc.paras
+        .filter((q) => q.page !== undefined && ch1?.page !== undefined && q.page < ch1.page)
+        .filter((q) => isTocLine(q.text))
+        .map((q) => q.text.replace(/(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+)\s*$/i, '').trim())
+        .filter((t) => isUpper(t))
+        .map(key),
+    )
+    const opener = (p: number) => {
+      const top = doc.pages?.[p]?.paras[0]
+      const t = top === undefined ? '' : norm(doc.paras[top].text)
+      return (
+        isUpper(t) &&
+        t.length <= 90 &&
+        !/^appendi/i.test(t) &&
+        listed.has(key(t)) &&
+        !pdfFolio(doc, p)
+      )
+    }
     const pages = Array.from({ length: Math.max(0, p1 - p0 + 1) }, (_, k) => p0 + k).filter(
-      (p) => !firstPages.has(p),
+      (p) => !firstPages.has(p) && (id !== 'body.pageNumbers' || !opener(p)),
     )
     if (!pages.length) return na(id, `No ${name} after a chapter's first page.`)
     const base = ch1?.page
