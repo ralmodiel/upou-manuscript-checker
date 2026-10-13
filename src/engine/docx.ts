@@ -241,6 +241,19 @@ export function readDocx(data: Uint8Array): Doc {
   const fields: { instr: string; result: boolean; page: boolean }[] = []
   let pendingNewPage = true
   let tables = 0
+  // Word tables with lines between the columns: inside borders set on the table or its style, or a
+  // cell's own side border between two cells.
+  const ruled: number[] = []
+  // (a white border does not show)
+  const line = (b: Element | undefined) =>
+    !!b && !/^(nil|none)$/.test(attr(b, 'val') ?? 'none') && !/^f{6}$/i.test(attr(b, 'color') ?? '')
+  const tableStyleV = (id: string | undefined, depth = 0): boolean | undefined => {
+    const s =
+      id && stylesDoc ? all(stylesDoc, 'style').find((x) => attr(x, 'styleId') === id) : undefined
+    if (!s || depth > 10) return undefined
+    const v = kid(kid(kid(s, 'tblPr'), 'tblBorders'), 'insideV')
+    return v ? line(v) : tableStyleV(attr(kid(s, 'basedOn'), 'val'), depth + 1)
+  }
 
   const readParagraph = (p: Element, table: number | undefined, inBox: boolean) => {
     const pPr = kid(p, 'pPr')
@@ -471,6 +484,23 @@ export function readDocx(data: Uint8Array): Doc {
           break
         case 'tbl': {
           const t = tables++
+          const tblPr = kid(c, 'tblPr')
+          const v = kid(kid(tblPr, 'tblBorders'), 'insideV')
+          const inside = v ? line(v) : !!tableStyleV(attr(kid(tblPr, 'tblStyle'), 'val'))
+          // (each edge between two cells: the cells' own side borders decide, else the table's)
+          const side = (tc: Element, a: string, b: string) => {
+            const bs = kid(kid(tc, 'tcPr'), 'tcBorders')
+            return kid(bs, a) ?? kid(bs, b)
+          }
+          const drawn = kids(c, 'tr').some((tr) =>
+            kids(tr, 'tc').some((tc, k, row) => {
+              if (k === row.length - 1) return false
+              const r = side(tc, 'right', 'end')
+              const l = side(row[k + 1], 'left', 'start')
+              return r || l ? line(r) || line(l) : inside
+            }),
+          )
+          if (drawn) ruled.push(t)
           for (const tr of kids(c, 'tr')) for (const tc of kids(tr, 'tc')) block(tc, t)
           break
         }
@@ -551,7 +581,7 @@ export function readDocx(data: Uint8Array): Doc {
     first = last + 1
   }
 
-  return { kind: 'docx', paras, sections, evenOdd, pictures, notes: [] }
+  return { kind: 'docx', paras, sections, evenOdd, pictures, notes: [], ruled }
 }
 
 /** Text of a header or footer, with `{PAGE}` where the page number goes. */

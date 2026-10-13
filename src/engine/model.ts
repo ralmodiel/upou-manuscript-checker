@@ -182,6 +182,8 @@ export interface Doc {
   pictures: Picture[]
   /** Things the reader could not do (scanned pages, unsupported parts), said to the student. */
   notes: string[]
+  /** Word: the tables (by `Para.table`) with lines drawn between their columns. */
+  ruled?: number[]
   /** Hardly any text could be read (a scanned PDF): no item can be judged. */
   unreadable?: boolean
 }

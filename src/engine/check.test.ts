@@ -10,6 +10,7 @@ import { check, FileProblem, sniff } from './check.ts'
 import { ITEMS } from './checklist.ts'
 import { guard, MISREAD } from './guard.ts'
 import type { Ctx } from './report.ts'
+import { titleCase } from './rules/figures.ts'
 import { garbledVariant, parseFolio } from './rules/numbering.ts'
 import { readsOddly } from './text.ts'
 
@@ -164,7 +165,7 @@ describe('check', () => {
       opts,
     )
     expect(finding(r, 'references.order').details?.join(' ')).toMatch(/earliest year/)
-    // Three entries, the undated one included, and nothing of the APA setup wrong in them.
+    // Three entries, the undated one included.
     expect(finding(r, 'references.apa').status).toBe('ok')
     expect(finding(r, 'references.apa').message).toMatch(/The 3 references/)
   })
@@ -745,6 +746,46 @@ describe('check', () => {
       opts,
     )
     expect(finding(jumbled, 'figures.apa').details?.join(' ')).toMatch(/not numbered in order/)
+  })
+
+  it('checks the APA setup of figures and tables: title case, flush left, notes, table lines', async () => {
+    expect(titleCase('Profile of Respondents According to Age')).toBeUndefined()
+    expect(titleCase('Abundance of Oryza sativa in Two Sites')).toBeUndefined()
+    expect(titleCase('Profile of the respondents')).toBe('sentence')
+    expect(titleCase('DISTRIBUTION OF RESPONDENTS')).toBe('caps')
+    const cell = (t: string) => `<w:tc>${para(t)}</w:tc>`
+    const table = (borders: string) =>
+      `<w:tbl><w:tblPr><w:tblBorders>${borders}</w:tblBorders></w:tblPr><w:tr>${cell('Age')}${cell('Count')}</w:tr></w:tbl>`
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('Table 1'),
+        para('Profile of the respondents by age group'),
+        table('<w:insideV w:val="single"/>'),
+        para('Note: Counts from the survey.'),
+        para('Figure 1', '<w:jc w:val="center"/>'),
+        para('A Map of the Study Area', '<w:jc w:val="center"/>'),
+      ),
+      opts,
+    )
+    const apa = finding(r, 'figures.apa')
+    expect(apa.status).toBe('fix')
+    const d = apa.details?.join(' ') ?? ''
+    expect(d).toMatch(/title case.*: Table 1 \(“Profile/)
+    expect(d).toMatch(/centred.*: Figure 1/)
+    expect(d).toMatch(/“Note:”.*Table 1/)
+    expect(d).toMatch(/vertical lines.*: Table 1/)
+    const good = await check(
+      'thesis.docx',
+      thesis(
+        para('Table 1'),
+        para('Profile of the Respondents by Age Group'),
+        table('<w:insideH w:val="single"/><w:insideV w:val="nil"/>'),
+        `<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Note.</w:t></w:r><w:r><w:t xml:space="preserve"> Counts from the survey.</w:t></w:r></w:p>`,
+      ),
+      opts,
+    )
+    expect(finding(good, 'figures.apa').details ?? []).toEqual([])
   })
 
   it('leaves a missing biographical sketch and dedication to the student outside the MDC', async () => {
