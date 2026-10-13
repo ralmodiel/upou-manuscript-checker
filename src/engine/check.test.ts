@@ -10,7 +10,7 @@ import { check, FileProblem, sniff } from './check.ts'
 import { ITEMS } from './checklist.ts'
 import { guard, MISREAD } from './guard.ts'
 import type { Ctx } from './report.ts'
-import { parseFolio } from './rules/numbering.ts'
+import { garbledVariant, parseFolio } from './rules/numbering.ts'
 import { readsOddly } from './text.ts'
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -1050,6 +1050,19 @@ describe('consistency guard', () => {
   it('reads an ellipsis inside the closing quotation mark of a footer', () => {
     expect(parseFolio('“A Study of Radio…” 12')).toMatchObject({ ellipsis: true, number: '12' })
     expect(parseFolio('A Study of Radio 12')).toMatchObject({ ellipsis: false })
+  })
+
+  it('splits a page number run into a two-letter last word of the footer', () => {
+    const words = new Set(['study', 'of', 'radio', 'at'])
+    expect(parseFolio('A Study of Radio at100', words)).toMatchObject({
+      title: 'A Study of Radio at',
+      number: '100',
+    })
+  })
+
+  it('tells a scan-misread footer title from a changed one', () => {
+    expect(garbledVariant('Le4rning in Ra:dio Schools', 'Learning in Radio Schools')).toBe(true)
+    expect(garbledVariant('Teaching in Radio Schools', 'Learning in Radio Schools')).toBe(false)
   })
 
   it('turns findings that rest on scanned pages with a machine-read text layer to review', () => {

@@ -33,6 +33,7 @@ import {
   wordFolioAt,
   type Problem,
   type Want,
+  twoTitles,
 } from './numbering.ts'
 
 // The UP seal in the template: its file's SHA-256 and its difference hash (scripts/probe/seal-hash.mjs).
@@ -1236,12 +1237,14 @@ function folioCheck(
         doc,
         Array.from({ length: last }, (_, p) => p),
       )
-      if (main && titleKey(folio.title) !== main.key)
+      if (main && titleKey(folio.title) !== main.key) {
+        const [a, b] = twoTitles(folio.title, main.shown)
         problems.push({
           type: garbledVariant(folio.title, main.shown) ? 'garbled' : 'changed',
           page,
-          text: `${pagesText([page])}: the footer has another title, “${quote(folio.title, 40)}”, than the other preliminary pages (“${quote(main.shown, 40)}”); keep one shortened title`,
+          text: `${pagesText([page])}: the footer has another title, “${a}”, than the other preliminary pages (“${b}”); keep one shortened title`,
         })
+      }
     }
     // A misspelt title alone is for the student to look at, not a sure fault.
     if (lookOnly(problems))

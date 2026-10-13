@@ -909,6 +909,15 @@ function splitBands(
       )
         foot.add(l)
     }
+    // A foot whose number stands on a line of its own over the running title: what is over the
+    // number is the text's end (a contents line, a table's rows), not the foot.
+    const num = lines.findLastIndex(
+      (l, k) =>
+        foot.has(l) &&
+        /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text) &&
+        lines.slice(k + 1).some((q) => running.has(q) && /\p{L}/u.test(q.text)),
+    )
+    for (const l of lines.slice(0, Math.max(0, num))) if (!running.has(l)) foot.delete(l)
     // A foot of its own kind (a title page's, set once): the last line and the lines tight above
     // it, apart from the text over them.
     const last = lines.at(-1)
@@ -958,7 +967,11 @@ function splitBands(
     else if (
       !below &&
       (l.y > height - 100 || (l.y > height - 130 && (!above || l.y - above.y >= 18))) &&
-      /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text)
+      (/^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text) ||
+        // (so is a title, its ellipsis and number, set smaller than the text over it)
+        (!!above &&
+          l.size < above.size - 0.8 &&
+          /\p{L}.*(…|\.{2,})\s*([ivxlcdm]+|\d{1,3})\s*$/iu.test(l.text)))
     )
       footer.push(l)
     // So is a shortened title in capitals with its number, last on the page and set apart

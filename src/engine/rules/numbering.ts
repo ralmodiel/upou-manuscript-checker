@@ -304,9 +304,10 @@ const titleWords = (t: string) =>
     .toLowerCase()
     .match(/[\p{L}\p{N}]+/gu) ?? []
 
-/** Letters a font printed wrongly: a capital inside a word ("LeaYninN") or a symbol against one. */
+/** Letters a font printed wrongly: a capital inside a word ("LeaYninN") or a symbol against one;
+ *  or a scan's misreading, a digit or colon inside a word ("Le4rn:ng"). */
 const oddLetters = (t: string) =>
-  /\p{L}[\\^|~[\]{}]|[\\^|~[\]{}]\p{L}/u.test(t) ||
+  /\p{L}[\\^|~[\]{}]|[\\^|~[\]{}]\p{L}|\p{L}[:\d]\p{L}/u.test(t) ||
   norm(t)
     .split(' ')
     .some((w) => /\p{Ll}\p{Lu}/u.test(w.replace(/^(Mc|Mac)/, '')))
@@ -366,25 +367,31 @@ export function prelimTitle(doc: Doc, chapter: number): TitleRef | undefined {
   return best && best[1].n > total / 2 ? { key: best[0], shown: best[1].shown } : undefined
 }
 
+/** Two footer titles as quoted in a message: by their ends where their starts read the same. */
+export function twoTitles(a: string, b: string): [string, string] {
+  const [qa, qb] = [quote(a, 40), quote(b, 40)]
+  return qa === qb ? [clip(norm(a)), clip(norm(b))] : [qa, qb]
+}
+
 /** Footers with another title than most of `pages` carry, each title once with its pages: one
  *  thesis, one title (one odd page is one change, not two). */
 function titleChanges(doc: Doc, pages: number[], thesis?: string, ref?: TitleRef): Problem[] {
   const groups = titleGroups(doc, pages, thesis)
+  const change = (g: { shown: string; pages: number[] }, main: string, whose: string) => {
+    const [a, b] = twoTitles(g.shown, main)
+    return {
+      type: garbledVariant(g.shown, main) ? ('garbled' as const) : ('changed' as const),
+      page: g.pages[0],
+      text: `${pagesText(g.pages)}: the footer has another title, “${a}”, than the ${whose} (“${b}”); keep one shortened title`,
+    }
+  }
   // Against the title the preliminary pages carry, when these pages are a later part.
   if (ref)
     return groups
       .filter((g) => g.key !== ref.key)
-      .map((g) => ({
-        type: garbledVariant(g.shown, ref.shown) ? ('garbled' as const) : ('changed' as const),
-        page: g.pages[0],
-        text: `${pagesText(g.pages)}: the footer has another title, “${quote(g.shown, 40)}”, than the preliminary pages (“${quote(ref.shown, 40)}”); keep one shortened title`,
-      }))
+      .map((g) => change(g, ref.shown, 'preliminary pages'))
   const [main, ...others] = groups
-  return others.map((g) => ({
-    type: garbledVariant(g.shown, main.shown) ? ('garbled' as const) : ('changed' as const),
-    page: g.pages[0],
-    text: `${pagesText(g.pages)}: the footer has another title, “${quote(g.shown, 40)}”, than the other pages (“${quote(main.shown, 40)}”); keep one shortened title`,
-  }))
+  return others.map((g) => change(g, main.shown, 'other pages'))
 }
 
 // ---- PDF ----
@@ -399,7 +406,8 @@ function docWords(doc: Doc): Set<string> {
   if (!w) {
     w = new Set()
     for (const p of doc.paras)
-      for (const m of p.text.matchAll(/\p{L}{3,}/gu)) w.add(m[0].toLowerCase())
+      // (two letters too: a title ending in "at" or "of" before its number, "at100")
+      for (const m of p.text.matchAll(/\p{L}{2,}/gu)) w.add(m[0].toLowerCase())
     wordCache.set(doc, w)
   }
   return w
@@ -479,7 +487,13 @@ export function pdfFolio(doc: Doc, page: number): Folio | undefined {
   const pg = doc.pages?.[page]
   const words = docWords(doc)
   const top = parseFolio(pg?.header ?? '')
-  let foot = parseFolio(pg?.footer ?? '', words)
+  // (the text's last words on the footer's line, set apart from it in small letters: "for the
+  // ⇥Title 12", are no part of it; a footer of one line only: a title wraps in small letters)
+  const text = pg?.footer ?? ''
+  let foot = parseFolio(
+    text.includes('\n') ? text : text.replace(/^\p{Ll}[^\t]{0,30}\t(?=.*\p{L})/u, ''),
+    words,
+  )
   // (a footer ending in a number may still have it broken over two lines: "vii" and "i")
   if (foot && (pg?.footerLines.length ?? 0) > 1)
     foot = wrappedFolio(pg!.footerLines, words, foot.number !== undefined) ?? foot
@@ -570,6 +584,18 @@ export function auditPdf(
   ref?: TitleRef,
 ): Problem[] {
   const unread = noTextPages(doc)
+  const noLayer = (p: number) => [
+    { type: 'unread' as const, page: p, text: `${pagesText([p])}: no text layer` },
+  ]
+  // A page that is a picture under a footer in text has that footer judged all the same; found
+  // right, the page still says it was not read through.
+  const pictured = (p: number) => {
+    const found = [
+      ...judge(pdfFolio(doc, p), want(p), p),
+      ...againstTitle(pdfFolio(doc, p), thesis, p),
+    ]
+    return pdfFolio(doc, p)?.number !== undefined && found.length ? found : noLayer(p)
+  }
   // A wholly blank page (no text, no picture, no footer) is the blank-pages item's.
   const inked = new Set(doc.paras.flatMap((q) => (q.lines ?? []).map((l) => l.page)))
   const blank = (p: number) =>
@@ -583,7 +609,7 @@ export function auditPdf(
       .filter((p) => !blank(p))
       .flatMap((p) =>
         unread.has(p)
-          ? [{ type: 'unread' as const, page: p, text: `${pagesText([p])}: no text layer` }]
+          ? pictured(p)
           : [...judge(pdfFolio(doc, p), want(p), p), ...againstTitle(pdfFolio(doc, p), thesis, p)],
       ),
     ...titleChanges(doc, pages, thesis, ref),
