@@ -324,7 +324,20 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
   // A PDF's alignment is read from where its lines end: a few ragged paragraphs among justified
   // ones may be a table's text, a quotation or a list read as body text, or text justified to a
   // narrower edge. Only a large share of the body text is firm evidence.
-  const strong = ctx.doc.kind === 'pdf' ? share >= 0.15 : bad.length >= 2 || share >= 0.1
+  // Firm too: two paragraphs or more whose lines end at many different points, a few points or more
+  // short of the margin (a ragged edge, as left-aligned text has), not at one narrower edge of their
+  // own (a quotation, text justified to a narrower width).
+  const ragged = (p: Para) => {
+    const right = ctx.doc.pages?.[p.lines?.[0]?.page ?? 0]?.margins?.right
+    const ls = (p.lines ?? []).slice(0, -1)
+    if (!right || ls.length < 3 || garbled(p.text)) return false
+    const own = Math.max(...ls.map((a) => ls.filter((l) => Math.abs(l.x1 - a.x1) <= 1.5).length))
+    return ls.filter((l) => l.x1 < right - 5).length >= 3 && own < 0.5 * ls.length
+  }
+  const strong =
+    ctx.doc.kind === 'pdf'
+      ? share >= 0.15 || bad.filter(ragged).length >= 2
+      : bad.length >= 2 || share >= 0.1
   // One paragraph with one short line before its last: left-aligned, or a line break typed there.
   const one = bad.length === 1 ? short(bad[0]).filter((l) => l !== bad[0].lines?.at(-1)) : []
   if (one.length === 1)
@@ -410,17 +423,21 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
   // A PDF's spacing is read from the gaps between its lines: a table's cells, a caption, a note or
   // a heading read as body text can look single-spaced. Firm evidence is a paragraph of running
   // text, three lines or more and not in italics, ending a sentence, clearly single or 1.5-spaced.
+  // Firm too: many paragraphs plainly short of double (a whole list's items, or ten or more).
+  const plain = bad.filter((p) => p.spacing! <= 1.55)
   const strong =
-    (bad.length >= 2 || share >= 0.1 || solid) &&
-    (ctx.doc.kind !== 'pdf' ||
-      bad.some(
-        (p) =>
-          (p.lines?.length ?? 0) >= 3 &&
-          p.spacing! <= 1.55 &&
-          !isList(p) &&
-          !p.runs.filter((r) => r.text.trim()).every((r) => r.italic) &&
-          /[.!?]["”’)]*$/.test(norm(p.text)),
-      ))
+    plain.filter(isList).length >= 6 ||
+    plain.length >= 10 ||
+    ((bad.length >= 2 || share >= 0.1 || solid) &&
+      (ctx.doc.kind !== 'pdf' ||
+        bad.some(
+          (p) =>
+            (p.lines?.length ?? 0) >= 3 &&
+            p.spacing! <= 1.55 &&
+            !isList(p) &&
+            !p.runs.filter((r) => r.text.trim()).every((r) => r.italic) &&
+            /[.!?]["”’)]*$/.test(norm(p.text)),
+        )))
   return weigh(
     strong,
     id,

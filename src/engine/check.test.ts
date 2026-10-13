@@ -1357,6 +1357,11 @@ describe('evidence strength', () => {
     expect(
       justified(pdfCtx(40, 10), 'body.justified', pdfCtx(40, 10).doc.paras, 'the chapters').status,
     ).toBe('fix')
+    // (two paragraphs whose lines end at many points short of the margin: ragged, firm evidence)
+    const ctx = pdfCtx(40, 2)
+    for (const p of ctx.doc.paras.slice(0, 2))
+      p.lines = [500, 520, 490, 530, 300].map((x1, k) => line(100 + 24 * k, x1))
+    expect(justified(ctx, 'body.justified', ctx.doc.paras, 'the chapters').status).toBe('fix')
   })
 
   it('fixes PDF spacing only on a clear single-spaced paragraph of running text', async () => {
