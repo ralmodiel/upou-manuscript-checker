@@ -117,20 +117,42 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
     if (!page || !line) return 'unknown'
     const end = (title ?? p).lines?.findLast((l) => l.page === n) ?? line
     const wide = (b: Box) => b.x1 - b.x0 > 40
+    const top = line.y - line.size
+    // (a picture whose frame takes the caption in: with its white margins, the caption may stand
+    // above or below what shows; not a picture filling the page)
+    const over = (b: Box) =>
+      wide(b) && b.y0 < line.y - 2 && b.y1 > top && b.y1 - b.y0 < 0.8 * page.height
+    // (a picture above with another caption right over it is that caption's figure)
+    const taken = (b: Box) =>
+      page.paras.some((i) => {
+        const q = doc.paras[i]
+        const m = LABEL.exec(norm(q.text))
+        // (a caption, not a sentence about a figure: "Figure 2 shows…")
+        if (i >= p.i || !m || norm(q.text).length > 250 || /^\p{Ll}/u.test(m[3])) return false
+        const last = (i + 1 < p.i && !m[3] ? doc.paras[i + 1] : q).lines
+          ?.filter((l) => l.page === n)
+          .at(-1)
+        return !!last && b.y0 - last.y >= -2 && b.y0 - last.y < 5 * line.size
+      })
     // How far each picture on the page stands below the caption, or above it.
     const below = page.images.filter((b) => wide(b) && b.y0 >= line.y - 2).map((b) => b.y0 - end.y)
     const above = page.images
-      .filter((b) => wide(b) && b.y1 <= line.y - line.size)
-      .map((b) => line.y - line.size - b.y1)
+      .filter((b) => wide(b) && b.y1 <= top && !taken(b))
+      .map((b) => top - b.y1)
     // A picture right by the caption is its figure, whatever else the pages hold.
     const near = (gaps: number[]) => gaps.some((g) => g < 5 * line.size)
     if (near(below)) return 'after'
-    if (near(above)) return 'before'
-    // A caption closing its page, and a picture opening the next one.
+    // (a caption between two pictures, the one below a little further off: either may be its own)
+    if (near(above))
+      return below.some((g) => g < 12 * line.size) || page.images.some(over) ? 'unknown' : 'before'
+    if (page.images.some(over)) return 'unknown'
+    // A caption closing its page (footnotes in smaller type aside), and a picture opening the next.
     const next = doc.pages?.[n + 1]
     const nextText = next && doc.paras[next.paras[0]]?.lines?.[0]
     if (
-      page.paras.at(-1) === (title ?? p).i &&
+      page.paras
+        .filter((i) => i > (title ?? p).i)
+        .every((i) => (doc.paras[i].lines?.[0]?.size ?? 0) < line.size - 1) &&
       next?.images.some((b) => wide(b) && (!nextText || b.y1 <= nextText.y))
     )
       return 'after'
@@ -253,7 +275,19 @@ export function findCaptions(ctx: Ctx): Caption[] {
             (b) => b.x1 - b.x0 > 100 && b.y0 >= p.lines![0].y - 2,
           )
         )) ||
-      (!m[3] && inShape(ctx, p)) ||
+      // (a label in a drawn box is a diagram's own, unless the box frames the whole figure: the
+      // label in bold, in the text's type, its title right under it at the same margin)
+      (!m[3] &&
+        inShape(ctx, p) &&
+        !(
+          bolded(p) &&
+          (p.lines?.[0]?.size ?? 0) >= size - 1 &&
+          doc.paras[k + 1]?.page === p.page &&
+          !doc.paras[k + 1].inTable &&
+          !doc.paras[k + 1].text.includes('\t') &&
+          norm(doc.paras[k + 1].text).split(' ').length >= 3 &&
+          Math.abs((doc.paras[k + 1].lines?.[0]?.x0 ?? -99) - (p.lines?.[0]?.x0 ?? 0)) <= 3
+        )) ||
       /^(fig(ure)?\.?|table|chart)\s*\d+[A-Za-z]{2,}/i.test(t)
     )
       continue
@@ -290,7 +324,8 @@ export function findCaptions(ctx: Ctx): Caption[] {
         if (q.inTable || q.image) break
         if (norm(q.text)) {
           if (
-            norm(q.text).length <= 250 &&
+            // (a long title set in italics is a title still)
+            norm(q.text).length <= (italic(q) && !q.plain && !faceUnknown(q) ? 450 : 250) &&
             (!LABEL.test(norm(q.text)) || (/^chart/i.test(norm(q.text)) && !/^chart/i.test(m[1])))
           )
             title = q
@@ -361,8 +396,9 @@ const names = (cs: Caption[]) => {
 }
 const at = (c: Caption) => ({ page: c.para.page, quote: quote(c.para.text, 50) })
 
-/** Tables and pictures in the body that no caption sits beside (Word). */
-function unlabelled(ctx: Ctx, caps: Caption[]): string[] {
+/** Tables and pictures in the body that no caption sits beside, and (PDF) pages whose pictures
+ *  may belong to a figure captioned elsewhere. */
+function unlabelled(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe: number[] } {
   const { doc } = ctx
   if (doc.kind === 'pdf') return unlabelledPictures(ctx, caps)
   const [start, end] = bodyRange(ctx)
@@ -379,17 +415,17 @@ function unlabelled(ctx: Ctx, caps: Caption[]): string[] {
     } else if (p.image && !p.inTable && !near(k))
       out.push(`a picture near “${quote(doc.paras[k + 1]?.text ?? '', 40)}”`)
   }
-  return out
+  return { sure: out, maybe: [] }
 }
 
 /** PDF: pictures an inch or more each way on the chapters' pages with no caption beside them:
  *  none on their page, nor one closing the page before (when the picture opens its page) or
  *  opening the page after (when it closes its page). Logos, symbols and the seal are smaller or
  *  elsewhere; scanned documents in the appendices need no caption. */
-function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
+function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe: number[] } {
   const { doc, s } = ctx
   const pages = doc.pages ?? []
-  if (!s.chapters.length) return []
+  if (!s.chapters.length) return { sure: [], maybe: [] }
   const from = doc.paras[s.chapters[0].heading].page ?? 0
   const end = s.references?.heading ?? s.appendicesHeading ?? s.appendices[0]?.heading
   const to = end === undefined ? pages.length : (doc.paras[end].page ?? pages.length)
@@ -404,6 +440,8 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
   const captioned = (n: number, i?: number) =>
     caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i || c.title?.i === i))
   const out: number[] = []
+  const maybe: number[] = []
+  const size = textSize(doc.paras)
   const unread = noTextPages(doc)
   for (const pg of pages.slice(from, to)) {
     // (a page of picture or drawn letters: its captions cannot be read)
@@ -455,13 +493,37 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): string[] {
           b.y0 >= (bottoms.get(pg.n) ?? -Infinity) && captioned(pg.n + 1, pages[pg.n + 1]?.paras[0])
         ),
     )
-    if (lonely) out.push(pg.n)
+    if (!lonely) continue
+    // Not sure: a page of pictures under at most a short label each, after a captioned figure
+    // closing the page before (one figure running over pages), or a picture whose page names a
+    // figure or table no caption carries (its number may be drawn in the picture).
+    const texts = pg.paras.map((i) => doc.paras[i])
+    const before = pages[pg.n - 1]
+    const lastPic = before?.images.filter((b) => Math.min(b.x1 - b.x0, b.y1 - b.y0) >= 72).at(-1)
+    const runsOn =
+      (captioned(pg.n - 1) || maybe.includes(pg.n - 1)) &&
+      !!lastPic &&
+      lastPic.y1 >= (bottoms.get(pg.n - 1) ?? Infinity) - 60 &&
+      // (running text may follow under the figure's last picture)
+      texts.every(
+        (q) =>
+          (q.lines?.[0]?.y ?? 0) > Math.max(...big.map((b) => b.y1)) ||
+          ((q.lines?.length ?? 0) <= 2 && norm(q.text).length < 160) ||
+          (q.lines?.[0]?.size ?? size) < size - 1,
+      )
+    const named = texts.some((q) =>
+      [...q.text.matchAll(/\b(Figure|Table)\s+(\d+)\b/g)].some(
+        (x) => !caps.some((c) => c.kind === x[1].toLowerCase() && c.number === x[2]),
+      ),
+    )
+    if (runsOn || named) maybe.push(pg.n)
+    else out.push(pg.n)
   }
-  return out.map((n) => `a picture on ${pagesText([n])}`)
+  return { sure: out.map((n) => `a picture on ${pagesText([n])}`), maybe }
 }
 
 export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
-  const lonely = unlabelled(ctx, caps)
+  const { sure: lonely, maybe } = unlabelled(ctx, caps)
   if (!caps.length) {
     if (lonely.length)
       return [
@@ -471,6 +533,19 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
         fix(
           'figures.title',
           'Add a figure/table title (in italics) right below each figure/table number.',
+        ),
+        review('figures.apa', 'Check the APA style figure and table setup.'),
+      ]
+    if (maybe.length)
+      return [
+        review(
+          'figures.number',
+          `Check the pictures on ${pagesText(maybe.slice(0, 6))}: give each figure a number (in bold) above it, unless the number is inside the picture.`,
+          { where: maybe.slice(0, 5).map((page) => ({ page })) },
+        ),
+        review(
+          'figures.title',
+          'Check that each figure has a title (in italics) right below its number.',
         ),
         review('figures.apa', 'Check the APA style figure and table setup.'),
       ]
@@ -506,11 +581,18 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           where: spread([...below, ...notBold].map(at)),
         },
       )
-    : unsure.length
+    : unsure.length || maybe.length
       ? review(
           'figures.number',
-          `Check that ${names(unsure)} ${unsure.length === 1 ? 'has its' : 'have their'} number above the figure/table: this file does not show where ${unsure.length === 1 ? 'it stands' : 'they stand'}.`,
-          { where: spread(unsure.map(at)) },
+          [
+            unsure.length &&
+              `Check that ${names(unsure)} ${unsure.length === 1 ? 'has its' : 'have their'} number above the figure/table: this file does not show where ${unsure.length === 1 ? 'it stands' : 'they stand'}.`,
+            maybe.length &&
+              `Check that the ${maybe.length === 1 ? 'picture' : 'pictures'} on ${pagesText(maybe.slice(0, 6))} ${maybe.length === 1 ? 'belongs' : 'belong'} to a numbered figure (one running on from the page before, or with its number inside the picture); if not, give ${maybe.length === 1 ? 'it a number' : 'each a number'} above it.`,
+          ]
+            .filter(Boolean)
+            .join(' '),
+          { where: spread([...unsure.map(at), ...maybe.map((page) => ({ page }))]) },
         )
       : plain
         ? review(
@@ -561,7 +643,16 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     const texts = found.map((f) => f.text)
     const dup = texts.filter((t, k) => texts.indexOf(t) !== k)
     if (dup.length) {
-      order.push(`${name} ${dup[0]} is used twice.`)
+      // (numbers starting over in the appendices: an appended document may number its own)
+      const back = ctx.s.appendicesHeading ?? ctx.s.appendices[0]?.heading
+      const inBack = (t: string) =>
+        back !== undefined &&
+        caps.filter((c) => c.kind === kind && c.number === t).every((c, k) => !k || c.para.i > back)
+      if (dup.every(inBack))
+        odd.push(
+          `${name} ${dup[0]} is used again in the appendices: number them on from the chapters (or as ${name} A1), unless the appendix is a document of its own.`,
+        )
+      else order.push(`${name} ${dup[0]} is used twice.`)
       continue
     }
     const list = `${texts.slice(0, 8).join(', ')}`

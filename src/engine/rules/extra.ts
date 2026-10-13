@@ -16,6 +16,16 @@ const PLACEHOLDERS: [RegExp, string][] = [
     /\((student as author|(acceptance|title|permission) page for [^)]*)\)/i,
     'the template’s bracketed label (“(Student as Author)”, “(Acceptance page for …)”)',
   ],
+  // A role in brackets where the names go: "thanks to (Thesis Panel)".
+  [
+    /\((thesis|dissertation|capstone|project|research) (panel|committee|adviser|advisor)\)/i,
+    'a role in brackets in place of names (“(Thesis Panel)”)',
+  ],
+  // The template's instructions to the writer.
+  [
+    /acceptance page refers to the page|it should contain the following statement/i,
+    'the template’s instructions (“The acceptance page refers to…”)',
+  ],
   // The degree's name left as the word "Course" (or "Program").
   [
     /for the degree,?\s*(course|program)[.:]*$/i,
@@ -93,7 +103,20 @@ function blankPages(ctx: Ctx): Finding {
   const { doc } = ctx
   if (doc.kind === 'pdf') {
     // A page holding only the end of a paragraph begun on the page before is not blank.
-    const inked = new Set(doc.paras.flatMap((p) => (p.lines ?? []).map((l) => l.page)))
+    // (a page number alone, not read as the footer, on a page with no drawing, is no content either)
+    const on = new Map<number, Para[]>()
+    for (const p of doc.paras)
+      for (const n of new Set((p.lines ?? []).map((l) => l.page)))
+        on.set(n, [...(on.get(n) ?? []), p])
+    const lone = (n: number) => {
+      const ps = on.get(n) ?? []
+      return (
+        ps.length === 1 &&
+        (doc.pages?.[n]?.marks.length ?? 99) < 10 &&
+        /^([1-9]\d{0,3}|[ivxlc]{1,7})$/i.test(norm(ps[0].text))
+      )
+    }
+    const inked = new Set([...on.keys()].filter((n) => !lone(n)))
     const drawn = noTextPages(doc)
     const blank = (doc.pages ?? [])
       .filter(
