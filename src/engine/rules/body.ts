@@ -142,6 +142,7 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !apart(ctx, p) &&
       // A footnote: set smaller than the text.
       !(p.lines?.[0] && size && p.lines[0].size < size - 1) &&
+      !footnote(paras, p) &&
       // A table's title: under its label, or in italics above its table (APA).
       !LABEL_ONLY.test(norm(paras[p.i - 1]?.text ?? '')) &&
       !(
@@ -153,6 +154,23 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       )
     )
   })
+}
+
+/** PDF: a footnote at the foot of its page, opening with its mark in small raised type ("¹ The
+ *  office…"), only footnotes below it on the page. */
+function footnote(paras: Para[], p: Para): boolean {
+  if (!p.lines) return false
+  const runs = p.runs.filter((r) => r.text.trim())
+  const [mark, text] = runs
+  if (
+    !mark?.size ||
+    !text?.size ||
+    !/^(\d{1,3}|[*†‡])$/.test(mark.text.trim()) ||
+    mark.size > 0.75 * text.size
+  )
+    return false
+  const next = paras[p.i + 1]
+  return !next || next.page !== p.page || footnote(paras, next)
 }
 
 const mode = (xs: number[]) => {

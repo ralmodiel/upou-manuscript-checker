@@ -12,7 +12,7 @@ import {
   type Prelim,
   type PrelimKey,
 } from '../structure.ts'
-import { list, norm, quote, roman } from '../text.ts'
+import { garbled, list, norm, quote, roman } from '../text.ts'
 import { bodyParas, doubleSpaced, justified } from './body.ts'
 import { readTitlePage, thesisTitle } from './front.ts'
 import type { Caption } from './figures.ts'
@@ -228,9 +228,16 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
     statuses.push('review')
   }
   const abstract = s.prelims.find((p) => p.key === 'abstract')
-  if (abstract && !doc.paras.slice(abstract.start, abstract.end).some(hasKeywords)) {
-    issues.push('Place the keywords right below the abstract (Keywords: …).')
-    statuses.push('fix')
+  const abstractParas = abstract ? doc.paras.slice(abstract.start, abstract.end) : []
+  if (abstract && !abstractParas.some(hasKeywords)) {
+    // (a line of the abstract in a font read as other letters may be the keywords line)
+    const unread = abstractParas.some((p) => garbled(p.text))
+    issues.push(
+      unread
+        ? 'Check that the keywords are right below the abstract (Keywords: …): some of its text could not be read.'
+        : 'Place the keywords right below the abstract (Keywords: …).',
+    )
+    statuses.push(unread ? 'review' : 'fix')
   }
   if (!issues.length)
     return ok(

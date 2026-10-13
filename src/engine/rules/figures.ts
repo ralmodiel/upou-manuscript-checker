@@ -100,6 +100,7 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
   if (doc.kind === 'pdf') {
     // A table's rows read as lines with wide gaps between the cells (tabs); a table pasted as a
     // picture is found like a figure.
+    let rowsBefore = false
     if (kind === 'table') {
       const row = (q: Para) => q.text.includes('\t')
       if (doc.paras.slice(from, from + 3).some(row)) return 'after'
@@ -107,14 +108,14 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
       for (let k = p.i - 1; k >= Math.max(0, p.i - 3); k--) {
         const q = doc.paras[k]
         if (q.page !== p.page) break
-        if (row(q)) return 'before'
-        if ((q.lines?.length ?? 0) >= 3) break
+        rowsBefore = row(q)
+        if (rowsBefore || (q.lines?.length ?? 0) >= 3) break
       }
     }
     const n = p.page ?? -1
     const page = doc.pages?.[n]
     const line = p.lines?.[0]
-    if (!page || !line) return 'unknown'
+    if (!page || !line) return rowsBefore ? 'before' : 'unknown'
     const end = (title ?? p).lines?.findLast((l) => l.page === n) ?? line
     const wide = (b: Box) => b.x1 - b.x0 > 40
     const top = line.y - line.size
@@ -141,7 +142,9 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
       .map((b) => top - b.y1)
     // A picture right by the caption is its figure, whatever else the pages hold.
     const near = (gaps: number[]) => gaps.some((g) => g < 5 * line.size)
+    // (a table pasted as a picture right under the caption is its table, not the rows above)
     if (near(below)) return 'after'
+    if (rowsBefore) return 'before'
     // (a caption between two pictures, the one below a little further off: either may be its own)
     if (near(above))
       return below.some((g) => g < 12 * line.size) || page.images.some(over) ? 'unknown' : 'before'
@@ -441,6 +444,8 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
     caps.some((c) => c.para.page === n && (i === undefined || c.para.i === i || c.title?.i === i))
   const out: number[] = []
   const maybe: number[] = []
+  // Pages whose pictures go on from a figure captioned on the page before.
+  const carried = new Set<number>()
   const size = textSize(doc.paras)
   const unread = noTextPages(doc)
   for (const pg of pages.slice(from, to)) {
@@ -493,7 +498,10 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
           b.y0 >= (bottoms.get(pg.n) ?? -Infinity) && captioned(pg.n + 1, pages[pg.n + 1]?.paras[0])
         ),
     )
-    if (!lonely) continue
+    if (!lonely) {
+      if (big.length) carried.add(pg.n)
+      continue
+    }
     // Not sure: a page of pictures under at most a short label each, after a captioned figure
     // closing the page before (one figure running over pages), or a picture whose page names a
     // figure or table no caption carries (its number may be drawn in the picture).
@@ -501,9 +509,10 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
     const before = pages[pg.n - 1]
     const lastPic = before?.images.filter((b) => Math.min(b.x1 - b.x0, b.y1 - b.y0) >= 72).at(-1)
     const runsOn =
-      (captioned(pg.n - 1) || maybe.includes(pg.n - 1)) &&
+      (captioned(pg.n - 1) || maybe.includes(pg.n - 1) || carried.has(pg.n - 1)) &&
       !!lastPic &&
-      lastPic.y1 >= (bottoms.get(pg.n - 1) ?? Infinity) - 60 &&
+      // (a page of the picture alone, no text, runs on whatever it ends at)
+      lastPic.y1 >= (bottoms.get(pg.n - 1) ?? -Infinity) - 60 &&
       // (running text may follow under the figure's last picture)
       texts.every(
         (q) =>

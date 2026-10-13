@@ -334,7 +334,16 @@ export function findStructure(doc: Doc): Structure {
         ap &&
         t.length <= 100 &&
         !/^(table|fig(ure|\.)?)\s*\d/i.test(ap[3]) &&
-        !(p.text.includes('\t') && !ap[2] && ap[3])
+        !(p.text.includes('\t') && !ap[2] && ap[3]) &&
+        // (an appendix carried over its pages, "Appendix C: Title (Cont.)", is the same one)
+        !/\(cont(inued|['’]d|\.)?\)\.?$/i.test(ap[3]) &&
+        // (nor, among the preliminary pages, a list of the appendices headed "Appendix")
+        !(
+          !s.chapters.length &&
+          !s.references &&
+          !ap[2] &&
+          paras.slice(p.i + 1, p.i + 4).some((q) => q.page === p.page && isTocLine(q.text))
+        )
       )
         s.appendices.push({ heading: p.i, start: p.i, end: paras.length, label: t, mark: ap[2] })
     }

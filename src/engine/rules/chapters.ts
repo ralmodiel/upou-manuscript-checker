@@ -334,7 +334,16 @@ function title(ctx: Ctx): Finding {
     }
     const p = paras[c.titlePara]
     // The title after a line break in the label's paragraph, or a paragraph of its own.
-    const t = c.titlePara === c.heading ? shown(p).split('\n').slice(1).join(' ') : shown(p)
+    let t = c.titlePara === c.heading ? shown(p).split('\n').slice(1).join(' ') : shown(p)
+    // PDF: a subheading read into the title's paragraph ("SUMMARY OF FINDINGS" / "Summary"): the
+    // title is its lines in capitals.
+    const k =
+      c.titlePara === c.heading ? -1 : (p.lines?.findIndex((l) => !isUpper(norm(l.text))) ?? -1)
+    if (k > 0)
+      t = p
+        .lines!.slice(0, k)
+        .map((l) => l.text)
+        .join(' ')
     const before = issues.length
     if (!isUpper(t))
       issues.push(
@@ -566,6 +575,11 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   )
   const row = (q?: Para) => !!q && (!!q.inTable || q.text.includes('\t'))
   const bodySize = textSize(paras)
+  // How many paragraphs use each typeface.
+  const faceUse = new Map<string, number>()
+  for (const q of doc.paras)
+    for (const f of new Set(q.runs.flatMap((r) => (r.text.trim() && r.font ? [r.font] : []))))
+      faceUse.set(f, (faceUse.get(f) ?? 0) + 1)
   // Headings are judged in the chapters and after them; the preliminary pages hold prose, whose
   // closing lines (a name, a date) are not headings. A dedication's lines are not paragraphs.
   const firstBody = s.chapters[0]?.heading ?? s.references?.heading ?? doc.paras.length
@@ -629,6 +643,12 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     if (pg && lines.length && !centred(p) && lines.every((l) => l.x0 > mid + 20)) continue
     // Text set smaller than the running text (the labels of a chart, a note) is no heading.
     if (!pg || !end || lines[0].size < bodySize - 1) continue
+    // Text in a typeface the document hardly uses elsewhere (a sample of a design, a font shown
+    // in a figure) is no heading.
+    const faces = new Set(
+      p.runs.filter((r) => r.text.trim() && r.font && !r.unknown).map((r) => r.font!),
+    )
+    if (faces.size && [...faces].every((f) => (faceUse.get(f) ?? 0) < 5)) continue
     // A caption's second line (the first says "Figure 4.", the next gives the title).
     const before = doc.paras[p.i - 1]
     const continued =
@@ -862,7 +882,10 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
           (!headingLike(next) &&
             !next.inTable &&
             !!next.lines &&
-            lines[0].x0 > l1x + 8 &&
+            // (or a paragraph that is itself the rest of an indented one above, opening in small
+            // letters)
+            (lines[0].x0 > l1x + 8 ||
+              (/^\p{Ll}/u.test(norm(p.text)) && (before?.lines?.[0]?.x0 ?? 0) > l1x + 8)) &&
             next.lines[0].x0 <= l1x + 3 &&
             next.lines[0].y - lines.at(-1)!.y <= 2.4 * lines.at(-1)!.size))
       // A paragraph opening mid-sentence (its first line was told from the line above), a
@@ -920,8 +943,15 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
           /^[\p{Lu}\d]/u.test(norm(l1.text)) &&
           l1.x1 - l1.x0 < 0.6 * (l0.x1 - l0.x0)) ||
           (/^(https?:\/\/|www\.)/i.test(norm(l1.text)) && l1.x0 < l0.x0 - 3))
+      // (a one-line sentence leading in to a quotation set in on the next page: "… said that:")
+      const leadIn =
+        onFirst === 1 &&
+        /[.!?:]["”’)]?$/.test(norm(l0.text)) &&
+        l1.x0 > l0.x0 + 20 &&
+        (onNext === 1 || lines[onFirst + 1].x0 > l0.x0 + 20)
       const complete =
         closed ||
+        leadIn ||
         (onFirst === 1 &&
           isList(p) &&
           room > ((l1.x1 - l1.x0) / Math.max(1, l1.text.length)) * word.length)

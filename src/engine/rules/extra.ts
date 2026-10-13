@@ -51,7 +51,10 @@ function placeholders(ctx: Ctx): Finding {
   )
   const columns = ctx.doc.paras.filter((p) => /^(column \d+\s*)+$/i.test(norm(p.text)))
   for (const p of ctx.doc.paras) {
-    const t = norm(p.text)
+    let t = norm(p.text)
+    // (a word alone on a line of its own, read as a paragraph: "… for the degree" / "Program.")
+    const prev = ctx.doc.paras[p.i - 1]
+    if (/^(course|program)[.:]*$/i.test(t) && prev?.page === p.page) t = `${norm(prev.text)} ${t}`
     for (const [re, name] of PLACEHOLDERS) if (re.test(t)) hit(name, p)
     if (!p.inTable && !p.text.includes('\t'))
       for (const [re, name] of LONE) if (re.test(t)) hit(name, p)

@@ -164,8 +164,8 @@ const key = (e: Entry, ignoreThe = false) =>
     .split(/[,(]/)[0]
     // (a surname with its initials and no comma: "Santos R.A.E", "Cruz PM")
     .trimEnd()
-    // (also spaced: "Santos J. W.")
-    .replace(/(?<=\p{L}{2})(?:\s+(?:\p{Lu}\.?){1,4}){1,4}$/u, '')
+    // (also spaced: "Santos J. W.", or after a full stop typed for the comma: "Santos. J.W.")
+    .replace(/(?<=\p{L}{2})\.?(?:\s+(?:\p{Lu}\.?){1,4}){1,4}$/u, '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -496,6 +496,17 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     .filter((e) => {
       const p = e.paras[0]
       if (ctx.doc.kind !== 'pdf') return norm(p.text).length > 100
+      // (a one-line entry read with the next entry's first line, "Name, A. (", at the margin
+      // under it: one line shows no hanging indent)
+      const two = p.lines?.length === 2 && p.lines[1].x0 <= p.lines[0].x0 + 3
+      // (the first line a whole entry: its year, ending in a full stop)
+      if (
+        two &&
+        /\((19|20)\d\d|\(n\.\s?d\.\)/.test(p.lines![0].text) &&
+        /\.\s*$/.test(p.lines![0].text) &&
+        /^\p{Lu}[\p{L}'’-]+(\s\p{Lu}[\p{L}'’-]+)*,\s(\p{Lu}\.\s?){1,3}/u.test(p.lines![1].text)
+      )
+        return false
       return (
         (p.lines?.length ?? 0) >= 2 ||
         (e.paras.length > 1 &&

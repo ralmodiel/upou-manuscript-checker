@@ -373,6 +373,18 @@ describe('check', () => {
     expect(f.details?.join(' ')).toMatch(/Course.*NAME.*DATE/)
   })
 
+  it('finds the degree left as “Program” on a line of its own', async () => {
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('accepted in partial fulfillment of the requirements for the degree'),
+        para('Program.'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'extra.placeholders').status).toBe('fix')
+  })
+
   it('asks for a second look, not a correction, at a degree it does not know', async () => {
     const r = await check(
       'thesis.docx',
