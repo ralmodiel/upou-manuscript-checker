@@ -2,7 +2,7 @@
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, weigh, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, type Chapter } from '../structure.ts'
-import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
+import { garbled, isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, inShape, isList, justified, textSize } from './body.ts'
 import type { Caption } from './figures.ts'
 import { readTitlePage, thesisTitle } from './front.ts'
@@ -557,6 +557,8 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   }
   const details: string[] = []
   const where: { page?: number; quote?: string }[] = []
+  // (the places that are firm evidence though not in the chapters)
+  const sure = new Set<string>()
   // The entries of the contents and the lists of tables and figures are lists, not running text.
   const lists = s.prelims.filter(
     (x) => x.key === 'toc' || x.key === 'tables' || x.key === 'figures',
@@ -1011,11 +1013,20 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         lines[onFirst - 1].y > 0.5 * pg.height &&
         lines[onFirst].y < 0.5 * pg.height
       if (!complete && (atFoot || atTop)) {
-        details.push(
-          atFoot
-            ? `${place(pages[0], p)}: one line of the paragraph “${quote(p.text, 35)}” is left at the bottom of the page`
-            : `${place(pages[1], p)}: the last line of the paragraph “${quote(p.text, 35)}” (from ${pagesText([pages[0]])}) stands alone at the top of the page`,
+        const d = atFoot
+          ? `${place(pages[0], p)}: one line of the paragraph “${quote(p.text, 35)}” is left at the bottom of the page`
+          : `${place(pages[1], p)}: the last line of the paragraph “${quote(p.text, 35)}” (from ${pagesText([pages[0]])}) stands alone at the top of the page`
+        details.push(d)
+        // An entry of the references with its lines set in under its first (a hanging indent) on
+        // both pages: one entry split, read surely.
+        if (
+          s.references &&
+          p.i > s.references.heading &&
+          p.i < s.references.end &&
+          lines.slice(1).every((l) => l.x0 > lines[0].x0 + 10 && l.x0 < lines[0].x0 + 72) &&
+          !garbled(p.text)
         )
+          sure.add(d)
         where.push({ page: pages[atFoot ? 0 : 1], quote: quote(p.text, 40) })
       }
     }
@@ -1030,9 +1041,10 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   const firm = details.filter(
     (d, k) => inChapters[k] && !/stands alone at the top|: the item “|: the line “/.test(d),
   )
-  const strong = firm.length > 0 || inChapters.filter(Boolean).length > 8
-  const kept = strong ? details.filter((_, k) => inChapters[k]) : details
-  const places = strong ? where.filter((_, k) => inChapters[k]) : where
+  const strong = firm.length > 0 || sure.size > 0 || inChapters.filter(Boolean).length > 8
+  const keep = (k: number) => inChapters[k] || sure.has(details[k])
+  const kept = strong ? details.filter((_, k) => keep(k)) : details
+  const places = strong ? where.filter((_, k) => keep(k)) : where
   return weigh(
     strong,
     id,
