@@ -581,12 +581,28 @@ export async function readPdf(
         c.x0 <= l.x0 + 2 && c.x1 >= l.x1 - 2 && c.y0 <= l.y - l.size + 2 && c.y1 >= l.y
       // (a note over one line only, with words of its own not read elsewhere on the page: a
       // correction typed over the line, which reads as the note's words)
+      // (a note with words that blanks out words beneath it: two texts over one place)
+      let veiled = covers.some(
+        (c) =>
+          c.typed &&
+          spans.some(
+            (s) =>
+              !unhidden.includes(s) &&
+              /\p{L}|\d/u.test(s.text) &&
+              c.x0 <= s.x0 + 2 &&
+              c.x1 >= s.x1 - 2 &&
+              c.y0 <= s.y - s.size + 2 &&
+              c.y1 >= s.y - 2,
+          ),
+      )
       const shown = covers.length
         ? lines.map(typedOn).flatMap((l) => {
             const c = covers.find(
               (c) => inside(c, l) && !c.said.includes(flat(l.text).toLowerCase()),
             )
             if (!c) return [l]
+            // (a note with no words of its own: what it shows over the line cannot be read)
+            if (!c.typed) veiled = true
             return c.typed &&
               lines.filter((q) => inside(c, q)).length === 1 &&
               !lines.some((q) => flat(q.text).toLowerCase().includes(c.said))
@@ -668,6 +684,7 @@ export async function readPdf(
         ...(own.length < colored.length ? { linked: true } : {}),
         ...(hidden > visible ? { ocr: true } : {}),
         ...(hiddenFoot ? { hiddenFoot } : {}),
+        ...(veiled ? { veiled } : {}),
       })
 
       // The title page's picture is kept small, for the seal check (a cover page may come first).

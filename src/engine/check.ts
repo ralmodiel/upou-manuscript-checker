@@ -121,6 +121,10 @@ function unreadWhy(doc: Doc): 'garbled' | 'scanned' | undefined {
   return undefined
 }
 
+const PART = /^(title|permission|acceptance)\./
+// Reviews that put an unread chapter down to the author's labelling.
+const CHAPTERLESS = /^No chapter label|^Chapter I was not found/
+
 const idsOf = (...parts: string[]) =>
   CHECKLIST.filter((p) => parts.includes(p.id)).flatMap((p) => p.items.map((i) => i.id))
 
@@ -160,7 +164,9 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
   opts.progress?.('checking')
   // Let the page show the step before the rules' long run.
   await new Promise((r) => setTimeout(r, 0))
-  const why = unreadWhy(doc)
+  // (a PDF with hardly any text overall may still have front pages read through a text layer:
+  // those are checked, the rest is for review)
+  const why = doc.unreadable ? 'scanned' : unreadWhy(doc)
   const s = findStructure(doc)
   const ctx: Ctx = { doc, s, env: opts.env ?? {} }
   let captions: ReturnType<typeof findCaptions> = []
@@ -187,13 +193,59 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
   }
   // Most of the words cannot be trusted (re-encoded font, or pages that are pictures): what these
   // items "found missing or different" is the reader's failing, not the student's.
-  if (why)
+  if (why && !doc.unreadable)
     doc.notes.push(
       why === 'garbled'
         ? 'The letters in this PDF are stored in a re-encoded font, so its words could not be read reliably. Items that depend on the words are for you to check; a PDF saved from Word or Google Docs reads better.'
         : 'Most pages of this PDF are pictures (scanned), so their words could not be read. Items that depend on those pages are for you to check.',
     )
-  const unread = (f: Finding): Finding =>
+  const SCANNED =
+    'Most pages of this PDF are scanned pictures, so this item could not be judged. Check it yourself.'
+  // A front page read through its text layer (not a bare picture) is judged as any other.
+  const readPage = (id: string) => {
+    const r = id.startsWith('title.')
+      ? s.title
+      : id.startsWith('permission.')
+        ? s.permission
+        : id.startsWith('acceptance.')
+          ? s.acceptance
+          : undefined
+    const pg = r && doc.pages?.[doc.paras[r.start]?.page ?? -1]
+    return !!pg && pg.paras.length > 0 && !scanPage(doc, pg)
+  }
+  const anyText = doc.paras.some((p) => /\p{L}{2}/u.test(p.text))
+  const part = (id: string) =>
+    id.startsWith('title.')
+      ? 'Title Page'
+      : id.startsWith('permission.')
+        ? 'University Permission Page'
+        : 'Acceptance Page'
+  const unread = (f: Finding): Finding => {
+    if (why !== 'scanned') return unreadFix(f)
+    // (nothing found on scanned pages is no sign there is nothing: figures, appendices, prelims)
+    if (!PART.test(f.id) && (doc.unreadable || f.status === 'na')) return review(f.id, SCANNED)
+    if (PART.test(f.id) && doc.unreadable && !readPage(f.id))
+      return review(
+        f.id,
+        `The ${part(f.id)} could not be found among the pages that could be read (most pages of this PDF are scanned pictures), so this item was not checked. Check it yourself.`,
+      )
+    // (in a scan read through its text layer, what seems missing may only be misread, and a pass
+    // may rest on a line the layer left out)
+    if (PART.test(f.id) && doc.unreadable && f.status !== 'review')
+      return review(
+        f.id,
+        `The ${part(f.id)} is a scan read through its machine-read text layer, so its words may be misread or missed. Check this item yourself.`,
+        { where: f.where },
+      )
+    const g = unreadFix(f)
+    return g.status === 'review' && CHAPTERLESS.test(g.message ?? '')
+      ? review(
+          f.id,
+          'The chapter pages are scanned pictures whose words could not be read, so this item was not checked. Check it yourself.',
+        )
+      : g
+  }
+  const unreadFix = (f: Finding): Finding =>
     why &&
     // (template text left in cannot be searched for in letters that are scrambled: not "ok" either)
     (f.status === 'fix' ||
@@ -216,7 +268,7 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
     pageLabels:
       doc.kind === 'pdf' ? doc.pages?.map((pg) => pdfFolio(doc, pg.n)?.number) : undefined,
     findings: ITEMS.map((item) =>
-      doc.unreadable
+      doc.unreadable && !anyText
         ? review(
             item.id,
             'No text could be read from this PDF (it may be scanned pages), so this item was not checked. Check it yourself, or check the Word file.',

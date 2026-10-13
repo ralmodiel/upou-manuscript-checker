@@ -143,8 +143,22 @@ function garbleDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
     const page = r ? doc.paras[r.start]?.page : undefined
     if (page !== undefined && doc.pages[page]?.unreliable) out.set(f.id, GARBLED)
   }
+  // (a fix on a front page where a note laid over a line shows words the file does not hold:
+  // what seems missing may be what the note shows)
+  for (const f of found) {
+    if (f.status !== 'fix' || !WORDED.test(f.id)) continue
+    const r = f.id.startsWith('title.')
+      ? s.title
+      : f.id.startsWith('permission.')
+        ? s.permission
+        : s.acceptance
+    const page = r ? doc.paras[r.start]?.page : undefined
+    if (page !== undefined && doc.pages[page]?.veiled) out.set(f.id, VEILED)
+  }
   return out
 }
+const VEILED =
+  'A note laid over part of this page covers words in the file or shows words the file does not hold, so what seems missing may be there. Check this item yourself.'
 const area = (b: Page['images'][number]) => (b.x1 - b.x0) * (b.y1 - b.y0)
 
 /** Findings that rest on scanned pages read through their machine-read text layer (PDF): what

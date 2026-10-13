@@ -120,6 +120,8 @@ export interface Page {
   ocr?: boolean
   /** Footer words in the file that do not show (white, or under a white box drawn over them). */
   hiddenFoot?: string
+  /** A note laid over a line shows words that are not in the file's text: what it says is unread. */
+  veiled?: boolean
   /** The share of its words a font printed with wrong glyphs (only where that is several): what
    *  rests on its words may be misread. */
   unreliable?: number
