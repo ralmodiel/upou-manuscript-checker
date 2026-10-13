@@ -169,6 +169,26 @@ describe('check', () => {
     expect(finding(r, 'references.apa').message).toMatch(/the 3 references/)
   })
 
+  it('leaves a numeral-led entry for the writer, and does not take two notes or a statute amiss', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('REFERENCES', '<w:jc w:val="center"/>'),
+        para('2020 census of the town. (2021). Town Office.', double),
+        para('Abad, R. (2019). Notes from Unit II. Reading the field. Course pack.', double),
+        para('Abad, R. (2019). Notes from Unit II. Writing it up. Course pack.', double),
+        para('Bautista, L. (August 2006). A dated piece. Daily News.', double),
+        para('Republic Act No. 10173, Data Privacy Act of 2012.', double),
+      ),
+      opts,
+    )
+    expect(finding(r, 'references.order').status).toBe('review')
+    const apa = (finding(r, 'references.apa').details ?? []).join(' ')
+    expect(apa).not.toMatch(/Listed twice|year in parentheses|No year/)
+    expect(apa).toMatch(/year first.*add a, b/)
+  })
+
   it('finds a reference listed twice, one author’s works of a year out of order, a personal communication', async () => {
     const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
     const r = await check(
@@ -202,7 +222,9 @@ describe('check', () => {
     )
     const apa = finding(r, 'references.apa').details?.join(' ') ?? ''
     expect(apa).not.toMatch(/Listed twice:/)
-    expect(apa).toMatch(/Listed twice, it seems, with different details/)
+    // (a short title cut at its first period, the entries parting soon after: two works)
+    expect(apa).not.toMatch(/Listed twice/)
+    expect(apa).toMatch(/add a, b/)
   })
 
   it('reads a title the text layer spaced out or shuffled as unreadable, not as another title', () => {

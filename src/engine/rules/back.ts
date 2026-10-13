@@ -37,9 +37,24 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
   const edge = top && top[1] >= 3 ? top[0] : undefined
   const out: Entry[] = []
   let groups = 0
+  let page = paras[0]?.page
   for (const p of paras) {
     const t = norm(p.text)
     if (!t) continue
+    const turned = p.page !== page
+    page = p.page
+    // A new page that opens on a long bold title in capitals, with no year: an appendix with no
+    // "Appendix" label (a questionnaire), not more references (nor a short group name, "BOOKS").
+    if (
+      turned &&
+      out.length >= 3 &&
+      t.length > 50 &&
+      bolded(p) &&
+      t === t.toUpperCase() &&
+      /\p{Lu}{2,}(\s+\p{Lu}{2,}){2}/u.test(t) &&
+      !YEAR.test(t)
+    )
+      break
     if (
       (isHeadingish(p) && bolded(p) && t.length <= 80 && !YEAR.test(t)) ||
       // A plain line of a few words, with no year, link or full stop: the name of a group of
@@ -49,6 +64,8 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
         (edge === undefined || x0(p) === undefined || x0(p)! <= edge + 3) &&
         t.length <= 60 &&
         !/\d{4}|https?:|doi|[.?!),;:–-]$/i.test(t) &&
+        !YEAR.test(t) &&
+        !/^retrieved\b|\bretrie?ve?d\s+from$/i.test(t) &&
         /^(\d{1,2}[.)]\s+)?\p{Lu}/u.test(t) &&
         !/,\s*\p{Lu}\b/u.test(t))
     ) {
@@ -73,6 +90,18 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
         !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t) &&
         !!out.length &&
         unfinished(out.at(-1)!.text)) ||
+      // The rest of a title whose quotation marks the entry above left open.
+      (!!out.length &&
+        ((out.at(-1)!.text.match(/"/g)?.length ?? 0) % 2 === 1 ||
+          (out.at(-1)!.text.match(/“/g)?.length ?? 0) >
+            (out.at(-1)!.text.match(/”/g)?.length ?? 0)) &&
+        /^[^"“(]*["”]/.test(t) &&
+        !/^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}/u.test(t)) ||
+      // Initials after a surname that ends the line above ("…Press. Triandis," / "H. C. (1995)."):
+      // the rest of that author's name, not a new author.
+      (!!out.length &&
+        /\s\p{Lu}[\p{L}'’-]+,$/u.test(out.at(-1)!.text) &&
+        /^(\p{Lu}\.\s?){1,3}\(/u.test(t)) ||
       // A publisher's name alone on a line (a few words, no year): the end of the entry above.
       (!!out.length &&
         t.split(' ').length <= 6 &&
@@ -92,6 +121,8 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
         !/^(\p{Ll}|\d+(?!\d|[.)]\s))/u.test(t) &&
         // (an issue number ending a wrapped line: "11. Retrieved from…")
         !(out.length && /^\d{1,3}[.)]\s+(retrieved|https?:|doi\b)/i.test(t)) &&
+        // (where an entry was found: never how one begins)
+        !(out.length && /^(retrieved\b|available\s+(at|from)\b|https?:|www\.|doi:)/i.test(t)) &&
         (placed ?? (startsEntry(t) || /^\p{Lu}[\p{L}'’-]+,\s+\p{Lu}\./u.test(t))))
     if (opens) out.push({ paras: [p], text: t })
     else {
@@ -196,10 +227,12 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
       unreadable.push(e)
       return false
     }
-    // (a digit in the name, "W3Schools": where it goes among the letters is for the writer)
+    // (a digit in the name, "W3Schools", or a title that opens with a number, "2020 census…":
+    // where it goes among the letters is for the writer)
     if (
       /\p{L}[\]\\^{}|~¶³´@#$%*+=<>_]\p{L}/u.test(e.text.split(/[,(]/)[0]) ||
-      /\p{L}\d|\d\p{L}/u.test(e.text.split(/[,(]/)[0])
+      /\p{L}\d|\d\p{L}/u.test(e.text.split(/[,(]/)[0]) ||
+      /^\d/.test(e.text.replace(/^(\d+[.)]|\[\d+\])\s+/, ''))
     ) {
       unreadable.push(e)
       return false
@@ -320,7 +353,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
   }
   const skipped = unreadable.length
     ? [
-        `${plural(unreadable.length, 'reference')} could not be placed, the author's name being unreadable (${list(unreadable.slice(0, 3).map((e) => `“${quote(e.text, 25)}”`))}): check ${unreadable.length === 1 ? 'its' : 'their'} place yourself.`,
+        `${plural(unreadable.length, 'reference')} could not be placed, the author's name being unreadable or holding a number (${list(unreadable.slice(0, 3).map((e) => `“${quote(e.text, 25)}”`))}): check ${unreadable.length === 1 ? 'its' : 'their'} place yourself.`,
       ]
     : []
   if (!pairs.length && !lead.length && unsureEtAl)
@@ -332,7 +365,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
     return unreadable.length
       ? review(
           id,
-          'Check the alphabetical order of the reference list: some names could not be read.',
+          'Check the alphabetical order of the reference list: some names could not be read or hold a number.',
           {
             details: skipped,
             where: [{ page: pageOf(unreadable[0]), quote: quote(unreadable[0].text, 40) }],
@@ -544,7 +577,29 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   }
   // The template's sample entries are said above: these look at the student's own.
   const own = refs.filter((e) => !SAMPLE.test(e.text) && !scrambled(e))
-  const noYear = own.filter((e) => !YEAR.test(e.text))
+  // A month before the year in the parentheses, "(August 2006)", "(April 17, 2021)": the year is
+  // there, in the wrong place.
+  const monthFirst = own.filter(
+    (e) =>
+      !YEAR.test(e.text) &&
+      /\((jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2},?\s+)?(1[89]|20)\d{2}\)/i.test(
+        e.text.slice(0, 200),
+      ),
+  )
+  if (monthFirst.length) {
+    issues.push(`Put the year first in the date, as “(2020, May 3).”: ${entriesText(monthFirst)}.`)
+    statuses.push('fix')
+  }
+  // (a law or order, "Republic Act No. 10173, Data Privacy Act of 2012", takes APA's legal form;
+  // a year in parentheses elsewhere is there, in some other form)
+  const noYear = own.filter(
+    (e) =>
+      !YEAR.test(e.text) &&
+      !/\([^()]*\b(1[89]|20)\d{2}\)/.test(e.text) &&
+      !/\b(act|code|constitution|executive order|proclamation|ordinance|memorandum circular|republic act|presidential decree|batas pambansa)\b(\s+(no\.?|of))?\s*\d/i.test(
+        e.text.slice(0, 80),
+      ),
+  )
   // A year mistyped in the parentheses ("(20214") or written outside them is certain; no year at
   // all may be an entry read in two pieces.
   const misdated = noYear.filter((e) => {
@@ -675,12 +730,16 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
       norm(x.text)
         .toLowerCase()
         .replace(/[^\p{L}\p{N}]/gu, '')
+    // (a short title cut at its first period, "Notes from Unit III.", is not all of it: entries that
+    // part soon after it are two works)
+    const same = !!first && ((y?.title.length ?? 0) >= 25 || alike(whole(first), whole(e)))
     if (first && whole(first) === whole(e)) twice.push([first, e])
-    else if (first && y) nearly.push([first, e])
+    else if (same && y) nearly.push([first, e])
     else if (!first) seen.set(k, e)
-    if (!y || first) continue
+    if (!y || same) continue
     const other = years.get(`${y.who}|${y.year}`)
-    if (other && !y.marked && alike(byline(other)!.title, y.title)) nearly.push([other, e])
+    if (other && !y.marked && !first && alike(byline(other)!.title, y.title))
+      nearly.push([other, e])
     else if (other && !y.marked) lettered.push([other, e])
     else years.set(`${y.who}|${y.year}`, e)
   }
@@ -875,13 +934,18 @@ function labels(ctx: Ctx): Finding {
   const offCentre: Para[] = []
   // Under the label a table's or figure's number, not a title of the appendix's own.
   const tableFirst: Para[] = []
-  const centred = (p: Para) => {
+  // (`lines`: a title of two or three lines too, each line centred, the last one short of the
+  // margin; only to tell a title under its label, not to judge its centring)
+  const centred = (p: Para, lines = 1) => {
     if (p.plain || p.align === 'center') return true
-    // A PDF line centred on its page: on a wide table's page the text may stop short of the margin.
-    const l = p.lines?.length === 1 ? p.lines[0] : undefined
+    // PDF lines centred on their page: on a wide table's page the text may stop short of the margin.
+    const ls = p.lines && p.lines.length <= lines ? p.lines : []
+    const l = ls.at(-1)
     const pg = l && doc.pages?.[l.page]
     return (
-      !!pg && Math.abs((l.x0 + l.x1) / 2 - pg.width / 2) < 8 && l.x0 > (pg.margins?.left ?? 72) + 12
+      !!pg &&
+      ls.every((x) => Math.abs((x.x0 + x.x1) / 2 - pg.width / 2) < 8) &&
+      l.x0 > (pg.margins?.left ?? 72) + 12
     )
   }
   const labelOf = (p: Para) =>
@@ -904,8 +968,11 @@ function labels(ctx: Ctx): Finding {
       if (!centred(head)) offCentre.push(head)
       continue
     }
-    // A short line under the label is its title, set as one or not.
-    const short = next !== undefined && norm(doc.paras[next].text).length <= 150
+    // A short line under the label is its title, set as one or not; or a longer one centred.
+    const short =
+      next !== undefined &&
+      (norm(doc.paras[next].text).length <= 150 ||
+        (norm(doc.paras[next].text).length <= 300 && centred(doc.paras[next], 3)))
     if (!inline && !short) {
       issues.push(`Add a title below “${labelOf(head)}”.`)
       statuses.push('fix')
