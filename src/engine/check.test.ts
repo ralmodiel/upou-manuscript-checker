@@ -856,6 +856,28 @@ describe('check', () => {
     expect(finding(r, 'extra.placeholders').details?.join(' ')).toMatch(/Name and Date/)
   })
 
+  it('finds “I specifically allow” in a re-encoded font, and passes no statement on a page it cannot read', async () => {
+    const statement = (...lines: string[]) =>
+      check(
+        'thesis.docx',
+        docx(
+          para('UNIVERSITY OF THE PHILIPPINES'),
+          para('A STUDY OF RADIO'),
+          para('University Permission Page', '<w:pageBreakBefore/>'),
+          para('A STUDY OF RADIO'),
+          ...lines.map((t) => para(t)),
+          para('Signature over Student Name and Date'),
+        ),
+        opts,
+      )
+    const grant = 'Specifically, I grant the following rights to the University:'
+    const shifted = await statement('“I VSHcLILcaOO\\ aOORZ WKH UQLYHUVLW\\ WR:', grant)
+    expect(finding(shifted, 'permission.statement').status).toBe('fix')
+    const unread = await statement(grant, 'c. GLYH RSHQ accHVV WR WKH ZRUN')
+    expect(finding(unread, 'permission.statement').status).toBe('review')
+    expect(finding(await statement(grant), 'permission.statement').status).toBe('ok')
+  })
+
   it('leaves bare committee names, or ranks beside the Dean’s degree, to the student', async () => {
     const c = '<w:jc w:val="center"/>'
     const names = (...lines: string[]) =>

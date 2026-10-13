@@ -392,6 +392,8 @@ const bareName = (s: string) =>
 /** The words of a name that carry its spelling: no initials, "Jr." or punctuation. */
 const spelling = (s: string) =>
   bareName(s)
+    // (a gap the text layer puts after an accented capital, "PEÑ A", is no space in the name)
+    .replace(/(?<=[^\p{ASCII}\s])\s(?=\p{L}(?!\p{L}))/gu, '')
     .split(/[\s,.]+/)
     .filter((w) => w.length > 1 && !/^(JR|SR)$/.test(w))
     .join(' ')
@@ -556,9 +558,16 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
     )
   const found = anchors(tp.role).map(([name, re]) => ({
     name,
-    // (a crossed box's "x" may stand inside a label: "adviserx’s signature")
+    // (a crossed box's "x" may stand inside a label: "adviserx’s signature"; a re-encoded font
+    // reads the apostrophe and s as "¶V")
     k: tp.paras.findIndex(
-      (p) => re.test(norm(p.text)) || re.test(norm(p.text).replace(/(?<=\p{L})x(?=[’'])/gu, '')),
+      (p) =>
+        re.test(norm(p.text)) ||
+        re.test(
+          norm(p.text)
+            .replace(/(?<=\p{L})x(?=[’'])/gu, '')
+            .replace(/(?<=\p{L})¶[Vs]?(?=\s)/gu, "'s"),
+        ),
     ),
   }))
   // The university's name may be part of the emblem picture: not text, so not missing, but said.
@@ -843,7 +852,8 @@ function dateOf(p: Para | undefined, id: string, where: string): Finding {
   )
 }
 
-type Choice = 'yes' | 'no' | 'both' | 'none'
+/** (`hidden`: a mark in the row has a white box painted over it, so what shows cannot be told) */
+type Choice = 'yes' | 'no' | 'both' | 'none' | 'hidden'
 // Ticks and crosses, including symbol-font ticks that PDFs extract as ü, þ or private-use letters.
 // The private-use range U+F000–U+F0FF (Wingdings, Wingdings 2) holds boxes too: the empty ones
 // are not marks.
@@ -953,7 +963,14 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   // Pictures (a Google Docs export draws its boxes as pictures): those on one side only, or more of
   // them on one side (a tick pasted on its box), mark it; with one box picture a side, the clearly
   // darker one is a ticked box swapped in.
-  const pics = page.images.filter((b) => band(b) && b.x0 > from)
+  // (one narrow picture down the column may hold the marks of several rows: it covers this row's box)
+  const mid = line.y - 0.3 * line.size
+  const column = (b: Box) =>
+    width(b) <= 2 * line.size &&
+    b.y1 - b.y0 <= 5 * line.size &&
+    b.y0 <= mid - 0.3 * line.size &&
+    b.y1 >= mid + 0.3 * line.size
+  const pics = page.images.filter((b) => (band(b) || column(b)) && b.x0 > from)
   const on = (s: Choice) => pics.filter((b) => side(b.x0) === s)
   const ink = (s: Choice) => Math.max(0, ...on(s).map((b) => b.ink ?? 0))
   const [left, right] = [on('yes').length, on('no').length]
@@ -1008,24 +1025,70 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
       width(m) <= 1.6 * line.size &&
       Math.abs(width(m) - (m.y1 - m.y0)) <= 0.3 * line.size,
   )
+  const strokes = (b: Box) =>
+    page.marks.filter(
+      (m) =>
+        m.kind === 'path' &&
+        !m.fill &&
+        m !== b &&
+        m.x0 >= b.x0 - 1 &&
+        m.x1 <= b.x1 + 1 &&
+        m.y0 >= b.y0 - 1 &&
+        m.y1 <= b.y1 + 1 &&
+        // (a stroke across the box, not a hairline or a second outline drawn over it)
+        m.x1 - m.x0 >= 0.3 * width(b) &&
+        m.y1 - m.y0 >= 0.3 * (b.y1 - b.y0) &&
+        (m.x1 - m.x0 < width(b) - 1 || m.y1 - m.y0 < b.y1 - b.y0 - 0.5),
+    )
   // A box with two or more strokes inside it (an X drawn in, the lines of a cross) is crossed.
-  const crossed = boxes.filter(
+  const crossed = boxes.filter((b) => strokes(b).length >= 2)
+  // One stroke inside a box, clearly smaller than it (a slash, a tick, an X drawn as one path), on
+  // one side of the row only: the box is ticked. (on both sides it may be an inner frame; a box
+  // laid over another box is an overlay, which other readings weigh)
+  const overlap = (m: Box, n: Box) =>
+    Math.max(0, Math.min(m.x1, n.x1) - Math.max(m.x0, n.x0)) *
+      Math.max(0, Math.min(m.y1, n.y1) - Math.max(m.y0, n.y0)) >=
+    0.5 * width(m) * (m.y1 - m.y0)
+  // (a picture painted over the stroke afterwards, a box picture, hides it)
+  const under = (m: Box & { z?: number }) =>
+    page.images.some(
+      (i) =>
+        i.z !== undefined &&
+        m.z !== undefined &&
+        i.z > m.z &&
+        i.x0 <= m.x0 + 1 &&
+        i.x1 >= m.x1 - 1 &&
+        i.y0 <= m.y0 + 1 &&
+        i.y1 >= m.y1 - 1,
+    )
+  const slashed = boxes.filter(
     (b) =>
-      page.marks.filter(
-        (m) =>
-          m.kind === 'path' &&
-          !m.fill &&
-          m !== b &&
-          m.x0 >= b.x0 - 1 &&
-          m.x1 <= b.x1 + 1 &&
-          m.y0 >= b.y0 - 1 &&
-          m.y1 <= b.y1 + 1 &&
-          // (a stroke across the box, not a hairline or a second outline drawn over it)
-          m.x1 - m.x0 >= 0.3 * width(b) &&
-          m.y1 - m.y0 >= 0.3 * (b.y1 - b.y0) &&
-          (m.x1 - m.x0 < width(b) - 1 || m.y1 - m.y0 < b.y1 - b.y0 - 0.5),
-      ).length >= 2,
+      strokes(b).length === 1 &&
+      !strokes(b).some(under) &&
+      !boxes.some((n) => n !== b && !strokes(b).includes(n) && overlap(b, n)) &&
+      strokes(b).some((m) => m.x1 - m.x0 <= 0.85 * width(b) || m.y1 - m.y0 <= 0.85 * (b.y1 - b.y0)),
   )
+  // A stroke in the row with a white shape painted over it afterwards: a mark taken out, perhaps
+  // put elsewhere without its box. What the page shows cannot be told from the shapes.
+  const whitedOut = page.marks.some(
+    (m) =>
+      m.kind === 'path' &&
+      !m.fill &&
+      band(m) &&
+      m.x0 > from &&
+      width(m) <= 1.6 * line.size &&
+      m.z !== undefined &&
+      page.marks.some(
+        (w) =>
+          w.kind === 'path' &&
+          w.fill === '#ffffff' &&
+          w.z !== undefined &&
+          w.z > m.z! &&
+          Math.min(w.x1, m.x1) - Math.max(w.x0, m.x0) >= 0.85 * width(m) &&
+          Math.min(w.y1, m.y1) - Math.max(w.y0, m.y0) >= 0.85 * (m.y1 - m.y0),
+      ),
+  )
+  if (whitedOut && slashed.length) return 'hidden'
   // (boxes drawn over one another: their middles within a few points, as a tick box and the
   // slightly smaller squares stroked over it)
   const same = (m: Box, n: Box) =>
@@ -1061,9 +1124,19 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     .filter((m) => band(m) && m.kind !== 'path' && m.on !== false && m.x0 > from)
     .map((m) => m.x0)
   const slash = page.glyphs.filter((g) => band(g) && g.x0 > from && g.text === '/').map((g) => g.x0)
+  // A lone digit in the Yes/No cell, on one side only: a symbol font's tick or cross ("5" for ✕).
+  const digits = page.glyphs
+    .filter((g) => band(g) && g.x0 > from && /^\d$/.test(g.text))
+    .map((g) => g.x0)
   const evidence = [
-    [...oneSide(filled), ...struck.map((m) => m.x0), ...crossed.map((m) => m.x0), ...ticked],
-    typed,
+    [
+      ...oneSide(filled),
+      ...struck.map((m) => m.x0),
+      ...crossed.map((m) => m.x0),
+      ...ticked,
+      ...oneSide(slashed.map((m) => m.x0)),
+    ],
+    [...typed, ...oneSide(digits)],
     fields,
     pictures,
     slash,
@@ -1138,6 +1211,13 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
   const both = rows.filter((r) => r.choice === 'both')
   const where = at(tp.rows[0])
   const msg = "Select one permission code (one 'Yes', others marked as 'No')."
+  const hidden = rows.filter((r) => r.choice === 'hidden')
+  if (hidden.length)
+    return review(
+      id,
+      `A mark on the permission table has a white box painted over it (${list(hidden.map((r) => r.name))}), so which code is chosen could not be told here. Check that one code is marked “Yes” and the others “No”.`,
+      { where },
+    )
   if (unmarked.length === 4 && tp.rows.slice(0, 4).every((r) => symbolBoxes(ctx, r)))
     return review(
       id,
@@ -1428,17 +1508,40 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
   return ok(id, 'The title matches the Title Page and is in upper case.')
 }
 
+/** A phrase as a font may have put it in the text layer: each letter as itself or as the glyph
+ *  number a re-encoded font gives (29 below: "s" read as "V", a space as a control character), the
+ *  letters perhaps spaced out. */
+function shifted(phrase: string): RegExp {
+  const esc = (c: string) => c.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&')
+  const one = (c: string) =>
+    c === ' '
+      ? '[\\s\\u0003]*'
+      : `[${[c.toLowerCase(), c.toUpperCase()]
+          .flatMap((x) => [x, String.fromCharCode(x.charCodeAt(0) - 29)])
+          .map(esc)
+          .join('')}]`
+  return new RegExp([...phrase].map(one).join(' ?'), 'u')
+}
+const ALLOW = shifted('I specifically allow the')
+
 function permissionStatement(ctx: Ctx): Finding {
   const id = 'permission.statement'
   const r = ctx.s.permission
   if (!r) return fix(id, 'Add the University Permission Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
-  const allow = find(paras, /I specifically allow/i)
+  const allow = find(paras, /I specifically allow/i) ?? paras.find((p) => ALLOW.test(p.text))
   const grant = find(paras, /Specifically,? I grant/i)
   if (allow && grant)
     return fix(id, 'Omit the “I specifically allow…”; retain the “Specifically, I grant…”.', {
       where: at(allow),
     })
+  // Part of the page in a font that could not be read: the other statement may stand there unseen.
+  if ((allow || grant) && paras.some((p) => garbled(p.text)))
+    return review(
+      id,
+      `Part of the University Permission Page could not be read reliably (its font is encoded oddly). Check that only one statement is kept: “${allow ? 'I specifically allow…' : 'Specifically, I grant…'}” was found.`,
+      { where: at(allow ?? grant) },
+    )
   if (allow || grant)
     return ok(id, `Uses only “${allow ? 'I specifically allow…' : 'Specifically, I grant…'}”.`)
   const msg =
