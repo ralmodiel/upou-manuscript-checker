@@ -684,10 +684,11 @@ describe('check', () => {
       docx(...title('Special Problem Faculty-in-Charge:'), ...body),
       opts,
     )
-    expect(finding(special, 'chapterStart.number').status).toBe('review')
-    // (outside the MDC every program's numbered sections are for the student to weigh)
+    // (the UPOU-wide checklist asks every program for the "Chapter I" label)
+    expect(finding(special, 'chapterStart.number').status).toBe('fix')
+    expect(finding(special, 'chapterStart.title').status).toBe('fix')
     const other = await check('x.docx', docx(...title('Thesis Adviser:'), ...body), opts)
-    expect(finding(other, 'chapterStart.number').status).toBe('review')
+    expect(finding(other, 'chapterStart.number').status).toBe('fix')
   })
 
   it('numbers figures by chapter (2.1, 2.2, then 3), takes “Chart S1:” and finds Annex among Appendix', async () => {

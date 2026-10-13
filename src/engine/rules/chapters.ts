@@ -5,7 +5,7 @@ import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, inShape, isList, justified, textSize } from './body.ts'
 import type { Caption } from './figures.ts'
-import { readTitlePage, thesisTitle } from './front.ts'
+import { thesisTitle } from './front.ts'
 import {
   auditPdf,
   lookNote,
@@ -65,17 +65,6 @@ function typeface(p: Para, what: string, scale?: number): { issues: string[]; sc
   const sizes = off.filter((z) => scale === undefined || Math.abs(z! - scale) > 0.3)
   if (sizes.length) out.push(`${what} is ${sizes.join(', ')} pt, not 12 pt`)
   return { issues: out, scaled: scale !== undefined && off.length > sizes.length }
-}
-
-/** Other programs set their sections "I. INTRODUCTION", "II. …" (a special problem, a capstone
- *  project, a thesis): the MDC thesis template’s “Chapter I” label is then for the student to
- *  weigh, not to correct. Only the MDC's own program is held to it. */
-const numberedSections = (ctx: Ctx) => {
-  try {
-    return !/development communication/i.test(norm(readTitlePage(ctx).program?.text ?? ''))
-  } catch {
-    return true
-  }
 }
 
 const chapterName = (c: Chapter) =>
@@ -179,10 +168,11 @@ function number(ctx: Ctx): Finding {
   const issues: string[] = []
   const wrong: Para[] = []
   const unsure: string[] = []
-  const soft: string[] = []
   const scaled: string[] = []
   const scale = reducedScale(ctx)
-  const special = numberedSections(ctx)
+  // Sections numbered "I. INTRODUCTION" with no label: the UPOU-wide checklist asks every program
+  // for a "Chapter I" label with the title on its own line.
+  let unlabelled = false
   for (const c of chapters) {
     const p = paras[c.heading]
     const word = /^chapter/i.exec(norm(p.text))?.[0] ?? 'Chapter'
@@ -190,9 +180,10 @@ function number(ctx: Ctx): Finding {
     const right = `Chapter ${(c.number ? roman(c.number) : c.numeral).toUpperCase()}`
     const before = issues.length
     if (c.unlabelled) {
-      ;(special ? soft : issues).push(
+      issues.push(
         `${chapterName(c)}: the chapter number is missing (write ${right} on its own line, with the title below it)`,
       )
+      unlabelled = true
       wrong.push(p)
       continue
     }
@@ -220,12 +211,6 @@ function number(ctx: Ctx): Finding {
         `Chapter numbers should run I, II, III… in order (found ${chapters.map((c) => c.numeral).join(', ')})`,
       )
   }
-  if (!issues.length && soft.length)
-    return review(
-      id,
-      'The sections are numbered “I.”, “II.”… with no “Chapter” label. The thesis template labels each chapter (“Chapter I”, with its title on the next line); check with your program whether a special problem does too.',
-      { details: soft.slice(0, 8), where: wrong.slice(0, 5).flatMap(at) },
-    )
   if (!issues.length && scaled.length)
     return review(
       id,
@@ -247,7 +232,9 @@ function number(ctx: Ctx): Finding {
       : ok(id, `${list(chapters.map(chapterName))}: title case, Roman numerals, bold Arial 12 pt.`)
   return fix(
     id,
-    'Write each chapter number in title case with a Roman numeral, bold, Arial 12 pt. (Chapter I).',
+    unlabelled
+      ? 'Label each chapter “Chapter I”, “Chapter II”… on its own line, with the title on the line below: title case, Roman numerals, bold, Arial 12 pt.'
+      : 'Write each chapter number in title case with a Roman numeral, bold, Arial 12 pt. (Chapter I).',
     {
       details: issues.slice(0, 8),
       where: (wrong.length ? wrong : [paras[chapters[0].heading]]).slice(0, 5).flatMap(at),
@@ -274,8 +261,6 @@ function title(ctx: Ctx): Finding {
   const issues: string[] = []
   const where: ReturnType<typeof at> = []
   const unsure: string[] = []
-  // Titles written on their number's line ("I. INTRODUCTION"): the chapter number item says so.
-  const inline: string[] = []
   const scaled: string[] = []
   // Titles whose last letters stand alone on the line below ("INTRODUCTIO" / "N").
   const broken: string[] = []
@@ -296,7 +281,12 @@ function title(ctx: Ctx): Finding {
       if (tf.scaled) scaled.push(name)
       if (issues.length > before) where.push(...at(p))
       if (faceUnknown(tp)) unsure.push(name)
-      if (c.inlineTitle) inline.push(name)
+      if (c.inlineTitle) {
+        issues.push(
+          `${name}: the title shares the number’s line (put it on its own line, below the “Chapter” label)`,
+        )
+        where.push(...at(p))
+      }
       continue
     }
     if (c.inlineTitle) {
@@ -373,15 +363,6 @@ function title(ctx: Ctx): Finding {
       'The last letters of a chapter title stand alone on the next line, as if a word were broken in two. Check that each chapter title is set on one line.',
       {
         details: broken.slice(0, 8).map((n) => `${n}: the title breaks a word across two lines`),
-        where: where.slice(0, 5),
-      },
-    )
-  if (!issues.length && inline.length)
-    return review(
-      id,
-      'The chapter titles share a line with their numbers (“I. INTRODUCTION”). The thesis template puts each title on its own line below the “Chapter I” label (see the chapter number item); the titles themselves are in upper case, bold Arial 12 pt.',
-      {
-        details: inline.slice(0, 8).map((n) => `${n}: title on the number’s line`),
         where: where.slice(0, 5),
       },
     )
