@@ -313,6 +313,7 @@ describe('check', () => {
         para('OPEN UNIVERSITY', c),
         para('MASTER OF DEVELOPMENT COMMUNICATION', c),
         para('A STUDY OF COMMUNITY RADIO', c),
+        para('Thesis Adviser:', c),
         para('Abstract', `<w:pageBreakBefore/>${c}`),
         para(text),
         para('I. INTRODUCTION', `<w:pageBreakBefore/>${c}`),
@@ -684,10 +685,13 @@ describe('check', () => {
       docx(...title('Special Problem Faculty-in-Charge:'), ...body),
       opts,
     )
+    // (a special problem may number its sections: for review; a thesis in any program: a fix)
     expect(finding(special, 'chapterStart.number').status).toBe('review')
-    // (outside the MDC every program's numbered sections are for the student to weigh)
     const other = await check('x.docx', docx(...title('Thesis Adviser:'), ...body), opts)
-    expect(finding(other, 'chapterStart.number').status).toBe('review')
+    expect(finding(other, 'chapterStart.number').status).toBe('fix')
+    expect(finding(other, 'chapterStart.title').status).toBe('fix')
+    const unnamed = await check('x.docx', docx(...title('Adviser:'), ...body), opts)
+    expect(finding(unnamed, 'chapterStart.number').status).toBe('review')
   })
 
   it('numbers figures by chapter (2.1, 2.2, then 3), takes “Chart S1:” and finds Annex among Appendix', async () => {

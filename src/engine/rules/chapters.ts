@@ -67,14 +67,20 @@ function typeface(p: Para, what: string, scale?: number): { issues: string[]; sc
   return { issues: out, scaled: scale !== undefined && off.length > sizes.length }
 }
 
-/** Other programs set their sections "I. INTRODUCTION", "II. …" (a special problem, a capstone
- *  project, a thesis): the MDC thesis template’s “Chapter I” label is then for the student to
- *  weigh, not to correct. Only the MDC's own program is held to it. */
-const numberedSections = (ctx: Ctx) => {
+/** The title page calls the work a thesis or dissertation ("Thesis Adviser:"). A special problem
+ *  or capstone may number its sections "I. INTRODUCTION"; when the work is not named so, the
+ *  missing "Chapter" label stays for review. */
+const thesisWork = (ctx: Ctx) => {
   try {
-    return !/development communication/i.test(norm(readTitlePage(ctx).program?.text ?? ''))
+    // A special project on the thesis template keeps its "Thesis Adviser" line: the pages before
+    // the first chapter name the work.
+    const front = ctx.doc.paras.slice(0, ctx.s.chapters[0]?.heading ?? 0)
+    return (
+      /^(thesis|dissertation)\b/i.test(norm(readTitlePage(ctx).adviserLabel?.text ?? '')) &&
+      !front.some((p) => /\b(special (project|problem|paper)|capstone)\b/i.test(p.text))
+    )
   } catch {
-    return true
+    return false
   }
 }
 
@@ -179,10 +185,13 @@ function number(ctx: Ctx): Finding {
   const issues: string[] = []
   const wrong: Para[] = []
   const unsure: string[] = []
-  const soft: string[] = []
   const scaled: string[] = []
   const scale = reducedScale(ctx)
-  const special = numberedSections(ctx)
+  // Sections numbered "I. INTRODUCTION" with no label: the UPOU-wide checklist asks for a
+  // "Chapter I" label with the title on its own line; a fix in a thesis or dissertation.
+  const thesis = thesisWork(ctx)
+  const soft: string[] = []
+  let unlabelled = false
   for (const c of chapters) {
     const p = paras[c.heading]
     const word = /^chapter/i.exec(norm(p.text))?.[0] ?? 'Chapter'
@@ -190,9 +199,10 @@ function number(ctx: Ctx): Finding {
     const right = `Chapter ${(c.number ? roman(c.number) : c.numeral).toUpperCase()}`
     const before = issues.length
     if (c.unlabelled) {
-      ;(special ? soft : issues).push(
+      ;(thesis ? issues : soft).push(
         `${chapterName(c)}: the chapter number is missing (write ${right} on its own line, with the title below it)`,
       )
+      unlabelled = thesis
       wrong.push(p)
       continue
     }
@@ -223,7 +233,7 @@ function number(ctx: Ctx): Finding {
   if (!issues.length && soft.length)
     return review(
       id,
-      'The sections are numbered “I.”, “II.”… with no “Chapter” label. The thesis template labels each chapter (“Chapter I”, with its title on the next line); check with your program whether a special problem does too.',
+      'The sections are numbered “I.”, “II.”… with no “Chapter” label. The format checklist asks for a “Chapter I” label with the title on the next line; check with your program whether a special problem or capstone project does too.',
       { details: soft.slice(0, 8), where: wrong.slice(0, 5).flatMap(at) },
     )
   if (!issues.length && scaled.length)
@@ -247,7 +257,9 @@ function number(ctx: Ctx): Finding {
       : ok(id, `${list(chapters.map(chapterName))}: title case, Roman numerals, bold Arial 12 pt.`)
   return fix(
     id,
-    'Write each chapter number in title case with a Roman numeral, bold, Arial 12 pt. (Chapter I).',
+    unlabelled
+      ? 'Label each chapter “Chapter I”, “Chapter II”… on its own line, with the title on the line below: title case, Roman numerals, bold, Arial 12 pt.'
+      : 'Write each chapter number in title case with a Roman numeral, bold, Arial 12 pt. (Chapter I).',
     {
       details: issues.slice(0, 8),
       where: (wrong.length ? wrong : [paras[chapters[0].heading]]).slice(0, 5).flatMap(at),
@@ -274,9 +286,10 @@ function title(ctx: Ctx): Finding {
   const issues: string[] = []
   const where: ReturnType<typeof at> = []
   const unsure: string[] = []
-  // Titles written on their number's line ("I. INTRODUCTION"): the chapter number item says so.
-  const inline: string[] = []
   const scaled: string[] = []
+  // Titles on their number's line ("I. INTRODUCTION") in a work not named a thesis: for review.
+  const thesis = thesisWork(ctx)
+  const inline: string[] = []
   // Titles whose last letters stand alone on the line below ("INTRODUCTIO" / "N").
   const broken: string[] = []
   const scale = reducedScale(ctx)
@@ -296,7 +309,13 @@ function title(ctx: Ctx): Finding {
       if (tf.scaled) scaled.push(name)
       if (issues.length > before) where.push(...at(p))
       if (faceUnknown(tp)) unsure.push(name)
-      if (c.inlineTitle) inline.push(name)
+      if (c.inlineTitle && !thesis) inline.push(name)
+      else if (c.inlineTitle) {
+        issues.push(
+          `${name}: the title shares the number’s line (put it on its own line, below the “Chapter” label)`,
+        )
+        where.push(...at(p))
+      }
       continue
     }
     if (c.inlineTitle) {
@@ -379,7 +398,7 @@ function title(ctx: Ctx): Finding {
   if (!issues.length && inline.length)
     return review(
       id,
-      'The chapter titles share a line with their numbers (“I. INTRODUCTION”). The thesis template puts each title on its own line below the “Chapter I” label (see the chapter number item); the titles themselves are in upper case, bold Arial 12 pt.',
+      'The chapter titles share a line with their numbers (“I. INTRODUCTION”). The format checklist puts each title on its own line below the “Chapter I” label (see the chapter number item); check with your program whether a special problem or capstone project does too.',
       {
         details: inline.slice(0, 8).map((n) => `${n}: title on the number’s line`),
         where: where.slice(0, 5),
