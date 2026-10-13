@@ -150,8 +150,10 @@ const SIGNATURE_VARIANT = new RegExp(
   'iu',
 )
 const SIGNATURE_ANY = new RegExp(`${SIGNATURE_OF.source}|${SIGNATURE_VARIANT.source}`, 'iu')
+// (an older title page leads into it: "Degree Doctor of Philosophy", "for the Degree of Master of…")
+const DEGREE_LEAD = /^(?:(?:for |of )?the )?(?:degree,? (?:of |in )?)?/i
 const PROGRAM =
-  /^(associate|bachelor|master|doctor) (of|in)\b|^(diploma|graduate certificate|professional teaching certificate|certificate) in\b/i
+  /^(?:(?:for |of )?the )?(?:degree,? (?:of |in )?)?(?:(associate|bachelor|master|doctor) (of|in)\b|(diploma|graduate certificate|professional teaching certificate|certificate) in\b)/i
 // UPOU's three faculties.
 const FACULTY =
   /faculty of (information and communication studies|management and development studies|education)\b/i
@@ -169,7 +171,7 @@ function workOf(label?: Para, program?: Para): string {
     norm(label?.text ?? ''),
   )?.[1]
   if (named) return titleCase(named)
-  const degree = norm(program?.text ?? '')
+  const degree = norm(program?.text ?? '').replace(DEGREE_LEAD, '')
   if (/^doctor (of|in)/i.test(degree)) return 'Dissertation'
   return /^(associate|bachelor) (of|in)/i.test(degree) ? 'Special Project' : 'Thesis'
 }
@@ -192,8 +194,9 @@ function scannedFront(ctx: Ctx): number[] {
     .map((pg) => pg.n)
 }
 
+// (also as an older page words it: "to the Faculty of…", after "in the" on a line of its own)
 const INSTITUTION =
-  /^(faculty of|university of|open university|college of|submitted|in partial fulfil|for the degree|(associate|bachelor|master|doctor) (of|in))\b/i
+  /^(?:(?:to|in) (?:the )?)?(faculty of|university of|open university|college of|submitted|in partial fulfil|for the degree|(associate|bachelor|master|doctor) (of|in))\b/i
 /** A short line of names, no sentence's small words: an author's name. */
 const nameLike = (p: Para) => {
   const w = norm(p.text).split(' ')
@@ -279,7 +282,9 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     k0 >= 2 &&
     nameLike(paras[k0 - 1]) &&
     !nameLike(paras[0]) &&
-    (!between.length || INSTITUTION.test(norm(between[0].text)) || (!program && !adviserLabel))
+    (!between.length ||
+      between.some((q) => INSTITUTION.test(norm(q.text))) ||
+      (!program && !adviserLabel))
       ? paras.slice(0, k0)
       : undefined
   const author = above ? above.at(-1) : (authorAbove ?? (noAuthor ? undefined : between[0]))
@@ -1431,7 +1436,11 @@ function permissionSignature(ctx: Ctx): Finding {
   // "04/08/2021"), and a typed name ("Juan B. Cruz"): only what is missing is asked for.
   const dated =
     DATE.test(typed.join(' ')) ||
-    typed.some((t) => /(?<!\d)\d{1,2}[\s/.-]+(?:[a-z]{3,9}|\d{1,2})[\s/.,-]+\d{2,5}(?!\d)/i.test(t))
+    typed.some((t) =>
+      /(?<!\d)\d{1,2}[\s/.-]+(?:[a-z]{3,9}|\d{1,2})[\s/.,-]+\d{2,5}(?!\d)/i.test(t),
+    ) ||
+    // (a month and year, "5/20")
+    typed.some((t) => /(?<![\d/])(0?[1-9]|1[0-2])\/(\d{2}|\d{4})(?![\d/])/.test(t))
   const named = typed.some((t) =>
     /^\p{Lu}[\p{L}.'’-]*(?:\s+\p{Lu}[\p{L}.'’-]*){1,5}$/u.test(
       t.replace(/_+|\s[/|,]\s.*$|,?\s*\d.*$/g, ' ').trim(),
@@ -1522,6 +1531,11 @@ const NAME_ROLE = new RegExp(
 const TITLE_ONLY =
   /^(dr|prof(essor)?|(asst|assistant|assoc|associate)\.?\s*prof(essor)?|engr|atty|mr|ms|mrs|hon)\.?$/i
 
+/** A line holding only a date, or the caption "(Date)". */
+const dateOnly = (q: Para) =>
+  /\S/.test(q.text) &&
+  /^[\s(]*(date)?[\s)]*$/i.test(norm(q.text).replace(new RegExp(DATE.source, 'gi'), ''))
+
 function readNames(ctx: Ctx): Names {
   const r = ctx.s.acceptance
   if (!r) return { committee: [] }
@@ -1530,13 +1544,19 @@ function readNames(ctx: Ctx): Names {
   let dean: Names['dean']
   paras.forEach((p, k) => {
     const t = norm(p.text)
-    const prev = paras[k - 1]
-    if (!prev) return
+    if (!paras[k - 1]) return
+    // (a date or its caption "(Date)", set beside the name, may come between it and the role;
+    // with no name line above it, the date is all there is to go by, as before)
+    let j = k - 1
+    if (ROLE_LINE.test(t)) while (j > 0 && dateOnly(paras[j])) j--
+    if (j < k - 1 && (ROLE_LINE.test(norm(paras[j].text)) || norm(paras[j].text).length > 80))
+      j = k - 1
+    const prev = paras[j]
     if (ROLE_LINE.test(t)) {
       // (the sentence of the page above a role with no name: the name was taken out)
-      const alone = paras[k - 2] && TITLE_ONLY.test(norm(paras[k - 2].text))
+      const alone = paras[j - 1] && TITLE_ONLY.test(norm(paras[j - 1].text))
       // (the name typed above an empty underlined line: the line is the paragraph before the role)
-      const typed = /^[_\s]*$/.test(prev.text) ? paras[k - 2] : undefined
+      const typed = /^[_\s]*$/.test(prev.text) ? paras[j - 1] : undefined
       const typedName =
         typed &&
         norm(typed.text).split(' ').length <= 10 &&
@@ -1550,9 +1570,9 @@ function readNames(ctx: Ctx): Names {
         norm(prev.text).split(' ').length > 12 || ROLE_LINE.test(norm(prev.text))
           ? ''
           : typedName ||
-            (alone ? norm(paras[k - 2].text) + ' ' : '') + cleanName(shown(prev)).replace(/^_+/, '')
+            (alone ? norm(paras[j - 1].text) + ' ' : '') + cleanName(shown(prev)).replace(/^_+/, '')
       // "NAME" set over the line, the name itself above it.
-      const above = paras[k - 2]
+      const above = paras[j - 1]
       const real =
         /^name$/i.test(name) &&
         above &&
@@ -1595,6 +1615,20 @@ function sharedEnds(a: string, b: string) {
   let j = 0
   while (j < a.length - i && j < b.length - i && a.at(-1 - j) === b.at(-1 - j)) j++
   return i + j
+}
+
+/** Two words alike but for two letters side by side inside them read as two others ("READING"
+ *  as "REALDNG"): a scan's misread glyphs, not two letters swapped by hand ("RAEDING") nor
+ *  another ending ("SPECTRAL", "SPECTRUM"). */
+function glyphPair(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  const at = [...a].flatMap((c, i) => (c === b[i] ? [] : [i]))
+  return (
+    at.length === 2 &&
+    at[1] === at[0] + 1 &&
+    at[1] < a.length - 1 &&
+    !(a[at[0]] === b[at[1]] && a[at[1]] === b[at[0]])
+  )
 }
 
 function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
@@ -1649,6 +1683,13 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
       where: at(p),
     })
   const main = titleOf(tp)
+  // No title read on the Title Page (a scanned page): nothing to compare with.
+  if (!main)
+    return review(
+      id,
+      `The title on the Title Page could not be read, so it was not compared. Check that the Acceptance Page has the same ${tp.work.toLowerCase()} title as the Title Page.`,
+      { where: at(p) },
+    )
   if (garbled(t) || garbled(main))
     return review(
       id,
@@ -1681,7 +1722,7 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
       d.onlyB.length === 1 &&
       Math.abs(d.onlyA[0].length - d.onlyB[0].length) <= 1 &&
       sharedEnds(d.onlyA[0], d.onlyB[0]) >= Math.max(d.onlyA[0].length, d.onlyB[0].length) - 3 &&
-      /\p{Lu}{2}\p{Ll}\p{Lu}{2}/u.test(`${main} ${t}`)
+      (/\p{Lu}{2}\p{Ll}\p{Lu}{2}/u.test(`${main} ${t}`) || glyphPair(d.onlyA[0], d.onlyB[0]))
     )
       return review(
         id,

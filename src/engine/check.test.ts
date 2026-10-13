@@ -400,6 +400,45 @@ describe('check', () => {
     expect(finding(back, 'appendices.labels').status).toBe('fix')
   })
 
+  it('reads an older title page (title first, then "Degree Doctor of …", "in the" Faculty) and committee names with dates beside them', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'older.docx',
+      docx(
+        ...[
+          'A STUDY OF COMMUNITY RADIO',
+          'IN TWO TOWNS',
+          'Juan A. Cruz',
+          'Submitted in Partial Fulfillment of the Requirements for the',
+          'Degree Doctor of Philosophy',
+          '(Science Education)',
+          'in the',
+          'Faculty of Education',
+          'University of the Philippines Open University',
+        ].map((t) => para(t, c)),
+        para('Acceptance Page', `<w:pageBreakBefore/>${c}`),
+        para(
+          'This dissertation titled “A STUDY OF COMMUNITY RADIO IN TWO TOWNS” prepared and submitted by Juan A. Cruz is hereby accepted.',
+        ),
+        para('DR. MARIA B. SANTOS'),
+        para('(Date)'),
+        para('Chair, Dissertation Committee'),
+        para('DR. PEDRO C. REYES'),
+        para('12 May 2026'),
+        para('Member, Dissertation Committee'),
+        para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+        para('INTRODUCTION', c),
+        para('Body text.'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'acceptance.title').status).toBe('ok')
+    expect(finding(r, 'title.sequence').details?.[0]).not.toMatch(/degree program/)
+    expect(finding(r, 'acceptance.names').details?.join(' ') ?? '').not.toMatch(/blank/)
+    // A year at a footer's end is no page number.
+    expect(parseFolio('A STUDY OF RADIO Juan Cruz, 2020')).toMatchObject({ unreadNumber: true })
+  })
+
   it('reads a bare “Adviser:”, a Faculty-in-Charge and the older permission wording', async () => {
     const c = '<w:jc w:val="center"/>'
     const page = (label: string, signature: string, program: string) =>

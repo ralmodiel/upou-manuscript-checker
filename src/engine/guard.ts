@@ -96,6 +96,7 @@ function anchorDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
 const LAYOUT =
   /^((prelims|chapterStart|body)\.(justified|spacing)|body\.hanging|chapterStart\.(number|title|newPage)|figures\.\w+)$/
 const PART = /^(title|permission|acceptance)\./
+const area = (b: Page['images'][number]) => (b.x1 - b.x0) * (b.y1 - b.y0)
 
 /** Findings that rest on scanned pages read through their machine-read text layer (PDF): what
  *  that layer says of fonts, sizes, alignment, spacing and pictures is the scan's guess, and its
@@ -126,14 +127,20 @@ function scanDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
     )
       out.set(f.id, PARTLY)
   const ocr = new Set(pages.filter((pg) => pg.ocr).map((pg) => pg.n))
-  if (!ocr.size) return out
   const mostly = ocr.size * 2 >= pages.length
+  // (before Chapter I, or anywhere when no chapter was found, a page whose text stands over a
+  // picture of the whole page is a scan too)
+  const ch = s.chapters[0]
+  const front = ch ? (doc.paras[ch.heading]?.page ?? 0) : pages.length
+  for (const pg of pages.slice(0, front))
+    if (pg.paras.length && pg.images.some((b) => area(b) >= 0.8 * pg.width * pg.height))
+      ocr.add(pg.n)
+  if (!ocr.size) return out
   // (in a manuscript mostly so, a page whose text stands over a picture of the whole page is a
   // scan too, its layer merely left visible)
   if (mostly)
     for (const pg of doc.pages!)
-      if (pg.images.some((b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.8 * pg.width * pg.height))
-        ocr.add(pg.n)
+      if (pg.images.some((b) => area(b) >= 0.8 * pg.width * pg.height)) ocr.add(pg.n)
   const partPage = (id: string) => {
     const r = id.startsWith('title.')
       ? s.title
@@ -142,8 +149,13 @@ function scanDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
         : s.acceptance
     return r ? doc.paras[r.start]?.page : undefined
   }
+  // (a pass on a front page so read is the scan's guess too)
   for (const f of found) {
-    if (f.status !== 'fix' && !(f.status === 'ok' && mostly && LAYOUT.test(f.id))) continue
+    if (
+      f.status !== 'fix' &&
+      !(f.status === 'ok' && ((mostly && LAYOUT.test(f.id)) || PART.test(f.id)))
+    )
+      continue
     const pages = (f.where ?? []).map((w) => w.page).filter((p) => p !== undefined)
     const doubt = pages.length
       ? pages.every((p) => ocr.has(p))

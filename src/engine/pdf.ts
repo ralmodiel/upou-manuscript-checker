@@ -961,6 +961,17 @@ function splitBands(
       /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text)
     )
       footer.push(l)
+    // So is a shortened title in capitals with its number, last on the page and set apart
+    // ("A STUDY OF THINGS   ii"): no line of text is in capitals to its end (a caption's
+    // "TABLE 4" left at the foot is no title).
+    else if (
+      !below &&
+      l.y > height - 130 &&
+      (!above || l.y - above.y >= 18) &&
+      /^[^\p{Ll}]*\p{Lu}{2}[^\p{Ll}]*\s\S+\s+([ivxlcdm]+|\d{1,3})\s*$/u.test(l.text) &&
+      !/^\s*(table|figure|chapter|appendix|annex|plate)\b/i.test(l.text)
+    )
+      footer.push(l)
     // A bare page number at the top right, first on its page.
     else if (
       !above &&

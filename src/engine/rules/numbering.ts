@@ -65,6 +65,10 @@ export function parseFolio(raw: string, words?: Set<string>): Folio | undefined 
       ...(odd ? { unreadNumber: true } : {}),
     }
   }
+  // A year closing the footer's text ("…, Author, 2020") is no page number: that one is not
+  // in the text, unread.
+  if (/^(19|20)\d\d$/.test(m[3]) && /,$/.test(m[1].trim()))
+    return { raw: t, title: t, ellipsis: false, unreadNumber: true }
   let title = m[1].trim()
   // "p. 60", "page 7": the label of a number, which the template does not have.
   const label = /(?:^|\s)(?:p|pp|pg|page)\.?$/i.test(title)
@@ -178,8 +182,12 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
       : want.kind === 'roman'
         ? roman(want.value)
         : String(want.value)
+  // (what the footer's title shows is judged all the same)
   if (folio?.unreadNumber)
-    return [{ type: 'unread', page, text: `${at}the page number could not be read` }]
+    return [
+      { type: 'unread', page, text: `${at}the page number could not be read` },
+      ...titleProblems(folio, at, page),
+    ]
   if (!folio || (folio.number === undefined && !folio.field))
     return [
       {
@@ -225,6 +233,12 @@ export function judge(folio: Folio | undefined, want: Want, page?: number): Prob
       page,
       text: `${at}the number has “p.” or “page” before it; write the number alone`,
     })
+  return [...out, ...titleProblems(folio, at, page)]
+}
+
+/** What a footer's title lacks: the shortening, the ellipsis. */
+function titleProblems(folio: Folio, at: string, page?: number): Problem[] {
+  const out: Problem[] = []
   const words = folio.title.split(/\s+/).filter(Boolean).length
   if (PLACEHOLDER.test(folio.title))
     out.push({ type: 'placeholder', page, text: `${at}still says “Shortened title here”` })
@@ -660,7 +674,7 @@ const LABEL: Record<Problem['type'], string> = {
   changed: 'The title in the footer changes on',
   label: 'The number has “p.” or “page” before it on',
   overlap: 'The footer prints over itself, so it could not be read, on',
-  unread: 'No text layer (the page number could not be read) on',
+  unread: 'The page number could not be read (no text layer, or not as text) on',
 }
 
 /** Problems grouped by kind, one line each ("No page number on pp. 4–6, e.g. …"). */
