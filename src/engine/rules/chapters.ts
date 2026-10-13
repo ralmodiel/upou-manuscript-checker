@@ -456,6 +456,12 @@ const headingLike = (p: Para) => {
     !/^\p{Ll}/u.test(t) &&
     // (nor does one with a sentence closed inside quotation marks: a quotation's end, its source)
     !/[.!?,;]["”]/.test(t) &&
+    // (nor one closing a bracket it did not open, the end of a quotation's translation, nor two
+    // sentences, "It is late. We left", lines of speech)
+    // (a list label first, "3.)", is set aside)
+    (t.replace(/^\(?\w{1,4}[.)]+\s/, '').match(/\)/g) ?? []).length <=
+      (t.match(/\(/g) ?? []).length &&
+    !/\p{Ll}{3,}[.!?]\s+\p{Lu}/u.test(t) &&
     !/_{3,}|\[[^\]]*\]/.test(t) &&
     (p.lines?.length ?? 1) <= 2 &&
     // (two lines of a term and its meaning, "SUPPORT - Send a message…", are a list item)
@@ -468,7 +474,7 @@ const headingLike = (p: Para) => {
 // A line of source code: an argument list or assignment ("p_name => 'x'", "x := 1;"), a line
 // opened by a comma, a comment mark or a quote, markup, or identifiers with underscores and brackets.
 const CODE_LINE =
-  /=>|:=|^\s*(,|--|\/\/)\S|^\s*'|#[A-Z_]{3,}#|<\/?[a-z][\w-]*[\s>]|\b[a-z]+_[a-z0-9_]+\s*[=(]|\w\(\s*'[^']*'|\.\w+_\w+\(/i
+  /=>|:=|^\s*(,|--|\/\/)\S|^\s*'|#[A-Z_]{3,}#|<\/?[a-z][\w-]*[\s>]|\b[a-z]+_[a-z0-9_]+\s*[=(]|\w\(\s*'[^']*'|\.\w+_\w+\(|"[a-z0-9]+_[a-z0-9_]+"/i
 
 function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   const id = 'body.hanging'
@@ -589,6 +595,9 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       )
         continue
     }
+    // Lines that all start past the middle of the text area, not centred: a sign-off under a
+    // letter or a dedication ("- Name"), the side text of a layout, not running text.
+    if (pg && lines.length && !centred(p) && lines.every((l) => l.x0 > mid + 20)) continue
     // Text set smaller than the running text (the labels of a chart, a note) is no heading.
     if (!pg || !end || lines[0].size < bodySize - 1) continue
     // A caption's second line (the first says "Figure 4.", the next gives the title).
@@ -607,9 +616,12 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       !p.inTable &&
       t.length <= 60 &&
       /\p{L}.*\p{L}/u.test(t) &&
-      !/^["“‘'[(]/.test(t) &&
+      !/^["“‘'[(\-–—]/.test(t) &&
       !/^\p{Ll}/u.test(t) &&
       !/[.:;,!?"”’'\]]$/.test(t) &&
+      // (nor the end of a quotation followed by its source: "… that.” (Informant C)")
+      !/[.!?,;]["”’]/.test(t) &&
+      p.align !== 'right' &&
       p.runs.filter((r) => r.text.trim()).every((r) => r.italic)
     // A line that is a whole sentence (a paragraph's first line, a list item) is no heading.
     const sentence = !caption && lines.length === 1 && t.length >= 50 && /[.!?]["”’)]?$/.test(t)
@@ -621,7 +633,7 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       !!before?.lines &&
       before.page === p.page &&
       row(before) &&
-      lines[0].y - before.lines.at(-1)!.y <= 2.2 * lines[0].size
+      lines[0].y - before.lines.at(-1)!.y <= 3 * lines[0].size
     // The last thing on its page (no picture below it either), after text or a picture, and with
     // something to come on the pages after; not a caption under its picture, closing the figure.
     if (
@@ -637,8 +649,17 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       ) &&
       end.page === p.page &&
       (!next || next.page !== p.page) &&
-      // (the legend or axis labels inside a chart's drawn frame are no heading)
+      // (the legend or axis labels inside a chart's drawn frame are no heading, nor a label right
+      // under a diagram, after its smaller text)
       !(!caption && inShape(ctx, p, 0.95)) &&
+      !(
+        !caption &&
+        before?.page === p.page &&
+        (before.lines?.[0]?.size ?? 99) < bodySize - 1 &&
+        pg.marks.some(
+          (m) => m.kind === 'path' && m.y1 <= end.y && m.y1 >= end.y - 2.5 * lines[0].size,
+        )
+      ) &&
       // (a figure drawn in vectors below it, above the footer: the line is not the page's last;
       // one box drawn over and over, a frame around the footer, is no figure)
       new Set(
@@ -654,10 +675,28 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
           )
           .map((m) => [m.x0, m.y0, m.x1, m.y1].map(Math.round).join()),
       ).size < 4 &&
-      !pics.some((b) => b.y0 >= end.y - 2) &&
+      // (a picture below the line, or one the line is set over, near its top: a caption on it)
+      !pics.some(
+        (b) =>
+          b.y0 >= end.y - 2 ||
+          (b.y0 <= end.y && end.y - b.y0 <= 2 * lines[0].size && b.y1 > end.y + 2),
+      ) &&
       (texted.has(pg.n) || above) &&
       (next || (doc.pages?.[pg.n + 1]?.images.length ?? 0) > 0) &&
-      !((caption || label) && (above || belowTable))
+      !((caption || label) && (above || belowTable)) &&
+      // (one of a run of labels with no text between, "Appendix A: …", "Appendix B: …": a list
+      // of the parts, not a heading over text)
+      !(
+        before?.page === p.page &&
+        headingLike(before) &&
+        !!next &&
+        headingLike(next) &&
+        [before, next].every(
+          (q) =>
+            norm(q.text).split(' ')[0] === t.split(' ')[0] &&
+            Math.abs((q.lines?.[0]?.x0 ?? -99) - lines[0].x0) <= 3,
+        )
+      )
     ) {
       details.push(
         `${place(pg.n, p)}: ${caption ? 'the caption' : sentence ? 'the line' : 'the heading'} “${quote(p.text, 40)}” is the last line of the page`,
@@ -680,7 +719,11 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         last &&
         last.page === p.page &&
         (!after || after.page !== p.page) &&
-        !pics.some((b) => b.y0 >= last.y - 2) &&
+        !pics.some(
+          (b) =>
+            b.y0 >= last.y - 2 ||
+            (b.y0 <= last.y && last.y - b.y0 <= 2 * last.size && b.y1 > last.y + 2),
+        ) &&
         !!upper &&
         (upper.images.some(
           (b) =>
