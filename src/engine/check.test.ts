@@ -125,6 +125,29 @@ describe('check', () => {
     expect(finding(r, 'extra.placeholders').status).toBe('fix')
   })
 
+  it('holds the reference list to APA: bold heading on a new page, every work cited both ways', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('Radio reaches the hills (Abad, 2019; Tolentino, 2021).'),
+        para('Reference', '<w:jc w:val="center"/>'),
+        para('Abad, R. (2019). Notes on the field. Press.', double),
+        para('Lim, B. (2020). One work. Press.', double),
+      ),
+      opts,
+    )
+    const apa = finding(r, 'references.apa')
+    expect(apa.status).toBe('fix')
+    const d = apa.details?.join(' ') ?? ''
+    expect(d).toMatch(/in bold/)
+    expect(d).toMatch(/on a new page/)
+    expect(d).toMatch(/Title the list/)
+    expect(d).toMatch(/Not found cited in the text.*“Lim/)
+    expect(d).not.toMatch(/Not found cited.*Abad/)
+    expect(d).toMatch(/not found in the reference list: “Tolentino”/)
+  })
+
   it('reads a chapter title put under its label with a line break', async () => {
     const r = await check(
       'thesis.docx',
@@ -157,7 +180,8 @@ describe('check', () => {
     const r = await check(
       'thesis.docx',
       thesis(
-        para('REFERENCES', '<w:jc w:val="center"/>'),
+        para('As Smith (2018, 2020) found, and the Community Radio Network (n.d.) shows.'),
+        '<w:p><w:pPr><w:pageBreakBefore/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>REFERENCES</w:t></w:r></w:p>',
         para('Community Radio Network. (n.d.). An undated page.', double),
         para('Smith, J. (2020). A later work.', double),
         para('Smith, J. (2018). An earlier work.', double),
