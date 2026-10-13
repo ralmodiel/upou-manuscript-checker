@@ -731,10 +731,35 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     issues.push('Centre the heading “References”, as APA style and the template do.')
     statuses.push(sure ? 'fix' : 'review')
   }
-  // APA and the template call the list "References" (a bibliography lists other reading too).
+  // APA and the template set the heading in bold (a PDF font whose name says nothing hides it).
+  if (!head.plain && !bolded(head) && !head.runs.some((r) => r.unknown && r.text.trim())) {
+    issues.push(
+      `Set the heading “${quote(head.text, 30)}” in bold, as APA style and the template do.`,
+    )
+    statuses.push('fix')
+  }
+  // APA starts the list on a new page after the text: a heading that follows text on its page
+  // does not (the template's own page break, or a PDF page it opens, does).
+  // (Word: the paragraph right above, with text, and no break between, as for a chapter)
+  const above = ctx.doc.paras[head.i - 1]
+  if (
+    ctx.doc.kind !== 'doc' &&
+    !head.newPage &&
+    head.renderedBreak !== 'before' &&
+    !!above &&
+    !!norm(above.text) &&
+    (ctx.doc.kind !== 'pdf' || above.page === head.page)
+  ) {
+    issues.push(
+      `Start the reference list on a new page (a page break, Ctrl+Enter, before its heading): it follows the text above${head.page !== undefined ? ` on ${pagesText([head.page])}` : ''}.`,
+    )
+    statuses.push('fix')
+  }
+  // APA and the template call the list "References" (a bibliography lists other reading too);
+  // "Reference" for one work alone.
   const named = norm(head.text).replace(/[:.]$/, '')
   const bareName = named.replace(/^([ivxlc]+|\d{1,2})\s*[.)]\s*/i, '')
-  if (!/^references$/i.test(bareName)) {
+  if (!(refs.length === 1 ? /^references?$/i : /^references$/i).test(bareName)) {
     issues.push(
       `Title the list “References”, as APA style and the template do (not “${quote(head.text, 30)}”).`,
     )
@@ -889,6 +914,87 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push('review')
   }
+  // APA: every work cited in the text is listed, and every listed work is cited. Surnames are
+  // matched as letters anywhere (a name read in two pieces, or found inside a longer word, counts
+  // as there): only a name wholly absent is named, for a second look (a citation may sit in a
+  // picture, or be spelt otherwise).
+  const inList = new Set(refs.flatMap((e) => e.paras.map((p) => p.i)))
+  // (ł, ø and the like have no accent to strip: "Bryła" is cited as "Bryla")
+  const letters = (t: string) =>
+    t
+      .normalize('NFD')
+      .toLowerCase()
+      .replace(/[łŀ]/g, 'l')
+      .replace(/ø/g, 'o')
+      .replace(/đ/g, 'd')
+      .replace(/ı/g, 'i')
+      .replace(/[^a-z]/g, '')
+  const textParas = ctx.doc.paras.filter((p) => !inList.has(p.i) && p.i !== head.i)
+  const bodyLetters = letters(textParas.map((p) => p.text).join(' '))
+  // (a surname of two words, "Al Rashid" or "Cruz Reyes", is often cited by one of them)
+  const uncited = own.filter((e) => {
+    const n = byline(e)?.names[0]
+    const words = e.text
+      .replace(/^(\d+[.)]|\[\d+\])\s*/, '')
+      .split(',')[0]
+      .split(/[\s-]+/)
+      .map(letters)
+      .filter((w) => w.length >= 4)
+    return (
+      !!n &&
+      n.length >= 3 &&
+      !bodyLetters.includes(n) &&
+      !words.some((w) => bodyLetters.includes(w))
+    )
+  })
+  if (uncited.length) {
+    issues.push(
+      `Not found cited in the text (cite each listed work, or remove it): ${entriesText(uncited, (e) => `“${byline(e)!.cite}”`)}.`,
+    )
+    statuses.push('review')
+  }
+  // Parenthetical citations, "(Reyes, 2019; Cruz & Lim, 2020)", whose first author's surname is
+  // nowhere in the list.
+  // (all that follows the heading: an entry the list's reading missed still counts)
+  const listLetters = letters(
+    ctx.doc.paras
+      .slice(head.i + 1)
+      .map((p) => p.text)
+      .join(' '),
+  )
+  const missing = new Map<string, number | undefined>()
+  for (const p of textParas)
+    for (const m of p.text.matchAll(/\(([^()]{3,300})\)/g))
+      for (const part of m[1].split(';')) {
+        const c =
+          /^\s*(?:(?:e\.g\.|see|cf\.|as cited in|also)[,\s]+)*(\p{Lu}[\p{L}'’-]{2,})(?:\s+(?:et al\.?|and|&)\s*[\p{L}'’.\s-]*)?,\s+(?:(?:1[89]|20)\d\d[a-z]?|n\.\s?d\.)(?!\d)/u.exec(
+            part,
+          )
+        const n = c && letters(c[1])
+        if (
+          n &&
+          // (an organisation's abbreviation, "WHO", stands for a name written out in the list)
+          /\p{Ll}/u.test(c[1]) &&
+          !/^(table|figure|chapter|section|appendix|page|vol|no|republic|act|sec|art|january|february|march|april|may|june|july|august|september|october|november|december|spring|summer|autumn|fall|winter)$/.test(
+            n,
+          ) &&
+          !listLetters.includes(n) &&
+          !missing.has(c[1])
+        )
+          missing.set(c[1], p.page)
+      }
+  if (missing.size) {
+    const names = [...missing]
+    issues.push(
+      `Cited in the text but not found in the reference list: ${list(
+        names
+          .slice(0, 3)
+          .map(([n, pg]) => `“${n}”${pg !== undefined ? ` (${pagesText([pg])})` : ''}`)
+          .concat(names.length > 3 ? [`${names.length - 3} more`] : []),
+      )}.`,
+    )
+    statuses.push('review')
+  }
   if (!issues.length)
     return ctx.doc.kind === 'doc'
       ? review(
@@ -897,7 +1003,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
         )
       : ok(
           id,
-          `The ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '' : ', and hanging indents'}.`,
+          `The ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '' : ', and hanging indents'}; their authors are found in the text, and the text's citations in the list. The heading is bold, centred and on a new page.`,
         )
   const status = worst(statuses)
   return {
