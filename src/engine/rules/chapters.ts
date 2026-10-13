@@ -954,6 +954,8 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         before!.lines!.length === 1 &&
         bl.page === p.page &&
         !before!.inTable &&
+        // (a list's item is one, unless it numbers a run of the sentence: "2) establishing…")
+        (!isList(p) || /^\S{1,4}\s+\p{Ll}/u.test(norm(p.text))) &&
         lines[0].y > bl.y &&
         lines[0].y - bl.y <= 2.4 * bl.size &&
         !/[.!?:]["”’)]?$/.test(norm(before!.text)) &&

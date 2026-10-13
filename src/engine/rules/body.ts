@@ -262,8 +262,11 @@ const titleLines = (ctx: Ctx, p: Para) =>
 const centredLines = (ctx: Ctx, p: Para) => {
   const ls = p.lines ?? []
   const m = ls[0] && ctx.doc.pages?.[ls[0].page]?.margins
+  // (a quotation's: quotation marks in it or in the lines around it)
+  const near = [p.i - 1, p.i, p.i + 1].map((k) => ctx.doc.paras[k])
   return (
     !!m &&
+    near.some((q) => !!q && q.page === p.page && /^["“]|["”]$/.test(norm(q.text))) &&
     ls.length >= 2 &&
     ls.every((l) => Math.abs((l.x0 + l.x1) / 2 - (m.left + m.right) / 2) <= 4) &&
     ls.some((l) => l.x0 > m.left + 3) &&
@@ -279,7 +282,8 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
       multiLine(ctx, p) &&
       !isList(p) &&
       p.align !== 'center' &&
-      !centredLines(ctx, p) &&
+      // (the preliminary pages hold no quotations: centred text there is to justify)
+      !(id !== 'prelims.justified' && centredLines(ctx, p)) &&
       !blockQuote(ctx, p) &&
       !titleLines(ctx, p) &&
       // PDF: two lines ending a paragraph carried over from the page before, the first reaching to

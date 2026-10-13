@@ -420,11 +420,8 @@ export function findStructure(doc: Doc): Structure {
       // ("is hereb\ accepted": a font re-encoded may garble a letter)
       /\b(paper|thesis|dissertation|study|manuscript|special problem|special project|capstone project) (prepared|written|entitled|attached hereto)\b.*\bby\b|is hereb\S? accepted/i,
     )
-    // (before the preliminary pages and chapters: a sentence of a chapter is no acceptance page)
-    const front = Math.min(
-      s.prelims[0]?.heading ?? paras.length,
-      s.chapters[0]?.heading ?? paras.length,
-    )
+    // (before the chapters: a sentence of a chapter is no acceptance page)
+    const front = s.chapters[0]?.heading ?? s.references?.heading ?? paras.length
     if (k > 0 && k < front)
       s.acceptance = {
         heading: pageStartOn(doc, k),
