@@ -527,7 +527,9 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     statuses.push('fix')
   }
   if (groups > 0) {
-    issues.push('List all references in one alphabetical list, not grouped by type of source.')
+    issues.push(
+      'Check that all references are in one alphabetical list, not grouped by type of source.',
+    )
     statuses.push('review')
   }
   // APA's hanging indent sets the lines after the first 0.5 inch in, not the first line (a numbered
@@ -573,7 +575,12 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   const hl = head.lines?.length === 1 ? head.lines[0] : undefined
   const hp = hl && ctx.doc.pages?.[hl.page]
   // (a PDF line whose middle is the page's middle is centred, whatever the file says)
-  const middle = !!hp && Math.abs((hl.x0 + hl.x1) / 2 - hp.width / 2) < 8
+  // (or the middle of the lines' own block, set off by a wider binding margin)
+  const block = hp?.margins && (hp.margins.left + hp.margins.right) / 2
+  const middle =
+    !!hp &&
+    (Math.abs((hl.x0 + hl.x1) / 2 - hp.width / 2) < 8 ||
+      (!!block && Math.abs((hl.x0 + hl.x1) / 2 - block) < 8))
   if (!head.plain && head.align !== 'center' && !middle) {
     const left = ctx.doc.pages?.[head.page ?? -1]?.margins?.left
     const x0 = head.lines?.[0]?.x0

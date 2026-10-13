@@ -490,6 +490,46 @@ describe('check', () => {
     expect(finding(r, 'acceptance.convention').message).toMatch(/All names use titles/)
   })
 
+  it('takes the Certificate of Acceptance over an Approval Sheet, and an older access list with one “Yes” for review', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'thesis.docx',
+      docx(
+        ...[
+          'UNIVERSITY OF THE PHILIPPINES',
+          'OPEN UNIVERSITY',
+          'MASTER OF EDUCATION',
+          'Juan A. Cruz',
+          'A STUDY OF RADIO',
+          'Thesis Adviser:',
+          'Dr. Maria B. Santos',
+        ].map((t) => para(t, c)),
+        para('Permission is given for the following people to have access to this thesis:'),
+        para('Available to the general public\tYes'),
+        para('Available only after consultation with author and thesis adviser\tNo'),
+        para('Available only to those bound by confidentiality agreement\tNo'),
+        para('APPROVAL SHEET', `<w:pageBreakBefore/>${c}`),
+        para(
+          'We, the members of the panel, approved the thesis entitled “A study of radio.” The thesis attached hereto is hereby accepted.',
+        ),
+        para('Prof. Jose C. Reyes, PhD'),
+        para('Member'),
+        para('CERTIFICATE OF ACCEPTANCE OFTHESIS', `<w:pageBreakBefore/>${c}`),
+        para(
+          'The thesis attached hereto, entitled “A study of radio,” prepared and submitted by Juan A. Cruz, in partial fulfilment of the requirements for the degree, is hereby accepted.',
+        ),
+        para('Dr. Maria B. Santos'),
+        para('Adviser'),
+        para('Dr. Ana D. Lim'),
+        para('Dean'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'acceptance.title')).toMatchObject({ status: 'ok' })
+    expect(finding(r, 'acceptance.convention').message).toMatch(/All names use titles/)
+    expect(finding(r, 'title.permission')).toMatchObject({ status: 'review' })
+  })
+
   it('does not take a lettered section for a chapter, nor a special problem’s sections for an error', async () => {
     const c = '<w:jc w:val="center"/>'
     const text =
@@ -954,6 +994,27 @@ describe('consistency guard', () => {
   it('reads an ellipsis inside the closing quotation mark of a footer', () => {
     expect(parseFolio('“A Study of Radio…” 12')).toMatchObject({ ellipsis: true, number: '12' })
     expect(parseFolio('A Study of Radio 12')).toMatchObject({ ellipsis: false })
+  })
+
+  it('turns findings that rest on scanned pages with a machine-read text layer to review', () => {
+    const ctx = {
+      doc: {
+        kind: 'pdf',
+        paras: [{ i: 0, page: 0, text: 'A', runs: [] }],
+        notes: [],
+        pages: [0, 1, 2].map((n) => ({ n, footer: '', footerLines: [], images: [], ocr: n > 0 })),
+      },
+      s: { chapters: [], title: { start: 0, end: 1 } },
+      env: {},
+    } as unknown as Ctx
+    const out = guard(ctx, [
+      fixOn('chapterStart.number', ['Use bold Arial 14 pt'], [{ page: 1, quote: 'CHAPTER I' }]),
+      fixOn('body.justified', ['p. 3'], [{ page: 2, quote: 'Text…' }]),
+      fixOn('title.signature', ['x'], [{ page: 0, quote: 'A' }]),
+      { id: 'body.spacing', status: 'ok' as const, message: 'Double-spaced.' },
+    ])
+    expect(out.map((f) => f.status)).toEqual(['review', 'review', 'fix', 'review'])
+    expect(out[0].details).toBeUndefined()
   })
 
   it('takes no sentence opening with “Chapter two” for a chapter heading', async () => {

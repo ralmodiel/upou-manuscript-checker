@@ -92,18 +92,67 @@ function anchorDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
   return out
 }
 
+// Items judged from where the letters stand and how they are set, not from the words alone.
+const LAYOUT =
+  /^((prelims|chapterStart|body)\.(justified|spacing)|body\.hanging|chapterStart\.(number|title|newPage)|figures\.\w+)$/
+const PART = /^(title|permission|acceptance)\./
+
+/** Findings that rest on scanned pages read through their machine-read text layer (PDF): what
+ *  that layer says of fonts, sizes, alignment, spacing and pictures is the scan's guess, and its
+ *  words may be misread too. A finding whose pages are all such pages is for review; with no page
+ *  named, so is one of a manuscript mostly scanned (its own part's page decides for the front
+ *  pages), and a pass on the layout of such a manuscript. */
+function scanDoubts(ctx: Ctx, found: Finding[]): Set<string> {
+  const { doc, s } = ctx
+  const out = new Set<string>()
+  const ocr = new Set(doc.pages?.filter((pg) => pg.ocr).map((pg) => pg.n))
+  if (!ocr.size) return out
+  const mostly = ocr.size * 2 >= doc.pages!.length
+  // (in a manuscript mostly so, a page whose text stands over a picture of the whole page is a
+  // scan too, its layer merely left visible)
+  if (mostly)
+    for (const pg of doc.pages!)
+      if (pg.images.some((b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.8 * pg.width * pg.height))
+        ocr.add(pg.n)
+  const partPage = (id: string) => {
+    const r = id.startsWith('title.')
+      ? s.title
+      : id.startsWith('permission.')
+        ? s.permission
+        : s.acceptance
+    return r ? doc.paras[r.start]?.page : undefined
+  }
+  for (const f of found) {
+    if (f.status !== 'fix' && !(f.status === 'ok' && mostly && LAYOUT.test(f.id))) continue
+    const pages = (f.where ?? []).map((w) => w.page).filter((p) => p !== undefined)
+    const doubt = pages.length
+      ? pages.every((p) => ocr.has(p))
+      : PART.test(f.id)
+        ? ocr.has(partPage(f.id) ?? -1)
+        : mostly
+    if (doubt) out.add(f.id)
+  }
+  return out
+}
+
+const SCANNED =
+  'The pages this item rests on are scanned pictures with a machine-read text layer, so their fonts, spacing, alignment and even words may be misread. Check this item yourself.'
+
 /** The findings, with the claims of a likely misreading turned to review. */
 export function guard(ctx: Ctx, found: Finding[]): Finding[] {
   let footer: ReturnType<typeof footerDoubts>
   let anchored: Map<string, string>
+  let scanned: Set<string>
   try {
     footer = footerDoubts(ctx)
     anchored = anchorDoubts(ctx, found)
+    scanned = scanDoubts(ctx, found)
   } catch (e) {
     console.error(e)
     return found
   }
   return found.map((f) => {
+    if (scanned.has(f.id)) return review(f.id, SCANNED, { where: f.where })
     if (f.status !== 'fix') return f
     let why = anchored.get(f.id)
     // (a footer item is downgraded only when every claim it makes is a doubted one)

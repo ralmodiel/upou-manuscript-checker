@@ -273,6 +273,8 @@ export function findCaptions(ctx: Ctx): Caption[] {
       // (a sentence in a font read wrongly: its first word, "shows", has capitals inside it)
       (rest.length > 40 && garbled(rest) && !bolded(p) && !faceUnknown(p)) ||
       /^[,;)]/.test(rest) ||
+      // ("Table 3 (see below) presents…", "Figure 2 (next page) shows…": a sentence)
+      /^\((see|below|above|next|on p)/i.test(rest) ||
       CONTINUED.test(t) ||
       /^\(?cont(inued|['’]d|\.)?\)?(\s|$)/i.test(rest)
     )

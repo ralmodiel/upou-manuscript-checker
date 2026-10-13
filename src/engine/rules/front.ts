@@ -1027,6 +1027,27 @@ function permissionCode(ctx: Ctx, tp: TitlePage): Finding {
       'The permission table on the title page is a picture, so its marks could not be read here. Check that one code is marked “Yes” and the others “No”.',
       { where: [{ page: tp.page }] },
     )
+  // An older form of the page: access rows ("Available to the general public … Yes") in place of
+  // the codes. With one row "Yes" and the rest "No" it is filled in as that form asks.
+  const access = tp.paras.filter((p) => /^available (to|only)\b/i.test(norm(p.text)))
+  if (tp.rows.length < 4 && access.length >= 2) {
+    const yes = access.filter((p) => typedChoice(p.text) === 'yes').length
+    const no = access.filter((p) => typedChoice(p.text) === 'no').length
+    if (yes === 1 && yes + no === access.length)
+      return review(
+        id,
+        'The title page has the older access list (“Available to the general public…”) with one “Yes”, not the permission codes of the current template (Invention, Publication, Confidential, Free). Check which form your program asks for.',
+        { where: at(access[0]) },
+      )
+    return fix(
+      id,
+      'Use the permission classification table of the current template (Invention, Publication, Confidential, Free), with one code marked “Yes”, in place of the older access list.',
+      {
+        details: yes > 1 ? [`${yes} rows of the access list read “Yes”.`] : undefined,
+        where: at(access[0]),
+      },
+    )
+  }
   if (tp.rows.length < 4)
     return fix(
       id,
@@ -1372,11 +1393,25 @@ function permissionSignature(ctx: Ctx): Finding {
   const k = label ? paras.indexOf(label) : paras.length
   const above = paras.slice(Math.max(0, k - 3), k)
   // The name and date may share the label's paragraph (a PDF line above it, joined).
-  const lead = label ? norm(label.text).split(/signature over/i)[0] : ''
+  // (the caption itself, either way round: "Signature over Student Name", "Student Name over
+  // Signature and Date")
+  const lead = label
+    ? norm(label.text).split(/\b(?:signature over|(?:student|printed) name over)\b/i)[0]
+    : ''
   const issues: string[] = []
   const statuses: Finding['status'][] = []
   const typed = [...above.map((p) => norm(p.text)), lead.trim()]
   const placeholder = typed.some((t) => /\bname and date$/i.test(t))
+  // A date written in any form, maybe across two lines ("03 June" / "2021", "10-Dec-21",
+  // "04/08/2021"), and a typed name ("Juan B. Cruz"): only what is missing is asked for.
+  const dated =
+    DATE.test(typed.join(' ')) ||
+    typed.some((t) => /(?<!\d)\d{1,2}[\s/.-]+(?:[a-z]{3,9}|\d{1,2})[\s/.,-]+\d{2,5}(?!\d)/i.test(t))
+  const named = typed.some((t) =>
+    /^\p{Lu}[\p{L}.'’-]*(?:\s+\p{Lu}[\p{L}.'’-]*){1,5}$/u.test(
+      t.replace(/_+|\s[/|,]\s.*$|,?\s*\d.*$/g, ' ').trim(),
+    ),
+  )
   // A name or a date whose digits came out of the font as control characters.
   const unreadable = typed.some((t) => [...t].some((c) => c.charCodeAt(0) < 32 && c !== '	'))
   // The signature block as a picture under the text (name, line and date typed in it).
@@ -1386,22 +1421,24 @@ function permissionSignature(ctx: Ctx): Finding {
     !label &&
     !!last &&
     !!pg?.images.some((b) => b.x1 - b.x0 >= 100 && b.y0 >= last.y - 2 && b.y1 < pg.height - 40)
-  if (pictured && !placeholder && !typed.some((t) => DATE.test(t))) {
+  if (pictured && !placeholder && !dated) {
     issues.push(
       'The signature block of the University Permission Page is a picture, so the name and date in it could not be read. Check that your name and the date of submission are there.',
     )
     statuses.push('review')
-  } else if (!placeholder && !typed.some((t) => DATE.test(t)) && unreadable) {
+  } else if (!placeholder && !dated && unreadable) {
     issues.push(
       'The name or the date above the label could not be read reliably (its font is encoded oddly). Check that your name and the date of submission are there.',
     )
     statuses.push('review')
-  } else if (placeholder || !typed.some((t) => DATE.test(t))) {
+  } else if (placeholder || !dated) {
     issues.push(
       // The template's "and Date" kept after the student's own name.
       !placeholder && typed.some((t) => /\band date$/i.test(t))
         ? 'Replace “and Date” after your name with the date of submission.'
-        : 'Write your name and the date of submission above “Signature over Student Name and Date”.',
+        : named && !placeholder
+          ? 'Write the date of submission with your name, above “Signature over Student Name and Date”.'
+          : 'Write your name and the date of submission above “Signature over Student Name and Date”.',
     )
     statuses.push('fix')
   }
@@ -1537,7 +1574,8 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   const r = ctx.s.acceptance
   if (!r) return fix(id, 'Add the Acceptance Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
-  const p = find(paras, /with the title|entitled|titled|\btitle\s*:/i)
+  // (or no word for it: "The dissertation attached hereto A STUDY OF RADIO in partial fulfilment…")
+  const p = find(paras, /with the title|entitled|titled|\btitle\s*:|attached hereto/i)
   // The sentence may come in pieces (a PDF splits it where the bold title starts): read on to "accepted".
   const k = p ? paras.indexOf(p) : -1
   const end = paras.findIndex((q, j) => j >= k && /accepted/i.test(q.text))
@@ -1559,7 +1597,14 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
     ? (/(?:with the title|entitled|titled|\btitle\s*:)\s*:?\s*["“‘]\s*(.+?)[,.]?\s*["”’]\s*(?=,?\s*(?:is hereby|which|has been|is accepted|prepared|submitted|by\b|$))/i.exec(
         sentence,
       ) ??
-      /(?:with the title|entitled|titled|\btitle\s*:)\s*:?\s*["“'‘]?(.+?)["”'’]?\s*,?\s*(?:is hereby accepted|which|has been|is accepted|$)/i.exec(
+      // (a quote closed with the sentence's end, "…Kuwait.” The thesis attached hereto was…":
+      // the next sentence is not the title)
+      [
+        /(?:with the title|entitled|titled|\btitle\s*:)\s*:?\s*["“‘]\s*(.+?)(?:[.,]\s*["”’]|["”’][.,])\s+(\S)/i.exec(
+          sentence,
+        ),
+      ].find((x) => x && /\p{Lu}/u.test(x[2])) ??
+      /(?:with the title|entitled|titled|\btitle\s*:|attached hereto,?(?!\s*,?\s*(?:entitled|titled|with the title|was|is|has)\b))\s*:?\s*["“'‘]?(.+?)["”'’]?\s*,?\s*(?:is hereby accepted|which|has been|is accepted|(?:prepared|submitted)(?: and submitted)? by\b|in partial fulfil|$)/i.exec(
         sentence,
       ))
     : null
@@ -1611,11 +1656,17 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   }
   const issues: string[] = []
   if (main && titleForm(main) !== titleForm(t)) {
-    const d = wordDiff(main, t)
+    // (the sentence's own words, "the thesis attached hereto", are no difference to name)
+    const only = wordDiff(main, t).onlyB.filter(
+      (w) =>
+        !/^(the|a|an|of|and|this|thesis|dissertation|project|paper|attached|hereto|entitled|titled)$/i.test(
+          w,
+        ),
+    )
     issues.push(
       `Title Page: “${quote(main, 90)}”; Acceptance Page: “${quote(t, 90)}”${
-        d.onlyB.length
-          ? ` (not on the Title Page: ${d.onlyB
+        only.length
+          ? ` (not on the Title Page: ${only
               .slice(0, 4)
               .map((w) => `“${w}”`)
               .join(', ')})`
@@ -1780,6 +1831,13 @@ function convention(names: Names): Finding {
       id,
       `Check ${list(unknown.map((s) => `“${s.name}”`))}: the title or degree after the name is not one this checker knows. Use either titles before all names (DR. JUAN A. CRUZ) or degree abbreviations after all names (JUAN A. CRUZ, Ph.D.).`,
       { details: styles.map((s) => s.name), where: unknown.flatMap((s) => at(s.para)) },
+    )
+  // No name with a title or a degree: alike, but neither form the checklist names.
+  if (kinds.size === 1 && kinds.has('none'))
+    return review(
+      id,
+      'No name on the Acceptance Page has a title before it or a degree after it. Check whether your program asks for titles before all names (DR. JUAN A. CRUZ) or degree abbreviations after all names (JUAN A. CRUZ, Ph.D.).',
+      { where: styles.flatMap((x) => at(x.para)) },
     )
   if (kinds.size === 1 && !kinds.has('both'))
     return ok(

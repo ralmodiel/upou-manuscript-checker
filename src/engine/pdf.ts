@@ -188,12 +188,17 @@ export async function readPdf(
       let leading = 0
       const whiteAt: number[][] = []
       let fill = '#000000'
-      const stack: { ctm: Matrix; fill: string }[] = []
+      // Text drawn invisibly (render mode 3 or 7): a scan's machine-read layer over its picture.
+      let mode = 0
+      let visible = 0
+      let hidden = 0
+      const stack: { ctm: Matrix; fill: string; mode: number }[] = []
       for (let k = 0; k < ops.fnArray.length; k++) {
         const fn = ops.fnArray[k]
         const args = ops.argsArray[k] as unknown[]
-        if (fn === OPS.save) stack.push({ ctm, fill })
-        else if (fn === OPS.restore) ({ ctm, fill } = stack.pop() ?? { ctm, fill })
+        if (fn === OPS.save) stack.push({ ctm, fill, mode })
+        else if (fn === OPS.restore) ({ ctm, fill, mode } = stack.pop() ?? { ctm, fill, mode })
+        else if (fn === OPS.setTextRenderingMode) mode = args[0] as number
         else if (fn === OPS.transform) ctm = mul(ctm, args as Matrix)
         else if (fn === OPS.beginText) tlm = [1, 0, 0, 1, 0, 0]
         else if (fn === OPS.setTextMatrix) tlm = Array.from(args as ArrayLike<number>)
@@ -211,6 +216,8 @@ export async function readPdf(
         ) {
           if (fn === OPS.nextLineShowText || fn === OPS.nextLineSetSpacingShowText)
             tlm = mul(tlm, [1, 0, 0, 1, 0, -leading])
+          if (mode === 3 || mode === 7) hidden++
+          else visible++
           if (fill === '#ffffff') whiteAt.push(apply(ctm, tlm[4], tlm[5]))
           if (fill === '#000000') run = undefined
           else {
@@ -229,10 +236,11 @@ export async function readPdf(
             else colored.push((run = { text, color: fill }))
           }
         } else if (fn === OPS.paintFormXObjectBegin) {
-          stack.push({ ctm, fill })
+          stack.push({ ctm, fill, mode })
           if (Array.isArray(args[0]) || ArrayBuffer.isView(args[0]))
             ctm = mul(ctm, Array.from(args[0] as ArrayLike<number>))
-        } else if (fn === OPS.paintFormXObjectEnd) ({ ctm, fill } = stack.pop() ?? { ctm, fill })
+        } else if (fn === OPS.paintFormXObjectEnd)
+          ({ ctm, fill, mode } = stack.pop() ?? { ctm, fill, mode })
         else if (
           fn === OPS.paintImageXObject ||
           fn === OPS.paintInlineImageXObject ||
@@ -524,6 +532,7 @@ export async function readPdf(
         ...(turned ? { turned } : {}),
         colored: own.map(readable),
         ...(own.length < colored.length ? { linked: true } : {}),
+        ...(hidden > visible ? { ocr: true } : {}),
       })
 
       // The title page's picture is kept small, for the seal check (a cover page may come first).

@@ -876,30 +876,33 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   if (!details.length)
     return ok(id, 'No hanging headings or single lines at the top or bottom of a page.')
   // Firm evidence: a heading, caption or single line left at the foot of a page in the chapters,
-  // or many places. A last line at the top of a page (two may be there), an item of a list, and
-  // places in the references or appendices (forms, transcripts, code) may be misread.
-  const strong =
-    details.length > 8 ||
-    details.some(
-      (d) => !/^p. d+, /.test(d) && !/stands alone at the top|: the item “|: the line “/.test(d),
-    )
+  // or many places there. A last line at the top of a page (two may be there), an item of a list,
+  // and places in the references or appendices (forms, questionnaires, captions of scanned
+  // pages) may be misread: with firm evidence they are left out, else all are for review.
+  const inChapters = details.map((d) => !/^p\.\s\d+, /.test(d))
+  const firm = details.filter(
+    (d, k) => inChapters[k] && !/stands alone at the top|: the item “|: the line “/.test(d),
+  )
+  const strong = firm.length > 0 || inChapters.filter(Boolean).length > 8
+  const kept = strong ? details.filter((_, k) => inChapters[k]) : details
+  const places = strong ? where.filter((_, k) => inChapters[k]) : where
   return weigh(
     strong,
     id,
     msg,
     `these places may hold hanging (sub)headings or lines; ${msg[0].toLowerCase()}${msg.slice(1)}`,
     {
-      details: details.slice(0, 8).concat(
-        details.length > 8
+      details: kept.slice(0, 8).concat(
+        kept.length > 8
           ? [
               more(
-                details.length - 8,
-                where.slice(8).map((w) => w.page),
+                kept.length - 8,
+                places.slice(8).map((w) => w.page),
               ),
             ]
           : [],
       ),
-      where: where.slice(0, 6),
+      where: places.slice(0, 6),
     },
   )
 }

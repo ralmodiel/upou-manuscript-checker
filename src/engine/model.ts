@@ -115,6 +115,9 @@ export interface Page {
   colored: { text: string; color: string }[]
   /** Coloured text inside hyperlinks was left out of `colored` (a link keeps its colour). */
   linked?: boolean
+  /** Its text is drawn invisibly over a picture of the page (a scan's machine-read layer): its
+   *  words may be read, its fonts, sizes and line positions are guesses. */
+  ocr?: boolean
   /** Where the lines of running text start and end, as read from the page. */
   margins?: { left: number; right: number }
 }

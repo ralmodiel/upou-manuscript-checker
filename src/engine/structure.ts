@@ -217,13 +217,33 @@ export function findStructure(doc: Doc): Structure {
       })
       continue
     }
+    // The panel's Approval Sheet with its heading run into the line above it ("…STUDIES APPROVAL
+    // SHEET"): it ends the page before, which is not the Acceptance Page either.
+    if (
+      !s.prelims.length &&
+      !s.chapters.length &&
+      /\S\s+APPROVAL SHEET$/.test(norm(p.text)) &&
+      doc.kind === 'pdf'
+    )
+      stops.push(pageStartOn(doc, p.i))
     if (!isHeadingish(p) && !plainList) continue
     if (!s.permission && /^(university )?permission page$/i.test(t)) {
       s.permission = { heading: p.i, start: p.i, end: paras.length }
       continue
     }
-    if (!s.acceptance && /^(acceptance|approval) (page|sheet)$/i.test(t)) {
-      s.acceptance = { heading: p.i, start: p.i, end: paras.length }
+    // A Certificate of Acceptance beside the panel's Approval Sheet is the Acceptance Page, in
+    // either order; the other page ends it ("OFTHESIS": words may come glued).
+    const cert = /^certificate\s*of\s*acceptance\b/i.test(t)
+    if (cert || /^(acceptance|approval) (page|sheet)$/i.test(t)) {
+      const prev = s.acceptance && headingText(paras[s.acceptance.heading])
+      if (!s.acceptance || (cert && !/acceptance/i.test(prev ?? ''))) {
+        if (s.acceptance) stops.push(pageStartOn(doc, s.acceptance.heading))
+        // (the lines above the heading, the university's name, end the page before)
+        else if (doc.kind === 'pdf' && pageStartOn(doc, p.i) < p.i)
+          stops.push(pageStartOn(doc, p.i))
+        s.acceptance = { heading: p.i, start: p.i, end: paras.length }
+      } else if (s.acceptance.heading < p.i && !s.prelims.length && !s.chapters.length)
+        stops.push(pageStartOn(doc, p.i))
       continue
     }
     const keys = PRELIMS.filter(([, re]) => re.test(t)).map(([k]) => k)
@@ -304,12 +324,17 @@ export function findStructure(doc: Doc): Structure {
     const k = find(
       /I hereby grant the University of the Philippines|Specifically, I grant|I specifically allow/i,
     )
+    // (the page the statement opens, not the title page whose last line runs over onto it)
     if (k > 0)
-      s.permission = { heading: pageStart(doc, k), start: pageStart(doc, k), end: paras.length }
+      s.permission = {
+        heading: pageStartOn(doc, k),
+        start: pageStartOn(doc, k),
+        end: paras.length,
+      }
   }
   if (!s.acceptance) {
     const k = find(
-      /\b(paper|thesis|dissertation|study|manuscript|special problem|special project|capstone project) (prepared|written|entitled)\b.*\bby\b|is hereby accepted/i,
+      /\b(paper|thesis|dissertation|study|manuscript|special problem|special project|capstone project) (prepared|written|entitled|attached hereto)\b.*\bby\b|is hereby accepted/i,
     )
     if (k > 0)
       s.acceptance = {
@@ -335,6 +360,14 @@ export function findStructure(doc: Doc): Structure {
   for (let k = 0; k < marks.length; k++) {
     const next = marks.slice(k + 1).find((m) => m.at > marks[k].at)
     marks[k].set(next ? next.at : paras.length)
+  }
+  // The permission and acceptance pages are a page each (two at most, run over): with the pages
+  // after them unread (scanned) they would run on into letters and forms of the appendices.
+  for (const r of [s.permission, s.acceptance]) {
+    const first = r && paras[r.start].page
+    if (first === undefined) continue
+    const over = paras.findIndex((p) => p.i > r!.start && (p.page ?? 0) > first + 1)
+    if (over > 0 && over < r!.end) r!.end = over
   }
   // Two keys on one heading ("List of Tables and Figures") share a range.
   for (const x of s.prelims) {
