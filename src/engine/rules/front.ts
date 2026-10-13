@@ -517,7 +517,8 @@ async function seal(ctx: Ctx, tp: TitlePage): Promise<{ finding: Finding; emblem
 
 /** The title page's parts in the template's order, named as the manuscript has them. */
 const anchors = (role: TitlePage['role']): [string, RegExp][] => [
-  ['UNIVERSITY OF THE PHILIPPINES', /university of the philippines/i],
+  // (a scan's text may run words together: "University ofthe Philippines")
+  ['UNIVERSITY OF THE PHILIPPINES', /university of ?the philippines/i],
   ['OPEN UNIVERSITY', /open university/i],
   ['the degree program (BACHELOR OF …, MASTER OF …, DOCTOR OF …)', PROGRAM],
   [`${role}:`, ADVISER_LABEL],
@@ -642,6 +643,17 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
       lines.push(p)
     }
   }
+  // Another statement ("Permission is given for the following people…", an older template's):
+  // which wording a program takes is not known here.
+  if (
+    tp.permissionText &&
+    !/permission of the classification/i.test(norm(tp.permissionText.text))
+  ) {
+    soft.push(
+      `The permission statement reads “${quote(tp.permissionText.text, 40)}”; the template reads “Permission of the classification of this academic work access is subject to…”: check which wording your program asks for`,
+    )
+    lines.push(tp.permissionText)
+  }
   if (tp.statementPicture && !found.some((a) => a.k >= 0 && /^permission of/i.test(a.name)))
     soft.push(
       '“Permission of the classification…” is not text on the page (perhaps a picture): check that the statement is there, as in the template',
@@ -670,7 +682,9 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
   if (!issues.length && soft.length)
     return review(
       id,
-      "Check the wording of the signature labels against your program's template.",
+      soft.every((d) => /signature/i.test(d))
+        ? "Check the wording of the signature labels against your program's template."
+        : "Check the wording of the title page against your program's template.",
       {
         details: soft,
         where: lines.slice(0, 5).flatMap(at),
@@ -759,6 +773,15 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
   // A difference of punctuation, an initial or a title is no misspelling.
   const chair = committee[0] ? spelling(committee[0]) : ''
   const mine = spelling(name)
+  // A name read through a signature over it or a misread glyph ("JUAiN", "CR�Z"): a letter
+  // missing from the font, or a small letter inside a word in capitals.
+  const misread = (s: string) => /�/.test(s) || /\p{Lu}{2}\p{Ll}+\p{Lu}/u.test(s)
+  if (chair && chair !== mine && distance(chair, mine) <= 3 && misread(committee[0] + name))
+    return review(
+      id,
+      `Check the spelling of your adviser's name: “${name}” here; on the Acceptance Page it reads “${cleanName(committee[0])}”, but that text may be misread (a signature over it or a missing letter).`,
+      { where: at(tp.adviser) },
+    )
   if (chair && chair !== mine && distance(chair, mine) <= 3)
     return fix(
       id,
@@ -1631,6 +1654,23 @@ function glyphPair(a: string, b: string): boolean {
   )
 }
 
+/** Two words (in small letters) alike but for two letters a scan reads as one ("Cl" as "G", "rn"
+ *  as "m"). */
+const OCR_PAIRS = [
+  ['cl', 'g'],
+  ['cl', 'd'],
+  ['rn', 'm'],
+  ['li', 'h'],
+  ['vv', 'w'],
+]
+const ocrPair = (a: string, b: string): boolean =>
+  OCR_PAIRS.some(([two, one]) =>
+    [...a.matchAll(new RegExp(two, 'g'))].some(
+      (m) => a.slice(0, m.index) + one + a.slice(m.index + two.length) === b,
+    ),
+  ) ||
+  (a.length < b.length && ocrPair(b, a))
+
 function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   const id = 'acceptance.title'
   const r = ctx.s.acceptance
@@ -1722,7 +1762,9 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
       d.onlyB.length === 1 &&
       Math.abs(d.onlyA[0].length - d.onlyB[0].length) <= 1 &&
       sharedEnds(d.onlyA[0], d.onlyB[0]) >= Math.max(d.onlyA[0].length, d.onlyB[0].length) - 3 &&
-      (/\p{Lu}{2}\p{Ll}\p{Lu}{2}/u.test(`${main} ${t}`) || glyphPair(d.onlyA[0], d.onlyB[0]))
+      (/\p{Lu}{2}\p{Ll}\p{Lu}{2}/u.test(`${main} ${t}`) ||
+        glyphPair(d.onlyA[0], d.onlyB[0]) ||
+        ocrPair(d.onlyA[0], d.onlyB[0]))
     )
       return review(
         id,
