@@ -4,7 +4,7 @@
 // themselves; where they show positive signs of a misreading, its claims are only for review.
 import type { Doc, Page, Para } from './model.ts'
 import { review, type Ctx, type Finding } from './report.ts'
-import { pdfFolio } from './rules/numbering.ts'
+import { pagesText, pdfFolio } from './rules/numbering.ts'
 import { bolded } from './structure.ts'
 import { norm } from './text.ts'
 
@@ -96,6 +96,54 @@ function anchorDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
 const LAYOUT =
   /^((prelims|chapterStart|body)\.(justified|spacing)|body\.hanging|chapterStart\.(number|title|newPage)|figures\.\w+)$/
 const PART = /^(title|permission|acceptance)\./
+// Front-page items judged from the page's words.
+const WORDED =
+  /^(title\.(sequence|title|adviser|date)|permission\.(title|statement)|acceptance\.(title|names|convention))$/
+const GARBLED =
+  'Part of the text on this page is in a font that prints wrong letters, so its words could not all be read. Check this item yourself.'
+
+const COVERED = (pages: string) =>
+  `A footer is in the file on ${pages} but does not show (white, or covered by a white box). Remove it rather than hiding it, and check this item yourself.`
+
+/** A pass on "no footer here" where the footer is only hidden (white text, a white box over it):
+ *  it does not print, but it is still there. */
+function coverDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
+  const { doc, s } = ctx
+  const out = new Map<string, string>()
+  if (doc.kind !== 'pdf' || !doc.pages) return out
+  const hidden = (ps: (number | undefined)[]) =>
+    ps.filter((p): p is number => p !== undefined && !!doc.pages![p]?.hiddenFoot)
+  for (const f of found) {
+    if (f.status !== 'ok') continue
+    const ps =
+      f.id === 'title.pageNumber'
+        ? hidden([s.title ? doc.paras[s.title.start]?.page : undefined])
+        : f.id === 'chapterStart.noPageNumber'
+          ? hidden(s.chapters.map((c) => doc.paras[c.heading]?.page))
+          : []
+    if (ps.length) out.set(f.id, COVERED(pagesText(ps)))
+  }
+  return out
+}
+
+/** Passes on a front page whose words are partly unreadable (a font with wrong glyphs): what was
+ *  found may be read, what was missed may be in the unreadable words. */
+function garbleDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
+  const { doc, s } = ctx
+  const out = new Map<string, string>()
+  if (doc.kind !== 'pdf' || !doc.pages) return out
+  for (const f of found) {
+    if (f.status !== 'ok' || !WORDED.test(f.id)) continue
+    const r = f.id.startsWith('title.')
+      ? s.title
+      : f.id.startsWith('permission.')
+        ? s.permission
+        : s.acceptance
+    const page = r ? doc.paras[r.start]?.page : undefined
+    if (page !== undefined && doc.pages[page]?.unreliable) out.set(f.id, GARBLED)
+  }
+  return out
+}
 const area = (b: Page['images'][number]) => (b.x1 - b.x0) * (b.y1 - b.y0)
 
 /** Findings that rest on scanned pages read through their machine-read text layer (PDF): what
@@ -192,6 +240,8 @@ export function guard(ctx: Ctx, found: Finding[]): Finding[] {
     footer = footerDoubts(ctx)
     anchored = anchorDoubts(ctx, found)
     scanned = scanDoubts(ctx, found)
+    for (const [id, why] of [...garbleDoubts(ctx, found), ...coverDoubts(ctx, found)])
+      if (!scanned.has(id)) scanned.set(id, why)
   } catch (e) {
     console.error(e)
     return found

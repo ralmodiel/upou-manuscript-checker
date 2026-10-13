@@ -2,7 +2,7 @@
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
 import type { Doc, HeaderFooter, Line, NumberFormat, Section } from '../model.ts'
-import { distance, fromRoman, norm, quote, roman } from '../text.ts'
+import { distance, fromRoman, norm, quote, rejoin, roman, unmapped } from '../text.ts'
 
 export interface Folio {
   raw: string
@@ -47,10 +47,12 @@ function unglue(t: string, words: Set<string>): { text: string; number: string }
 }
 
 export function parseFolio(raw: string, words?: Set<string>): Folio | undefined {
-  let t = norm(raw.replace(/\n/g, ' '))
+  // (a font's glyph numbers read as control characters: the space is glyph 3)
+  let t = norm([...raw.replace(/\n/g, ' ')].map((c) => (c.charCodeAt(0) < 32 ? ' ' : c)).join(''))
   // A symbol font may print the ellipsis as «: before the number at a footer's end it is one.
   t = t.replace(/«(?=\s*([ivxlcdm]+|\d+)$)/i, '…')
   if (!t) return undefined
+  t = rejoin(t)
   // A stray ".." printed over the end of the number (a second item at the same place).
   t = t.replace(/(\d|\b[ivxlcdm]+)\s*\.{2}$/i, '$1')
   // A number run into the word before it.
@@ -307,6 +309,7 @@ const titleWords = (t: string) =>
 /** Letters a font printed wrongly: a capital inside a word ("LeaYninN") or a symbol against one;
  *  or a scan's misreading, a digit or colon inside a word ("Le4rn:ng"). */
 const oddLetters = (t: string) =>
+  unmapped(t) > 0 ||
   /\p{L}[\\^|~[\]{}]|[\\^|~[\]{}]\p{L}|\p{L}[:\d]\p{L}/u.test(t) ||
   norm(t)
     .split(' ')
@@ -380,7 +383,10 @@ function titleChanges(doc: Doc, pages: number[], thesis?: string, ref?: TitleRef
   const change = (g: { shown: string; pages: number[] }, main: string, whose: string) => {
     const [a, b] = twoTitles(g.shown, main)
     return {
-      type: garbledVariant(g.shown, main) ? ('garbled' as const) : ('changed' as const),
+      type:
+        garbledVariant(g.shown, main) || unmapped(g.shown + main) > 0
+          ? ('garbled' as const)
+          : ('changed' as const),
       page: g.pages[0],
       text: `${pagesText(g.pages)}: the footer has another title, “${a}”, than the ${whose} (“${b}”); keep one shortened title`,
     }
@@ -489,14 +495,40 @@ export function pdfFolio(doc: Doc, page: number): Folio | undefined {
   const top = parseFolio(pg?.header ?? '')
   // (the text's last words on the footer's line, set apart from it in small letters: "for the
   // ⇥Title 12", are no part of it; a footer of one line only: a title wraps in small letters)
-  const text = pg?.footer ?? ''
+  let text = pg?.footer ?? ''
+  // A footer whose last line is whole (a title and its number) under a line set well apart above
+  // it (the text's last line, a footnote): that line is not the footer's.
+  const fl = pg?.footerLines ?? []
+  const lastFolio = fl.length > 1 ? parseFolio(fl.at(-1)!.text, words) : undefined
+  if (
+    lastFolio?.number !== undefined &&
+    lastFolio.title &&
+    fl.at(-1)!.y - fl.at(-2)!.y > 1.6 * Math.max(fl.at(-1)!.size, fl.at(-2)!.size)
+  )
+    text = fl.at(-1)!.text
   let foot = parseFolio(
     text.includes('\n') ? text : text.replace(/^\p{Ll}[^\t]{0,30}\t(?=.*\p{L})/u, ''),
     words,
   )
   // (a footer ending in a number may still have it broken over two lines: "vii" and "i")
-  if (foot && (pg?.footerLines.length ?? 0) > 1)
+  if (foot && text.includes('\n'))
     foot = wrappedFolio(pg!.footerLines, words, foot.number !== undefined) ?? foot
+  // A footer with no number under a number standing alone just above it, read as the text's
+  // last line: the footer's own number, set on a line over its title.
+  const head = fl[0]
+  if (foot && foot.number === undefined && foot.title && head) {
+    const lone = pg!.paras
+      .flatMap((i) => doc.paras[i].lines ?? [])
+      .find(
+        (l) =>
+          l.page === page &&
+          NUMBER.test(l.text.trim()) &&
+          l.y < head.y &&
+          head.y - l.y <= 2 * Math.max(l.size, head.size),
+      )
+    const f = lone && parseFolio(`${text} ${lone.text.trim()}`, words)
+    if (f?.number !== undefined) foot = f
+  }
   // Items of the footer that print over one another (the number over the end of the title).
   if (foot && overlaps(pg!.footerLines)) foot = { ...foot, overlap: true }
   // (a line of text taken for a footer does not hide a page number set at the top)
