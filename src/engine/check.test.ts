@@ -441,7 +441,12 @@ describe('check', () => {
 
   it('reads a bare “Adviser:”, a Faculty-in-Charge and the older permission wording', async () => {
     const c = '<w:jc w:val="center"/>'
-    const page = (label: string, signature: string, program: string) =>
+    const page = (
+      label: string,
+      signature: string,
+      program: string,
+      statement = 'Permission of the classification of this academic work access is subject to the provisions of applicable laws:',
+    ) =>
       check(
         'project.docx',
         docx(
@@ -455,7 +460,7 @@ describe('check', () => {
             'MARIA B. SANTOS, Ph.D.',
             'Faculty of Management and Development Studies',
             '12 May 2026',
-            'Permission is given for the following people to have access to this academic work:',
+            statement,
             'Invention (I) Yes or No',
             'Publication (P) Yes or No',
             'Confidential (C) Yes or No',
@@ -473,6 +478,17 @@ describe('check', () => {
       expect(finding(r, 'title.adviser').message).not.toMatch(/write your/i)
       expect(finding(r, 'title.sequence')).toMatchObject({ status: 'ok' })
     }
+    // The older template's statement: which wording a program takes is for the student to weigh.
+    const older = await page(
+      'Adviser:',
+      "Adviser's signature:",
+      'MASTER OF EDUCATION',
+      'Permission is given for the following people to have access to this academic work:',
+    )
+    expect(finding(older, 'title.sequence')).toMatchObject({ status: 'review' })
+    expect(finding(older, 'title.sequence').details?.join(' ')).toMatch(
+      /which wording your program/,
+    )
     // A label without its apostrophe: the template's wording, for the student to weigh in every
     // program (title pages of the MDC's own do not all keep it).
     const bare = await page('Adviser:', 'Adviser signature:', 'MASTER OF EDUCATION')
@@ -527,6 +543,33 @@ describe('check', () => {
     )
     expect(finding(r, 'acceptance.title')).toMatchObject({ status: 'ok' })
     expect(finding(r, 'acceptance.convention').message).toMatch(/All names use titles/)
+  })
+
+  it('leaves a scan’s misread letters in a title or a name for review', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'thesis.docx',
+      docx(
+        ...[
+          'UNIVERSITY OF THE PHILIPPINES',
+          'OPEN UNIVERSITY',
+          'MASTER OF EDUCATION',
+          'Juan A. Cruz',
+          'TEACHING IN LARGE CLASSES',
+          'Thesis Adviser:',
+          'MARIA B. SANTOS, PhD',
+        ].map((t) => para(t, c)),
+        para('Acceptance Page', `<w:pageBreakBefore/>${c}`),
+        para(
+          'The thesis attached hereto, entitled “Teaching in Large Gasses,” prepared and submitted by Juan A. Cruz, is hereby accepted.',
+        ),
+        para('MARIA B. SAiNTOS, PhD'),
+        para('Adviser'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'acceptance.title')).toMatchObject({ status: 'review' })
+    expect(finding(r, 'title.adviser')).toMatchObject({ status: 'review' })
   })
 
   it('takes the Certificate of Acceptance over an Approval Sheet, and an older access list with one “Yes” for review', async () => {
