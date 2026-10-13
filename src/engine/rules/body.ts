@@ -130,6 +130,8 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       !CAPTION.test(t) &&
       // A table's or figure's note belongs to its setup (APA), not to the body text.
       !/^(notes?|sources?)\s*[.:]/i.test(t) &&
+      // (so is a credit in brackets right under its caption: "(Photo from …)")
+      !(/^\(/.test(t) && CAPTION.test(norm(paras[p.i - 1]?.text ?? ''))) &&
       !isTocLine(p.text) &&
       !(isHeadingish(p) && t.length <= 120) &&
       !tableNote(paras[p.i - 1], p) &&
@@ -424,7 +426,9 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
   // a heading read as body text can look single-spaced. Firm evidence is a paragraph of running
   // text, three lines or more and not in italics, ending a sentence, clearly single or 1.5-spaced.
   // Firm too: many paragraphs plainly short of double (a whole list's items, or ten or more).
-  const plain = bad.filter((p) => p.spacing! <= 1.55)
+  // (not quotations set in italics, posts or interview answers quoted one after another)
+  const italic = (p: Para) => p.runs.filter((r) => r.text.trim()).every((r) => r.italic)
+  const plain = bad.filter((p) => p.spacing! <= 1.55 && !italic(p))
   const strong =
     plain.filter(isList).length >= 6 ||
     plain.length >= 10 ||
@@ -435,7 +439,7 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
             (p.lines?.length ?? 0) >= 3 &&
             p.spacing! <= 1.55 &&
             !isList(p) &&
-            !p.runs.filter((r) => r.text.trim()).every((r) => r.italic) &&
+            !italic(p) &&
             /[.!?]["”’)]*$/.test(norm(p.text)),
         )))
   return weigh(

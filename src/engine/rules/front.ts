@@ -1165,6 +1165,31 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
         emptyBox.some((g) => (m.x0 + m.x1) / 2 >= g.x0 - 1 && (m.x0 + m.x1) / 2 <= g.x1 + 1),
     )
     .map((m) => m.x0)
+  // A stroke drawn over a box picture after it (a form's tick box flattened into a picture and
+  // its check mark), on one side of the row only: that box is ticked.
+  const overPicture = marks
+    .filter(
+      (m) =>
+        m.kind === 'path' &&
+        !m.clip &&
+        !m.fill &&
+        m.z !== undefined &&
+        band(m) &&
+        m.x0 > from &&
+        pics.some(
+          (b) =>
+            b.z !== undefined &&
+            b.z < m.z! &&
+            width(b) <= 1.6 * line.size &&
+            m.x0 >= b.x0 - 3 &&
+            m.x1 <= b.x1 + 3 &&
+            m.y0 >= b.y0 - 3 &&
+            m.y1 <= b.y1 + 3 &&
+            width(m) >= 0.4 * width(b) &&
+            m.y1 - m.y0 >= 0.3 * (b.y1 - b.y0),
+        ),
+    )
+    .map((m) => m.x0)
   const circled = (g: { x0: number; text: string }) =>
     /^[Oo]$/.test(g.text) && boxGlyphs.some((b) => Math.abs(b.x0 - g.x0) <= 3)
   // What marks a choice, the surest first: a drawn mark, a typed one, a form field, a picture, and
@@ -1187,6 +1212,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
       ...crossed.map((m) => m.x0),
       ...ticked,
       ...oneSide(slashed.map((m) => m.x0)),
+      ...oneSide(overPicture),
     ],
     [...typed, ...oneSide(digits)],
     fields,
@@ -1637,7 +1663,12 @@ function permissionSignature(ctx: Ctx): Finding {
     : ''
   const issues: string[] = []
   const statuses: Finding['status'][] = []
-  const typed = [...above.map((p) => norm(p.text)), lead.trim()]
+  // (a year spaced apart in the text layer, "202 5": one number)
+  const typed = [...above.map((p) => norm(p.text)), lead.trim()].map((t) =>
+    t.replace(/\b((?:19|20)\d{0,2}) (\d{1,2})\b/g, (m, x: string, y: string) =>
+      (x + y).length === 4 ? x + y : m,
+    ),
+  )
   const placeholder = typed.some((t) => /\bname and date$/i.test(t))
   // A date written in any form, maybe across two lines ("03 June" / "2021", "10-Dec-21",
   // "04/08/2021"), and a typed name ("Juan B. Cruz"): only what is missing is asked for.
@@ -1658,7 +1689,8 @@ function permissionSignature(ctx: Ctx): Finding {
   const named = typed.some((t) =>
     // (a comma before a suffix: "Juan Cruz, Jr.")
     /^\p{Lu}[\p{L}.'’-]*(?:,?\s+\p{Lu}[\p{L}.'’-]*){1,5}$/u.test(
-      t.replace(/_+|\s[/|,]\s.*$|,?\s*\d.*$/g, ' ').trim(),
+      // (the date after it: "Juan Cruz and May 5, 2025")
+      t.replace(/_+|\s[/|,]\s.*$|\s+and\s+[a-z]*\.?\s*\d.*$|,?\s*\d.*$/gi, ' ').trim(),
     ),
   )
   // A name or a date whose digits came out of the font as control characters, or a scan's

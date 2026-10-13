@@ -621,8 +621,17 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push(sure ? 'fix' : 'review')
   }
-  const spaced = refs.map((e) => e.paras[0]).filter((p) => p.spacing !== undefined)
-  const single = spaced.filter((p) => p.spacing! < DOUBLE)
+  // (PDF: an entry cut into a one-line paragraph and the rest is spaced by the gap between them)
+  const spacingOf = (e: (typeof refs)[number]) => {
+    const a = e.paras[0].lines?.at(-1)
+    const b = e.paras[1]?.lines?.[0]
+    return (
+      e.paras[0].spacing ??
+      (a && b && a.page === b.page && b.y > a.y ? (b.y - a.y) / (1.15 * a.size) : undefined)
+    )
+  }
+  const spaced = refs.filter((e) => spacingOf(e) !== undefined)
+  const single = spaced.filter((e) => spacingOf(e)! < DOUBLE)
   if (spaced.length && single.length / spaced.length > 0.2) {
     issues.push(
       `Double-space the reference list: ${single.length} of ${plural(spaced.length, 'reference')} ${single.length === 1 ? 'is' : 'are'} not.`,
