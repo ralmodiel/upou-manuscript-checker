@@ -881,12 +881,15 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     statuses.push('review')
   }
   if (!issues.length)
-    return review(
-      id,
-      ctx.doc.kind === 'doc'
-        ? `Check that the ${plural(refs.length, 'reference')} have hanging indents and double spacing (an old .doc file does not say); each has its year.`
-        : `Check the rest of the APA setup (each entry's parts, italics, DOIs) against the APA page linked here: the ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '; a hanging indent shows on entries of two lines or more only' : ', and hanging indents'}.`,
-    )
+    return ctx.doc.kind === 'doc'
+      ? review(
+          id,
+          `Check that the ${plural(refs.length, 'reference')} have hanging indents and double spacing (an old .doc file does not say); each has its year.`,
+        )
+      : ok(
+          id,
+          `The ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '' : ', and hanging indents'}.`,
+        )
   const status = worst(statuses)
   return {
     id,

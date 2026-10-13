@@ -1,6 +1,6 @@
 // Figures and tables: the number in bold above, the title in italics right below, APA style.
 import type { Box, Para } from '../model.ts'
-import { fix, na, ok, review, spread, worst, type Ctx, type Finding } from '../report.ts'
+import { fix, na, ok, review, spread, type Ctx, type Finding } from '../report.ts'
 import { bolded, headingText, isTocLine, LIST_HEADING } from '../structure.ts'
 import { inShape, textSize } from './body.ts'
 import { garbled, list, norm, quote } from '../text.ts'
@@ -584,7 +584,10 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           'figures.title',
           'Add a figure/table title (in italics) right below each figure/table number.',
         ),
-        review('figures.apa', 'Check the APA style figure and table setup.'),
+        review(
+          'figures.apa',
+          'No figure or table caption could be read here: check the APA style figure and table setup.',
+        ),
       ]
     if (maybe.length)
       return [
@@ -597,7 +600,10 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           'figures.title',
           'Check that each figure has a title (in italics) right below its number.',
         ),
-        review('figures.apa', 'Check the APA style figure and table setup.'),
+        review(
+          'figures.apa',
+          'No figure or table caption could be read here: check the APA style figure and table setup.',
+        ),
       ]
     // A List of Tables or Figures with entries: the captions are there, in pictures or in letters
     // that could not be read.
@@ -629,7 +635,10 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           'figures.title',
           `${why}: check that each table and figure has a title (in italics) right below its number.`,
         ),
-        review('figures.apa', 'Check the APA style figure and table setup.'),
+        review(
+          'figures.apa',
+          'No figure or table caption could be read here: check the APA style figure and table setup.',
+        ),
       ]
     }
     return [
@@ -768,30 +777,26 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
     order.push(
       `${name(c)} has a space inside its number (“${quote(c.para.text, 12)}”): write it as one number.`,
     )
-  const apaStatus = worst([
-    number.status,
-    title.status,
-    order.length ? 'fix' : odd.length ? 'review' : 'ok',
-  ])
-  // The rest of the APA setup (title case, notes, table lines) is not read, and reviewers ask for it.
-  const apa =
-    apaStatus === 'ok'
+  // Only the APA item's own findings (numbering out of order or skipping): the number and title
+  // items carry theirs, and what is not read here (title case, notes, table lines) is no finding.
+  const apa = order.length
+    ? fix(
+        'figures.apa',
+        'Follow the APA style figure and table setup (see the APA pages linked here).',
+        { details: [...order, ...odd] },
+      )
+    : odd.length
       ? review(
           'figures.apa',
-          'Check the rest of the APA setup (titles in title case, notes, table lines) against the APA pages linked here: numbers, titles and numbering follow it.',
+          'Check the APA style figure and table setup (see the APA pages linked here).',
+          { details: odd },
         )
-      : {
-          ...(apaStatus === 'fix' && order.length
-            ? fix(
-                'figures.apa',
-                'Follow the APA style figure and table setup (see the APA pages linked here).',
-              )
-            : review(
-                'figures.apa',
-                'Check the APA style figure and table setup (see the APA pages linked here).',
-              )),
-          details: order.length + odd.length ? [...order, ...odd] : undefined,
-        }
+      : ok(
+          'figures.apa',
+          number.status === 'ok' && title.status === 'ok'
+            ? 'Numbers, titles and numbering follow the APA setup.'
+            : 'Numbering follows the APA setup (numbers and titles: see the items above).',
+        )
   // Pages with no text layer among the chapters may hold figures and captions that cannot be read.
   const unread = [...noTextPages(ctx.doc)].filter(
     (n) => ctx.s.chapters.length > 0 && n >= (ctx.doc.paras[ctx.s.chapters[0].heading].page ?? 0),

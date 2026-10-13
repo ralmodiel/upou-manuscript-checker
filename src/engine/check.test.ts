@@ -164,9 +164,9 @@ describe('check', () => {
       opts,
     )
     expect(finding(r, 'references.order').details?.join(' ')).toMatch(/earliest year/)
-    // Three entries, the undated one included; what is not read is for a second look.
-    expect(finding(r, 'references.apa').status).toBe('review')
-    expect(finding(r, 'references.apa').message).toMatch(/the 3 references/)
+    // Three entries, the undated one included, and nothing of the APA setup wrong in them.
+    expect(finding(r, 'references.apa').status).toBe('ok')
+    expect(finding(r, 'references.apa').message).toMatch(/The 3 references/)
   })
 
   it('leaves a numeral-led entry for the writer, and does not take two notes or a statute amiss', async () => {
