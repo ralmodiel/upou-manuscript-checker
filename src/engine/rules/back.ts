@@ -6,9 +6,13 @@ import { list, norm, plural, quote, unmapped } from '../text.ts'
 import { DOUBLE } from './body.ts'
 import { bodyNumbers, pushedDown } from './chapters.ts'
 import { readTitlePage } from './front.ts'
+import { readCites } from './cites.ts'
 import { more, pagesText } from './numbering.ts'
 
 const YEAR = /\((\d{4}[a-z]?|n\.\s?d\.?|no date|in press|forthcoming)(?!\w)/i
+// Capitalised words that name no author: "Table 2 (2019)", "Republic Act (2013)", "June (2020)".
+const STOPWORD =
+  /^(table|figure|chapter|section|appendix|page|vol|no|republic|act|sec|art|january|february|march|april|may|june|july|august|september|october|november|december|spring|summer|autumn|fall|winter)$/
 const SAMPLE = /author last name|first initial|year of publication|title of work/i
 /** A surname with a small particle, then an initial: "van Daal, R.", "de la Cruz, J.". */
 const PARTICLE =
@@ -953,36 +957,128 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push('review')
   }
-  // Parenthetical citations, "(Reyes, 2019; Cruz & Lim, 2020)", whose first author's surname is
-  // nowhere in the list.
+  // In-text citations (cites.ts) against the list. APA: the list holds every cited work, under the
+  // year cited; a work of one or two authors is cited by their names every time, one of three or
+  // more as "Reyes et al." from the first.
   // (all that follows the heading: an entry the list's reading missed still counts)
-  const listLetters = letters(
-    ctx.doc.paras
-      .slice(head.i + 1)
-      .map((p) => p.text)
-      .join(' '),
+  const listParas = ctx.doc.paras.slice(head.i + 1)
+  const listLetters = letters(listParas.map((p) => p.text).join(' '))
+  // Words written in small letters in the text: "Survey (2021)" names no author.
+  const lower = new Set(
+    textParas.flatMap((p) => p.text.match(/(?<![\p{L}'’-])\p{Ll}[\p{L}'’-]*/gu) ?? []).map(letters),
   )
-  const missing = new Map<string, number | undefined>()
-  for (const p of textParas)
-    for (const m of p.text.matchAll(/\(([^()]{3,300})\)/g))
-      for (const part of m[1].split(';')) {
-        const c =
-          /^\s*(?:(?:e\.g\.|see|cf\.|as cited in|also)[,\s]+)*(\p{Lu}[\p{L}'’-]{2,})(?:\s+(?:et al\.?|and|&)\s*[\p{L}'’.\s-]*)?,\s+(?:(?:1[89]|20)\d\d[a-z]?|n\.\s?d\.)(?!\d)/u.exec(
-            part,
-          )
-        const n = c && letters(c[1])
-        if (
-          n &&
-          // (an organisation's abbreviation, "WHO", stands for a name written out in the list)
-          /\p{Ll}/u.test(c[1]) &&
-          !/^(table|figure|chapter|section|appendix|page|vol|no|republic|act|sec|art|january|february|march|april|may|june|july|august|september|october|november|december|spring|summer|autumn|fall|winter)$/.test(
-            n,
-          ) &&
-          !listLetters.includes(n) &&
-          !missing.has(c[1])
+  const authored = own.flatMap((e) => {
+    const b = byline(e)
+    if (!b) return []
+    const by = e.text.slice(0, YEAR.exec(e.text)!.index)
+    // How many authors, when every one was read as "Surname, I." (a name written in full, "et al."
+    // or "…" leaves the count unknown).
+    const count =
+      b.names.length &&
+      !by
+        .replace(
+          /(?:(?:van|von|der|den|de|del|della|di|da|du|le|la|ter|ten|dos|das)\s+)*\p{Lu}[\p{L}'’-]*(?:\s\p{L}[\p{L}'’-]*)*,\s+(?:\p{Lu}\.[\s-]*)+/gu,
+          '',
         )
-          missing.set(c[1], p.page)
-      }
+        .replace(/\band\b|[\s,&.]/g, '')
+        ? b.names.length
+        : undefined
+    return [{ b, count }]
+  })
+  const cites = textParas.flatMap((p) => readCites(p.text).map((c) => ({ c, page: p.page })))
+  // How often a word is written without a year: a surname is not, as a rule ("Vietnam" is).
+  const words = textParas.flatMap((p) => p.text.match(/\p{L}[\p{L}-]*/gu) ?? [])
+  const uncitedUses = (w: string) =>
+    words.filter((x) => x === w).length - cites.filter(({ c }) => c.names.includes(w)).length
+  // (an organisation, "UNESCO (2006)", is cited alone: never in a run of names)
+  const firstBy = (n: string, alone = true) =>
+    authored.filter(
+      ({ b }) =>
+        b.names[0] === n ||
+        b.pnames[0] === n ||
+        (alone && !b.names.length && n.length >= 4 && b.who.startsWith(n)),
+    )
+  const yearOf = (y: string) => (/^n/i.test(y) ? '0' : /^in/i.test(y) ? '9' : y.slice(0, 4))
+  const missing = new Map<string, number | undefined>()
+  const offYear = new Map<string, string>()
+  const offEtal = new Map<string, string>()
+  const at = (pg: number | undefined) => (pg !== undefined ? `${pagesText([pg])}: ` : '')
+  for (const { c, page } of cites) {
+    const ns = c.names.map(letters)
+    // (capitalised words of the sentence before the names: "Teachers, Reyes and Cruz (2019)";
+    // not a co-author: "Bagyo and Ulan (2006)" is no work of Ulan's)
+    const k = ns.findIndex(
+      (n, j) => firstBy(n, ns.length === 1).length && ns.slice(0, j).every((x) => lower.has(x)),
+    )
+    if (k < 0) {
+      // The first author: in the sentence, after capitalised words of the sentence ("Teachers,
+      // Reyes and Cruz (2019)").
+      const j = c.paren ? 0 : ns.findIndex((x) => !lower.has(x))
+      const [raw, n] = [c.names[j], ns[j]]
+      if (
+        j >= 0 &&
+        n.length >= 3 &&
+        // (an organisation's abbreviation, "WHO", stands for a name written out in the list)
+        /\p{Ll}/u.test(raw) &&
+        !STOPWORD.test(n) &&
+        !listLetters.includes(n) &&
+        // (a place before listed authors: "in Laguna, Tala and Dagat (2018)")
+        !ns.some((x) => firstBy(x, ns.length === 1).length) &&
+        // (in the sentence: after a capitalised word, "United Kingdom (2020)", or a word also written
+        // without a year, "Vietnam (1981)", names no author)
+        (c.paren || (!c.proper && !uncitedUses(raw))) &&
+        !missing.has(raw)
+      )
+        missing.set(raw, page)
+      continue
+    }
+    const names = ns.slice(k)
+    const works = firstBy(names[0], ns.length === 1)
+    const ys = c.years.map((y) => y.split('/').map(yearOf))
+    const off = ys.filter(
+      (y) =>
+        !works.some(({ b }) => y.includes(b.year.slice(0, 4))) &&
+        // (an entry the list's reading split or joined otherwise)
+        !listParas.some(
+          (q) =>
+            letters(q.text).includes(names[0]) &&
+            y.some((x) =>
+              x === '0'
+                ? /n\.\s?d\./.test(q.text)
+                : x === '9'
+                  ? /in press/i.test(q.text)
+                  : q.text.includes(x),
+            ),
+        ),
+    )
+    if (off.length) {
+      if (!offYear.has(c.text))
+        offYear.set(
+          c.text,
+          `${at(page)}listed ${list([...new Set(works.map(({ b }) => (b.year === '0' ? 'n.d.' : b.year === '9' ? 'in press' : b.year)))])}`,
+        )
+      continue
+    }
+    const counts = new Set(
+      works
+        .filter(({ b }) => ys.some((y) => y.includes(b.year.slice(0, 4))))
+        .map(({ count }) => count),
+    )
+    const n = counts.size === 1 ? [...counts][0] : undefined
+    if (!n || offEtal.has(c.text)) continue
+    const head1 = c.names[k]
+    // (more names than the entry has: the entry, or the citation, was read otherwise)
+    if (names.length > n) continue
+    if (c.etal && n <= 2)
+      offEtal.set(
+        c.text,
+        `${at(page)}${n === 1 ? 'one author: drop “et al.”' : 'two authors: name both, every time'}`,
+      )
+    else if (!c.etal && n >= 3)
+      offEtal.set(c.text, `${at(page)}${n} authors: cite as “${head1} et al.”, from the first time`)
+    else if (!c.etal && n === 2 && names.length === 1)
+      offEtal.set(c.text, `${at(page)}two authors: name both, every time`)
+  }
   if (missing.size) {
     const names = [...missing]
     issues.push(
@@ -995,6 +1091,23 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
     )
     statuses.push('review')
   }
+  const shown = (m: Map<string, string>) =>
+    list(
+      [...m]
+        .slice(0, 3)
+        .map(([t, why]) => `“${quote(t, 50)}” (${why})`)
+        .concat(m.size > 3 ? [`${m.size - 3} more`] : []),
+    )
+  if (offYear.size) {
+    issues.push(
+      `Cited with a year the reference list does not have for that author (match the year in the list): ${shown(offYear)}.`,
+    )
+    statuses.push('review')
+  }
+  if (offEtal.size) {
+    issues.push(`Authors cited otherwise than APA asks: ${shown(offEtal)}.`)
+    statuses.push('review')
+  }
   if (!issues.length)
     return ctx.doc.kind === 'doc'
       ? review(
@@ -1003,7 +1116,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
         )
       : ok(
           id,
-          `The ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '' : ', and hanging indents'}; their authors are found in the text, and the text's citations in the list. The heading is bold, centred and on a new page.`,
+          `The ${plural(refs.length, 'reference')} have double spacing and a year each${ctx.doc.kind === 'pdf' ? '' : ', and hanging indents'}; their authors are found in the text, and the text's citations in the list, under the same year and with the authors named as APA asks. The heading is bold, centred and on a new page.`,
         )
   const status = worst(statuses)
   return {

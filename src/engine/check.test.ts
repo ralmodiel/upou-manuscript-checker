@@ -148,6 +148,35 @@ describe('check', () => {
     expect(d).toMatch(/not found in the reference list: “Bituin”/)
   })
 
+  it('matches citations in the sentence to the list: author, year and "et al."', async () => {
+    const double = '<w:spacing w:line="480" w:lineRule="auto"/>'
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('Malaya (2018) saw it first. Alon et al. (2020) disagreed, as did Bituin (2021).'),
+        para('In 2022, Dagat found the same. Later work (Hangin, Ulap, and Ilog, 2023) agrees.'),
+        para('Signal reaches the coast (Tala, 2024).'),
+        para('Bagyo (1990), as cited by Tala (2024), and Ulan (2001) (cited in Tala, 2024) agree.'),
+        para('So it was (Kidlat 1977, Kulog 1983 in Tala, 2024). Tala (2024) cited Araw (1999).'),
+        para('Tala (2024), citing Kidlat et al. (1977) and Kulog et al. (1983), agrees.'),
+        para('References', '<w:jc w:val="center"/>'),
+        para('Alon, R., &amp; Lim, B. (2020). Two authors. Press.', double),
+        para('Bituin, C., Cruz, D., &amp; Reyes, E. (2021). Three authors. Press.', double),
+        para('Hangin, F., Ulap, G., &amp; Ilog, H. (2023). Three more. Press.', double),
+        para('Malaya, R. (2019). Notes on the field. Press.', double),
+        para('Tala, J. (2024). One work. Press.', double),
+      ),
+      opts,
+    )
+    const d = finding(r, 'references.apa').details?.join(' ') ?? ''
+    expect(d).toMatch(/not found in the reference list: “Dagat”/)
+    expect(d).toMatch(/year .*“Malaya \(2018\)” \(.*listed 2019\)/)
+    expect(d).toMatch(/“Alon et al\. \(2020\)” \(.*two authors/)
+    expect(d).toMatch(/“Bituin \(2021\)” \(.*3 authors: cite as “Bituin et al\.”/)
+    expect(d).toMatch(/“Hangin, Ulap, and Ilog, 2023” \(.*cite as “Hangin et al\.”/)
+    expect(d).not.toMatch(/Tala|Bagyo|Ulan|Kidlat|Kulog|Araw/)
+  })
+
   it('reads a chapter title put under its label with a line break', async () => {
     const r = await check(
       'thesis.docx',
