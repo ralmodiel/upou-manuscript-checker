@@ -156,6 +156,7 @@ describe('check', () => {
         para('Malaya (2018) saw it first. Alon et al. (2020) disagreed, as did Bituin (2021).'),
         para('In 2022, Dagat found the same. Later work (Hangin, Ulap, and Ilog, 2023) agrees.'),
         para('Signal reaches the coast (Tala, 2024).'),
+        para('Bundok (2021) and Bundok (2021b) disagree.'),
         para('Bagyo (1990), as cited by Tala (2024), and Ulan (2001) (cited in Tala, 2024) agree.'),
         para('So it was (Kidlat 1977, Kulog 1983 in Tala, 2024). Tala (2024) cited Araw (1999).'),
         para('Tala (2024), citing Kidlat et al. (1977) and Kulog et al. (1983), agrees.'),
@@ -165,6 +166,8 @@ describe('check', () => {
         para('Hangin, F., Ulap, G., &amp; Ilog, H. (2023). Three more. Press.', double),
         para('Malaya, R. (2019). Notes on the field. Press.', double),
         para('Tala, J. (2024). One work. Press.', double),
+        para('Bundok, L. (2021a). First work. Press.', double),
+        para('Bundok, L. (2021b). Second work. Press.', double),
       ),
       opts,
     )
@@ -175,6 +178,8 @@ describe('check', () => {
     expect(d).toMatch(/“Bituin \(2021\)” \(.*3 authors: cite as “Bituin et al\.”/)
     expect(d).toMatch(/“Hangin, Ulap, and Ilog, 2023” \(.*cite as “Hangin et al\.”/)
     expect(d).not.toMatch(/Tala|Bagyo|Ulan|Kidlat|Kulog|Araw/)
+    expect(d).toMatch(/letter .*“Bundok \(2021\)” \(.*listed 2021a and 2021b\)/)
+    expect(d).not.toMatch(/“Bundok \(2021b\)”/)
   })
 
   it('reads a chapter title put under its label with a line break', async () => {

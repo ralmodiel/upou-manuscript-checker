@@ -1002,6 +1002,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   const missing = new Map<string, number | undefined>()
   const offYear = new Map<string, string>()
   const offEtal = new Map<string, string>()
+  const offLetter = new Map<string, string>()
   const at = (pg: number | undefined) => (pg !== undefined ? `${pagesText([pg])}: ` : '')
   for (const { c, page } of cites) {
     const ns = c.names.map(letters)
@@ -1033,6 +1034,8 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
       continue
     }
     const names = ns.slice(k)
+    // (quoted from the first author: not "Teachers, Reyes and Cruz (2019)")
+    const t = c.text.slice(Math.max(0, c.text.indexOf(c.names[k])))
     const works = firstBy(names[0], ns.length === 1)
     const ys = c.years.map((y) => y.split('/').map(yearOf))
     const off = ys.filter(
@@ -1052,32 +1055,45 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
         ),
     )
     if (off.length) {
-      if (!offYear.has(c.text))
+      if (!offYear.has(t))
         offYear.set(
-          c.text,
+          t,
           `${at(page)}listed ${list([...new Set(works.map(({ b }) => (b.year === '0' ? 'n.d.' : b.year === '9' ? 'in press' : b.year)))])}`,
         )
       continue
     }
+    // APA: one author's works of one year go by a letter, 2020a and 2020b, in the text as in the
+    // list.
+    const listedAs = c.years.flatMap((y) => {
+      if (!/^\d{4}[a-z]?$/.test(y)) return []
+      const listed = works.map(({ b }) => b.year).filter((x) => x.startsWith(y.slice(0, 4)))
+      return listed.length &&
+        !listed.includes(y) &&
+        (y.length > 4 || listed.some((x) => x.length > 4))
+        ? listed
+        : []
+    })
+    if (listedAs.length && !offLetter.has(t))
+      offLetter.set(t, `${at(page)}listed ${list([...new Set(listedAs)].sort())}`)
     const counts = new Set(
       works
         .filter(({ b }) => ys.some((y) => y.includes(b.year.slice(0, 4))))
         .map(({ count }) => count),
     )
     const n = counts.size === 1 ? [...counts][0] : undefined
-    if (!n || offEtal.has(c.text)) continue
+    if (!n || offEtal.has(t)) continue
     const head1 = c.names[k]
     // (more names than the entry has: the entry, or the citation, was read otherwise)
     if (names.length > n) continue
     if (c.etal && n <= 2)
       offEtal.set(
-        c.text,
+        t,
         `${at(page)}${n === 1 ? 'one author: drop “et al.”' : 'two authors: name both, every time'}`,
       )
     else if (!c.etal && n >= 3)
-      offEtal.set(c.text, `${at(page)}${n} authors: cite as “${head1} et al.”, from the first time`)
+      offEtal.set(t, `${at(page)}${n} authors: cite as “${head1} et al.”, from the first time`)
     else if (!c.etal && n === 2 && names.length === 1)
-      offEtal.set(c.text, `${at(page)}two authors: name both, every time`)
+      offEtal.set(t, `${at(page)}two authors: name both, every time`)
   }
   if (missing.size) {
     const names = [...missing]
@@ -1101,6 +1117,12 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   if (offYear.size) {
     issues.push(
       `Cited with a year the reference list does not have for that author (match the year in the list): ${shown(offYear)}.`,
+    )
+    statuses.push('review')
+  }
+  if (offLetter.size) {
+    issues.push(
+      `Cited without the letter the list gives the year, or with another (APA: 2020a and 2020b in the text as in the list): ${shown(offLetter)}.`,
     )
     statuses.push('review')
   }
