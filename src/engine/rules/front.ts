@@ -826,11 +826,8 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
         where: at(tp.adviser),
       },
     )
-  // Spelling cannot be checked here, only compared with the Acceptance Page.
-  return review(
-    id,
-    `Check the spelling of your adviser's name, “${name}”, against your adviser's own: it cannot be checked here.`,
-  )
+  // The name is there and agrees with the Acceptance Page: its spelling is checked elsewhere.
+  return ok(id, `Adviser: “${name}”`)
 }
 
 function dateOf(p: Para | undefined, id: string, where: string): Finding {
@@ -2122,18 +2119,15 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
   // A name line ending in a comma ("…, Ph.D,"): a typo, certain enough to correct.
   const comma = all.filter((n) => /,\s*$/.test(n.name))
   if (comma.length)
-    return fix(
-      id,
-      `Remove the comma at the end of ${list(comma.map((n) => `“${n.name}”`))}. Check the spelling of each name below.`,
-      { details: all.map((n) => n.name), where: at(comma[0].para) },
-    )
-  // Deans change and each faculty has its own: the name is the student's to check.
+    return fix(id, `Remove the comma at the end of ${list(comma.map((n) => `“${n.name}”`))}.`, {
+      details: all.map((n) => n.name),
+      where: at(comma[0].para),
+    })
+  // The names are there: their spelling (and the Dean's name) is checked elsewhere.
   if (dean)
-    return review(
-      id,
-      "Check that the Dean's line names your faculty's current Dean, and the spelling of each name below: spelling cannot be checked here.",
-      { details: all.map((n) => n.name), where: at(dean.para) },
-    )
+    return ok(id, 'The advisory committee’s and the Dean’s names are filled in.', {
+      details: all.map((n) => n.name),
+    })
   // No line says "Dean" anywhere on the page: the Dean's block is missing.
   const r = ctx.s.acceptance
   if (r && !textIn(ctx, r.start, r.end).some((p) => /\bdean\b/i.test(p.text)))
@@ -2145,9 +2139,14 @@ function acceptanceNames(ctx: Ctx, names: Names): Finding {
         where: at(all[all.length - 1].para),
       },
     )
-  return review(id, 'Check the spelling of each name below: spelling cannot be checked here.', {
-    details: all.map((n) => n.name),
-  })
+  // A line says "Dean" but no Dean's name was read next to it: is it filled in?
+  return review(
+    id,
+    "Check that the Dean's name is filled in above the line “Dean”: it could not be read here.",
+    {
+      details: all.map((n) => n.name),
+    },
+  )
 }
 
 const PREFIX =
