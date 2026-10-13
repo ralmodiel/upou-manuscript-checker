@@ -113,6 +113,8 @@ export interface Page {
   glyphs: (Box & { text: string })[]
   /** Letters of text set turned (a landscape table's cells): not part of the lines, but on the page. */
   turned?: number
+  /** The turned letters themselves (a caption set sideways beside a landscape figure). */
+  turnedText?: string
   /** Text painted in a colour other than black ('#rrggbb'). */
   colored: { text: string; color: string }[]
   /** Coloured text inside hyperlinks was left out of `colored` (a link keeps its colour). */

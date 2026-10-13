@@ -380,6 +380,7 @@ export async function readPdf(
       const spans: Span[] = []
       const glyphs: Page['glyphs'] = []
       let turned = 0
+      let turnedText = ''
       // Turned a quarter way round, as the page reads when turned: where its words stand in that frame.
       const sideways: { text: string; x0: number; x1: number; y: number; size: number }[] = []
       for (const item of text.items) {
@@ -398,6 +399,7 @@ export async function readPdf(
         // set at an angle (a slanted "/" in a tick box) is still a mark.
         if (!slanted && (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0)) {
           turned += str.replace(/\s/g, '').length
+          turnedText += str + ' '
           if (
             Math.abs(a) < 0.01 &&
             Math.abs(d) < 0.01 &&
@@ -672,7 +674,7 @@ export async function readPdf(
         images: images.map(({ x0, y0, x1, y1, z }) => ({ x0, y0, x1, y1, z })),
         marks,
         glyphs,
-        ...(turned ? { turned } : {}),
+        ...(turned ? { turned, turnedText } : {}),
         // (a scan's text layer painted in the colours sampled from the picture under it, dark
         // greys each word its own: the scan's colours, not the writer's)
         colored:
