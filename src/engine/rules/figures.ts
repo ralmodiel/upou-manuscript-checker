@@ -1,5 +1,5 @@
 // Figures and tables: the number in bold above, the title in italics right below, APA style.
-import type { Box, Para } from '../model.ts'
+import type { Box, Line, Para } from '../model.ts'
 import { fix, na, ok, review, spread, type Ctx, type Finding } from '../report.ts'
 import { bolded, headingText, isTocLine, LIST_HEADING } from '../structure.ts'
 import { inShape, textSize } from './body.ts'
@@ -897,7 +897,7 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           )
         : ok(
             'figures.apa',
-            `Titles in title case, numbers and titles flush left${setup.notes ? ', notes as “Note.”' : ''}${setup.tables ? ', tables with no lines between the columns' : ''}, and numbering in order.`,
+            `Titles in title case, numbers and titles flush left${setup.notes ? ', notes as “Note.” below their table or figure' : ''}${setup.tables ? ', tables with no lines between the columns' : ''}, each mentioned in the text, and numbering in order.`,
           )
   // Pages with no text layer among the chapters may hold figures and captions that cannot be read.
   const unread = [...noTextPages(ctx.doc)].filter(
@@ -954,6 +954,38 @@ export function titleCase(title: string): 'caps' | 'sentence' | undefined {
   return lower >= 2 || (lower >= 1 && upper === 0) ? 'sentence' : undefined
 }
 
+/** "Table 2", "Figures 3 and 4", "Fig. 5", "Tables 1–3" in the text. */
+const CALLOUT =
+  /\b(tables?|fig(?:ures?|s?\.)|charts?)\s*([A-Z]?\d+(?:\.\d+)*[a-z]?(?:\s*(?:,|&|and|or|to|through|[–—-])\s*[A-Z]?\d+(?:\.\d+)*[a-z]?)*)/gi
+/** A table or figure number as the text may write it: "4-1" as "4.1", "3a" as 3. */
+const citeKey = (kind: string, num: string) =>
+  `${kind}${num
+    .replace(/[-–]/g, '.')
+    .replace(/(?<=\d)-?[a-z]$/i, '')
+    .toLowerCase()}`
+
+/** (PDF) Lines set single-spaced: two or more on a page, a step under 1.45 times their type. */
+function single(lines: Line[]): boolean {
+  const steps: number[] = []
+  for (let k = 1; k < lines.length; k++)
+    if (lines[k].page === lines[k - 1].page && lines[k].y > lines[k - 1].y)
+      steps.push((lines[k].y - lines[k - 1].y) / lines[k - 1].size)
+  steps.sort((a, b) => a - b)
+  return steps.length > 0 && steps[Math.floor(steps.length / 2)] < 1.45
+}
+
+/** A note standing between the caption and its table or figure, not below it. */
+function noteAbove(ctx: Ctx, c: Caption, q: Para): boolean {
+  const { doc } = ctx
+  const row = (x?: Para) => !!x && x.page === q.page && (x.inTable || x.text.includes('\t'))
+  // (a table's rows right under the note, none right over the caption: not a caption below its
+  // table with the next table under the note)
+  if (c.kind === 'table') return row(doc.paras[q.i + 1]) && !row(doc.paras[c.para.i - 1])
+  // (a PDF figure's pictures can be tiles, frames or a chart with its caption drawn inside: not
+  // judged there)
+  return doc.kind !== 'pdf' && !!doc.paras[q.i + 1]?.image && !doc.paras[c.para.i - 1]?.image
+}
+
 /** The APA setup of the captions, notes and tables, as the file shows it. */
 function apaSetup(
   ctx: Ctx,
@@ -977,6 +1009,14 @@ function apaSetup(
     ruled: [] as Caption[],
     scanned: [] as Caption[],
     noteFace: [] as Caption[],
+    uncited: [] as Caption[],
+    uncitedBlind: [] as Caption[],
+    noteAbove: [] as Caption[],
+    noteOrder: [] as Caption[],
+    tight: [] as Caption[],
+    gapped: [] as Caption[],
+    tightTitle: [] as Caption[],
+    tightNote: [] as Caption[],
   }
   const examples = new Map<keyof typeof bad, string>()
   const add = (k: keyof typeof bad, c: Caption, ex?: string) => {
@@ -992,6 +1032,65 @@ function apaSetup(
     for (const l of p.lines ?? [])
       starts.set(Math.round(l.x0), (starts.get(Math.round(l.x0)) ?? 0) + 1)
   const left = [...starts].sort((x, y) => y[1] - x[1])[0]?.[0] ?? 0
+  // (and its right margin: where most full lines, not a paragraph's last, end)
+  const ends = new Map<number, number>()
+  for (const p of doc.paras)
+    for (const l of p.lines?.slice(0, -1) ?? [])
+      ends.set(Math.round(l.x1), (ends.get(Math.round(l.x1)) ?? 0) + 1)
+  const right = [...ends].sort((x, y) => y[1] - x[1])[0]?.[0] ?? 0
+  // A paragraph centred: so marked, or (PDF) one line of no stated alignment standing about the
+  // middle of the text column, clear of both margins.
+  const centred = (q: Para) => {
+    if (q.align === 'center') return true
+    const l = q.lines?.[0]
+    return (
+      q.align === undefined &&
+      q.lines?.length === 1 &&
+      !!l &&
+      right - left > 200 &&
+      l.x1 <= right - 9 &&
+      // (near the middle: a line set off both margins is not flush left either way)
+      Math.abs((l.x0 + l.x1) / 2 - (left + right) / 2) <= 12
+    )
+  }
+  // Callouts: each table and figure of the chapters named in the text ("Table 2 shows…", "see
+  // Figures 3 and 4", "Tables 1–3"), anywhere after the front matter but in its own caption.
+  const [bodyStart] = bodyRange(ctx)
+  const backAt = Math.min(
+    ctx.s.references?.heading ?? Infinity,
+    ctx.s.appendicesHeading ?? ctx.s.appendices[0]?.heading ?? Infinity,
+  )
+  const own = new Set(caps.flatMap((c) => [c.para.i, ...(c.title ? [c.title.i] : [])]))
+  const cited = new Set<string>()
+  let blind = noTextPages(doc).size > 0
+  for (const p of doc.paras.slice(bodyStart)) {
+    if (p.i < backAt && garbled(p.text)) blind = true
+    if (own.has(p.i) || isTocLine(p.text)) continue
+    for (const m of norm(p.text).matchAll(CALLOUT)) {
+      const kind = /^t/i.test(m[1]) ? 'table' : 'figure'
+      let prev: string | undefined
+      let range = false
+      for (const x of m[2].matchAll(/([A-Z]?\d+(?:\.\d+)*)[a-z]?|(to|through|[–—-])/gi)) {
+        if (x[2]) {
+          range = true
+          continue
+        }
+        const num = x[1]
+        cited.add(citeKey(kind, num))
+        // ("Tables 2–4": 2, 3 and 4; "Table 4-1": a number by chapter, 4.1)
+        if (range && prev) {
+          cited.add(citeKey(kind, `${prev}.${num}`))
+          if (/^\d+$/.test(prev) && /^\d+$/.test(num) && +num > +prev && +num - +prev < 30)
+            for (let k = +prev + 1; k < +num; k++) cited.add(citeKey(kind, `${k}`))
+        }
+        prev = num
+        range = false
+      }
+    }
+  }
+  for (const c of caps)
+    if (c.para.i < backAt && !c.split && !cited.has(citeKey(c.kind, c.number)))
+      add(blind ? 'uncitedBlind' : 'uncited', c)
   for (const [n, c] of caps.entries()) {
     const page = c.para.page === undefined ? undefined : doc.pages?.[c.para.page]
     if (page?.ocr) {
@@ -1004,10 +1103,11 @@ function apaSetup(
     // (a PDF line is centred only off the page's left margin by a clear amount, and a title
     // starting where its own uncentred number starts is set flush with it, however wide)
     const off = (q: Para) => !page || !q.lines?.[0] || q.lines[0].x0 - left >= 9
-    const numberCentred = c.para.align === 'center' && off(c.para)
+    const numberCentred = centred(c.para) && off(c.para)
     const titleCentred =
       !c.inline &&
-      c.title?.align === 'center' &&
+      !!c.title &&
+      centred(c.title) &&
       off(c.title) &&
       !(
         !numberCentred &&
@@ -1017,19 +1117,39 @@ function apaSetup(
         Math.abs(c.title.lines[0].x0 - c.para.lines[0].x0) <= 4
       )
     if (numberCentred || titleCentred) add('centred', c)
+    // (PDF) The title one double-spaced line below the number: not single-spaced, nor a blank
+    // line between; a title of several lines double-spaced too.
+    const nl = c.para.lines?.at(-1)
+    const tl = c.title?.lines
+    if (nl && tl?.[0] && tl[0].page === nl.page && !c.title!.inTable) {
+      const r = (tl[0].y - nl.y) / nl.size
+      if (r > 0 && r < 1.45) add('tight', c)
+      else if (r > 3.6) add('gapped', c)
+      if (single(tl)) add('tightTitle', c)
+    }
     // A note right below the figure or table: after the caption, before the next one or any
     // running text, on the caption's page or the next.
     const from = (c.title ?? c.para).i + 1
     const to = Math.min(caps[n + 1]?.para.i ?? doc.paras.length, from + 80)
+    // (the table's rows or the picture passed, and a probability note, "*p < .05", read on the way)
+    let passed = false
+    let prob = false
     for (let k = from; k < to; k++) {
       const q = doc.paras[k]
       if (c.para.page !== undefined && (q.page ?? 0) > c.para.page + 1) break
       const qt = norm(q.text)
-      if (q.inTable || q.text.includes('\t')) continue
+      if (q.inTable || q.text.includes('\t') || q.image) {
+        passed = true
+        continue
+      }
+      if (/^\*+\s*p\s*[<>≤=]/i.test(qt)) prob = true
       const m = /^(notes?|sources?)\s*([.:])/i.exec(qt)
       if (m) {
         notes++
         const ex = `${name(c)}: “${quote(qt, 30)}”`
+        if (prob && !/^source/i.test(m[1])) add('noteOrder', c, ex)
+        if (!passed && c.object !== 'before' && noteAbove(ctx, c, q)) add('noteAbove', c, ex)
+        if (q.lines && single(q.lines)) add('tightNote', c, ex)
         if (/^source/i.test(m[1])) add('source', c, ex)
         else if (m[2] === ':') add('colon', c, ex)
         else if (/^NOTE/.test(m[1])) add('upperNote', c, ex)
@@ -1105,14 +1225,28 @@ function apaSetup(
     ),
     ...line('plainNote', '“Note” not in italics (set “Note” in italics, then a full stop)'),
     ...line('ruled', 'Lines between the columns (APA tables have no vertical lines)'),
+    ...line('tight', 'Title single-spaced under the number (leave one double-spaced line)'),
+    ...line('gapped', 'A blank line between the number and the title (one double-spaced line)'),
+    ...line('tightTitle', 'Title single-spaced (double-space it)'),
+    ...line('noteAbove', 'Note above the table or figure (put it below)'),
+    ...line(
+      'noteOrder',
+      'Probability note (“*p < .05”) before the general note (general note first)',
+    ),
+    ...line('tightNote', 'Note single-spaced (double-space it)'),
+    ...line('uncited', 'Not mentioned in the text (refer to each table and figure by its number)'),
   ]
   const unsure = [
     ...line('scanned', 'On a scanned page, its setup could not be read (check it yourself)'),
     ...line('noteFace', 'The note’s font could not be read (check that “Note.” is in italics)'),
+    ...line(
+      'uncitedBlind',
+      'No mention by number was found in the text, part of which could not be read (check that each is referred to)',
+    ),
   ]
   const where = spread(
     (Object.keys(bad) as (keyof typeof bad)[])
-      .filter((k) => k !== 'scanned' && k !== 'noteFace')
+      .filter((k) => k !== 'scanned' && k !== 'noteFace' && k !== 'uncitedBlind')
       .flatMap((k) => bad[k].map(at)),
   )
   return { faults, unsure, where, notes, tables }
