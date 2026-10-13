@@ -2,12 +2,14 @@
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
 import {
+  bolded,
   headingText,
   isHeadingish,
   isTocLine,
   LIST_HEADING_EXACT,
   PRELIM_NAMES,
   titlePage,
+  type Prelim,
   type PrelimKey,
 } from '../structure.ts'
 import { list, norm, quote, roman } from '../text.ts'
@@ -27,6 +29,14 @@ import {
 } from './numbering.ts'
 
 const ORDER: PrelimKey[] = ['bio', 'ack', 'dedication', 'toc', 'tables', 'figures', 'abstract']
+
+/** A keywords line ("Keywords: …", "(Keywords: …)"), also where a PDF ran it into the paragraph
+ *  above: one of the paragraph's lines opens with it, capitalised and with its colon (a sentence
+ *  wrapped before "keywords." is no such line). */
+const KEYWORDS = /^\(?key\s?words?\s*[:.–—-]/i
+const KEYWORDS_LINE = /^\(?(Key\s?words?|KEY\s?WORDS?)\s*:/
+const hasKeywords = (p: Para) =>
+  KEYWORDS.test(norm(p.text)) || !!p.lines?.some((l) => KEYWORDS_LINE.test(norm(l.text)))
 
 function present(ctx: Ctx, caps: Caption[]): Finding {
   const id = 'prelims.present'
@@ -121,15 +131,25 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
             p.page !== undefined &&
             p.page >= first &&
             (last === undefined || p.page < last) &&
-            /^key\s?words?\s*[:.–—-]/i.test(norm(p.text)),
+            hasKeywords(p),
         )
       : undefined
   if (keyLine) {
     missing.splice(missing.indexOf('abstract'), 1)
+    // Headed by another name ("Summary"): to rename. Headed by the study's title, as some
+    // abstracts are: the abstract is there, so its heading is for the student to look at.
+    // (the heading that opens the abstract's first page, which may be the page before)
+    const head = doc.paras
+      .slice(0, keyLine.i)
+      .findLast((p) => p.newPage && isHeadingish(p) && norm(p.text))
+    const renamed =
+      !!head && /^(summary|executive summary|synopsis|overview)$/i.test(headingText(head))
     issues.push(
-      `Head the abstract “Abstract”, as in the template: ${pagesText([keyLine.page!])} has its “Keywords” line, under no “Abstract” heading.`,
+      renamed
+        ? `Head the abstract “Abstract”, as in the template: ${pagesText([keyLine.page!])} has its “Keywords” line, under the heading “${headingText(head!)}”.`
+        : `Check the abstract’s heading: ${pagesText([keyLine.page!])} has its “Keywords” line, under no “Abstract” heading. The template heads it “Abstract”.`,
     )
-    statuses.push('fix')
+    statuses.push(renamed ? 'fix' : 'review')
   }
   // (a training report's summary stands for its abstract)
   if (
@@ -208,12 +228,7 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
     statuses.push('review')
   }
   const abstract = s.prelims.find((p) => p.key === 'abstract')
-  if (
-    abstract &&
-    !doc.paras
-      .slice(abstract.start, abstract.end)
-      .some((p) => /^key\s?words?\s*[:.-]/i.test(norm(p.text)))
-  ) {
+  if (abstract && !doc.paras.slice(abstract.start, abstract.end).some(hasKeywords)) {
     issues.push('Place the keywords right below the abstract (Keywords: …).')
     statuses.push('fix')
   }
@@ -323,15 +338,70 @@ function numbers(ctx: Ctx): Finding {
   return fix(id, msg, { details: summarize(problems) })
 }
 
+/** PDF: pages of the abstract, acknowledgment or sketch whose text is set centred. At least four
+ *  long lines, and most of the page's, stand off both margins with their middle on the text's
+ *  middle, and they share no left edge: a ragged left edge, which neither justified nor
+ *  left-aligned text has (nor text justified to narrower margins). (A PDF may cut such text into
+ *  one-line pieces, which the paragraph check passes over.) */
+function centredLines(ctx: Ctx): Para[] {
+  const { doc, s } = ctx
+  if (doc.kind !== 'pdf') return []
+  const lines = s.prelims
+    .filter((x) => x.key === 'bio' || x.key === 'ack' || x.key === 'abstract')
+    .flatMap((x) => doc.paras.slice(x.heading + 1, sectionEnd(ctx, x)))
+    .flatMap((p) => (p.inTable ? [] : (p.lines ?? []).map((l) => ({ p, l }))))
+  const out: Para[] = []
+  for (const pg of new Set(lines.map(({ l }) => l.page))) {
+    const m = doc.pages?.[pg]?.margins
+    if (!m) continue
+    const on = lines.filter(({ l }) => l.page === pg)
+    const off = on.filter(
+      ({ l }) =>
+        l.x0 > m.left + 6 &&
+        l.x1 < m.right - 6 &&
+        l.x1 - l.x0 > 0.5 * (m.right - m.left) &&
+        Math.abs((l.x0 + l.x1) / 2 - (m.left + m.right) / 2) <= 3,
+    )
+    const edge = Math.max(
+      ...off.map(({ l }) => off.filter((o) => Math.abs(o.l.x0 - l.x0) <= 1.5).length),
+    )
+    if (off.length >= 4 && off.length >= 0.6 * on.length && edge <= off.length / 3)
+      out.push(...new Set(off.map((o) => o.p)))
+  }
+  return out
+}
+
+function prelimJustified(ctx: Ctx, prose: Para[]): Finding {
+  const id = 'prelims.justified'
+  const found = justified(ctx, id, prose, 'the preliminary pages')
+  const mid = found.status === 'fix' ? [] : centredLines(ctx)
+  if (!mid.length) return found
+  return fix(id, 'Justify the body text of the preliminary pages (Home > Justify, or Ctrl+J).', {
+    details: [`The text on ${pagesText(mid.map((p) => p.page!))} is centred.`],
+    where: mid.slice(0, 5).map((p) => ({ page: p.page, quote: quote(p.text, 50) })),
+  })
+}
+
+/** Where a preliminary page's text ends. With no chapter found, the last one would run on into the
+ *  body: it ends at the next page opened by a heading (bold or centred, short). */
+function sectionEnd(ctx: Ctx, x: Prelim): number {
+  const { doc, s } = ctx
+  if (s.chapters.length) return x.end
+  const next = doc.paras
+    .slice(x.heading + 1, x.end)
+    .find((p) => p.newPage && (bolded(p) || p.align === 'center') && norm(p.text).length <= 80)
+  return next?.i ?? x.end
+}
+
 export function prelimRules(ctx: Ctx, caps: Caption[]): Finding[] {
   const prose = ctx.s.prelims
     .filter(
       (p) => p.key === 'bio' || p.key === 'ack' || p.key === 'dedication' || p.key === 'abstract',
     )
-    .flatMap((p) => bodyParas(ctx, p.heading + 1, p.end))
+    .flatMap((p) => bodyParas(ctx, p.heading + 1, sectionEnd(ctx, p)))
   return [
     present(ctx, caps),
-    justified(ctx, 'prelims.justified', prose, 'the preliminary pages'),
+    prelimJustified(ctx, prose),
     doubleSpaced(ctx, 'prelims.spacing', prose, 'the preliminary pages'),
     numbers(ctx),
   ]

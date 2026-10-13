@@ -306,6 +306,25 @@ function title(ctx: Ctx): Finding {
       where.push(...at(paras[c.heading]))
       continue
     }
+    // The title run into the paragraph under the label (an epigraph set right under it): its
+    // first line, in capitals, on the label's page.
+    const next = c.titlePara === undefined ? paras[c.heading + 1] : undefined
+    const line = next?.lines?.[0]
+    if (
+      next &&
+      line &&
+      c.heading + 1 < c.end &&
+      next.page === paras[c.heading].page &&
+      norm(line.text).length >= 4 &&
+      isUpper(norm(line.text))
+    ) {
+      const tf = typeface({ ...next, runs: line.runs }, `${name} title`, scale)
+      issues.push(...tf.issues)
+      if (tf.issues.length) where.push(...at(next))
+      if (tf.scaled) scaled.push(name)
+      if (faceUnknown({ ...next, runs: line.runs })) unsure.push(name)
+      continue
+    }
     if (c.titlePara === undefined) {
       issues.push(
         `${name}: indicate the chapter title (e.g., INTRODUCTION) below the chapter number`,
