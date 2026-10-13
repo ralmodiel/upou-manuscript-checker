@@ -963,9 +963,9 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   // (all that follows the heading: an entry the list's reading missed still counts)
   const listParas = ctx.doc.paras.slice(head.i + 1)
   const listLetters = letters(listParas.map((p) => p.text).join(' '))
-  // An organisation cited by an abbreviation the list writes out: "CENRO" for "Community
-  // Environment and Natural Resources Office", "PhilRice" for "Philippine Rice Research
-  // Institute", "DepEd-Region" by either part. Each capital, or capitalised piece, opens a word.
+  // An organisation cited by an abbreviation the list writes out: "NWRO" for "National Water
+  // Resources Office", "AgriHub" for "Agricultural Hub Institute", "DepEd-Region" by either part.
+  // Each capital, or capitalised piece, opens a word.
   const listWords = listParas
     .map((p) => p.text)
     .join(' ')
