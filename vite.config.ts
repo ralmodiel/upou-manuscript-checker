@@ -68,7 +68,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    exclude: ['**/node_modules/**', '**/dist/**', 'tmp/**', 'scripts/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'tmp/**', 'scripts/**', '.claude/**'],
     css: false,
     testTimeout: 20_000,
   },
