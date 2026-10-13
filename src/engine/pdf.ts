@@ -183,6 +183,8 @@ export async function readPdf(
       const colored: Page['colored'] = []
       // The coloured text being read: black text in between ends it.
       let run: Page['colored'][number] | undefined
+      // Where each white run begins (user space): on a coloured shape, it is a drawing's label.
+      const whiteRuns = new Map<Page['colored'][number], number[]>()
       let ctm: Matrix = [1, 0, 0, 1, 0, 0]
       // The text line's matrix, and where white text begins (user space).
       let tlm: Matrix = [1, 0, 0, 1, 0, 0]
@@ -262,7 +264,10 @@ export async function readPdf(
             // page's lines below.
             if (!text.trim()) continue
             if (run?.color === fill) run.text += text
-            else colored.push((run = { text, color: fill }))
+            else {
+              colored.push((run = { text, color: fill }))
+              if (fill === '#ffffff') whiteRuns.set(run, apply(ctm, tlm[4], tlm[5]))
+            }
           }
         } else if (fn === OPS.paintFormXObjectBegin) {
           stack.push({ ctm, fill, mode, alpha })
@@ -645,7 +650,16 @@ export async function readPdf(
         .filter((s) => !footShown.includes(flat(s.text)))
         .map((s) => s.text.trim())
         .join(' ')
-      const own = linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored
+      // (white words set on a coloured box: a diagram's label or a table's header, marked so)
+      const onShape = (c: Page['colored'][number]) => {
+        const at = whiteRuns.get(c)
+        if (!at) return false
+        const [x, y] = toView(at[0], at[1])
+        return shapes.some((m) => m.x0 <= x + 1 && m.x1 >= x && m.y0 <= y && m.y1 >= y - 1)
+      }
+      const own = (linked ? colored.filter((c) => !linked.includes(flat(c.text))) : colored).map(
+        (c) => (onShape(c) ? { ...c, shape: true } : c),
+      )
       // Coloured text quoted as the page's lines read it, spaces and all.
       const said = own.length
         ? lines

@@ -20,6 +20,7 @@ import {
   auditPdf,
   lookNote,
   lookOnly,
+  titleOnlyFix,
   unreadNote,
   judge,
   pagesText,
@@ -60,6 +61,8 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
       !s.prelims.some((x) => onPage.some((q) => q.i === x.heading)) &&
       onPage.reduce((n, q) => n + norm(q.text).split(' ').length, 0) <= 40 &&
       !onPage.some((q) => isTocLine(q.text) || q.inTable) &&
+      // (the "Keywords" line of an abstract run over from the page before is no page of its own)
+      !onPage.some(hasKeywords) &&
       s.prelims.some((x) => x.heading > p.i)
     )
   }
@@ -325,7 +328,10 @@ function numbers(ctx: Ctx): Finding {
       })
     if (problems.every((p) => p.type === 'unread' || p.type === 'overlap'))
       return review(id, unreadNote(problems), { where: [{ page: problems[0].page }] })
-    return fix(id, msg, { details: summarize(problems), where: [{ page: problems[0].page }] })
+    return fix(id, titleOnlyFix(problems, 'preliminary pages') ?? msg, {
+      details: summarize(problems),
+      where: [{ page: problems[0].page }],
+    })
   }
   if (!doc.sections)
     return review(id, 'Check the page numbers of the preliminary pages in the PDF version.')
