@@ -9,7 +9,7 @@ program's review emails.
 - **Nothing leaves the device.** The manuscript is read and checked by the page itself, on the
   visitor's desktop, laptop or phone. There is no backend, no database and no API, and the page's
   security policy (`connect-src 'none'`) blocks the page's scripts from making network requests.
-- **Every checklist item, every time.** All 38 items in 9 parts, each marked _To correct_,
+- **Every checklist item, every time.** All 38 items in 9 parts, each marked _Needs update_,
   _To review_, _Passed_ or _Not applicable_, plus three things reviewers often point out: template
   text left in, blank pages and coloured text.
 - **The files students actually have.** Word (.docx, .docm, .dotx, and .doc for text and page
@@ -38,7 +38,7 @@ site, and the template that follows it is offered for download). The title and a
 degree (Associate, Bachelor, Diploma, Master, Doctor; "of" or "in"), any of the three faculties and
 any manuscript type named before "Adviser:". Where UPOU's style guide (OVCAA 2017-4, issued by
 memorandum on 25 May 2022, the newest found) differs from the checklist, as in upper case versus
-title case for the title, other programs get _To review_, not _To correct_. Dean names are not
+title case for the title, other programs get _To review_, not _Needs update_. Dean names are not
 hard-coded: they differ by faculty and change.
 
 ## Stack

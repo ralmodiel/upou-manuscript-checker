@@ -140,7 +140,7 @@ export function reportModel(r: Report, today = new Date()): ReportModel {
     title: 'Formatting comments',
     file: r.fileName,
     meta: `${KIND[r.kind]}${r.pages ? ` · ${r.pages} pages` : ''} · checked ${date} against the UPOU format checklist`,
-    summary: `${n('fix')} to correct · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed${extra ? ` · ${extra} more to correct outside the checklist` : ''}`,
+    summary: `${n('fix')} need${n('fix') === 1 ? 's' : ''} update · ${n('review')} to review · ${n('ok')} of ${applicable} checks passed${extra ? ` · ${extra} more need${extra === 1 ? 's' : ''} update outside the checklist` : ''}`,
     intro: parts.length
       ? 'Please revise the manuscript to reflect the following:'
       : 'No corrections were found. Please still look over the manuscript before sending it, since an automated check can miss things.',

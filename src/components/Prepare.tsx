@@ -112,7 +112,7 @@ export default function Prepare({
           </h1>
           <p className="mt-5 max-w-[36rem] leading-relaxed text-ink-2 sm:mt-6 sm:text-lg">
             Compare your special problem, thesis or dissertation with every item of the UPOU format
-            checklist, at any level and in any program. You get what to correct, with the pages to
+            checklist, at any level and in any program. You get what needs update, with the pages to
             look at, and the comments as a Word or PDF file.
           </p>
         </div>

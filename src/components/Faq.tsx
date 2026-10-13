@@ -103,7 +103,7 @@ const QA: { id?: string; q: string; a: React.ReactNode; open?: boolean }[] = [
         master’s capstone project, special problem or thesis, and a doctoral dissertation. It
         follows the MDC program’s copy of UPOU’s central format checklist. Where UPOU’s style guide
         (issued in May 2022) differs from that checklist, as with upper case or title case for the
-        title, other programs get “To review” instead of “To correct”. Ask your program office
+        title, other programs get “To review” instead of “Needs update”. Ask your program office
         whether it adds rules of its own.
       </p>
     ),

@@ -32,7 +32,7 @@ export const STATUS: Record<
   Status,
   { label: string; icon: ComponentType<SVGProps<SVGSVGElement>>; tone: string }
 > = {
-  fix: { label: 'To correct', icon: FixIcon, tone: 'bg-fix-soft text-fix' },
+  fix: { label: 'Needs update', icon: FixIcon, tone: 'bg-fix-soft text-fix' },
   review: { label: 'To review', icon: ReviewIcon, tone: 'bg-review-soft text-review' },
   ok: { label: 'Passed', icon: CheckIcon, tone: 'bg-ok-soft text-ok' },
   na: { label: 'Not applicable', icon: MinusIcon, tone: 'bg-surface-2 text-ink-3' },

@@ -34,7 +34,7 @@
 
 /* Design tokens, from the UPOU OER proof of concept (its docs/design.md): paper and ink, UP maroon,
    forest and gold. Light values here; the dark set is in @layer base below. Status colours mark the
-   checklist: passed (forest), to correct (maroon red), to review (amber), not applicable (grey). */
+   checklist: passed (forest), needs update (maroon red), to review (amber), not applicable (grey). */
 @theme static {
   --color-paper: #faf8f6;
   --color-surface: #ffffff;

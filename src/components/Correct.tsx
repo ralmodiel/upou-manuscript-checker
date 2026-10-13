@@ -62,7 +62,11 @@ function PartState({ part }: { part: PartView }) {
   if (part.fix || part.review)
     return (
       <span className="flex flex-wrap gap-x-2.5 text-sm font-semibold tabular-nums">
-        {part.fix > 0 && <span className="text-fix">{part.fix} to correct</span>}
+        {part.fix > 0 && (
+          <span className="text-fix">
+            {part.fix} {part.fix === 1 ? 'needs' : 'need'} update
+          </span>
+        )}
         {part.review > 0 && <span className="text-review">{part.review} to review</span>}
       </span>
     )
@@ -327,14 +331,14 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
 
   const headline =
     fix > 0
-      ? `${fix} ${fix === 1 ? 'thing' : 'things'} to correct`
+      ? `${fix} ${fix === 1 ? 'item needs' : 'items need'} update`
       : review > 0
-        ? `Nothing to correct, ${review} to review`
+        ? `Nothing needs update, ${review} to review`
         : 'Every check passed'
   const bar = [
     { n: ok, cls: 'bg-ok', label: 'passed' },
     { n: review, cls: 'bg-review', label: 'to review' },
-    { n: fix, cls: 'bg-fix', label: 'to correct' },
+    { n: fix, cls: 'bg-fix', label: 'need update' },
   ]
 
   return (
@@ -366,7 +370,12 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                   · <span className="font-semibold text-review">{review}</span> to review
                 </>
               )}
-              {extraFix > 0 && <> · {extraFix} more to correct outside the checklist</>}
+              {extraFix > 0 && (
+                <>
+                  {' '}
+                  · {extraFix} more {extraFix === 1 ? 'needs' : 'need'} update outside the checklist
+                </>
+              )}
             </p>
           </div>
           <div

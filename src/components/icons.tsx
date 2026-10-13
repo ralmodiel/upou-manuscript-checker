@@ -27,7 +27,7 @@ export const CheckIcon = (props: IconProps) => (
   </Icon>
 )
 
-/** To correct: a pen striking through. */
+/** Needs update: a pen striking through. */
 export const FixIcon = (props: IconProps) => (
   <Icon {...props}>
     <path d="M14.5 5.5 18.5 9.5M4 20l1-4 10.6-10.6a2.1 2.1 0 0 1 3 3L8 19z" />

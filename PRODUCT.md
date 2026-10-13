@@ -39,7 +39,7 @@ writing advice.
 
 ## Capabilities and Constraints
 
-- Every checklist item gets a status: passed, to correct, to review (cannot be told from the file,
+- Every checklist item gets a status: passed, needs update, to review (cannot be told from the file,
   or needs a human look), or not applicable.
 - Outputs: the results on the page (the whole checklist, passed items in green), a formatting
   comments report as Word .docx and as PDF, and a print view.
