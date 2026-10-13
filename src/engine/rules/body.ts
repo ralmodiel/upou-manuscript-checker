@@ -14,7 +14,7 @@ const symbolBullet = (t: string) => {
   const c = t.trimStart().charCodeAt(0)
   return c >= 0xf000 && c <= 0xf0ff
 }
-export const CAPTION = /^(table|fig(ure)?\.?|chart)\s*[a-z]?-?\d/i
+export const CAPTION = /^(table|fig(ure)?\.?|chart|exhibit)\s*[a-z]?-?\d/i
 
 /** A PDF paragraph that is not running text: wholly bold (a long caption or heading run on), or
  *  a narrow column of lines (a table's cell). */
@@ -257,6 +257,23 @@ const titleLines = (ctx: Ctx, p: Para) =>
   norm(p.text).length < 200 &&
   !/[.!?:;,”"’)\]]$/.test(norm(p.text))
 
+/** PDF: every line centred between the margins, some set in from them (a quotation set centred,
+ *  its source under it): centred text, not text left unjustified. */
+const centredLines = (ctx: Ctx, p: Para) => {
+  const ls = p.lines ?? []
+  const m = ls[0] && ctx.doc.pages?.[ls[0].page]?.margins
+  // (a quotation's: quotation marks in it or in the lines around it)
+  const near = [p.i - 1, p.i, p.i + 1].map((k) => ctx.doc.paras[k])
+  return (
+    !!m &&
+    near.some((q) => !!q && q.page === p.page && /^["“]|["”]$/.test(norm(q.text))) &&
+    ls.length >= 2 &&
+    ls.every((l) => Math.abs((l.x0 + l.x1) / 2 - (m.left + m.right) / 2) <= 4) &&
+    ls.some((l) => l.x0 > m.left + 3) &&
+    ls.every((l) => l.x1 < m.right - 1)
+  )
+}
+
 /** A finding for justification over the given paragraphs; `name` says where ("the chapters"). */
 export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Finding {
   // An indented quotation is often left-aligned.
@@ -265,6 +282,8 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
       multiLine(ctx, p) &&
       !isList(p) &&
       p.align !== 'center' &&
+      // (the preliminary pages hold no quotations: centred text there is to justify)
+      !(id !== 'prelims.justified' && centredLines(ctx, p)) &&
       !blockQuote(ctx, p) &&
       !titleLines(ctx, p) &&
       // PDF: two lines ending a paragraph carried over from the page before, the first reaching to

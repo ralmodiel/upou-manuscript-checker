@@ -56,7 +56,9 @@ function placeholders(ctx: Ctx): Finding {
     const prev = ctx.doc.paras[p.i - 1]
     if (/^(course|program)[.:]*$/i.test(t) && prev?.page === p.page) t = `${norm(prev.text)} ${t}`
     for (const [re, name] of PLACEHOLDERS) if (re.test(t)) hit(name, p)
-    if (!p.inTable && !p.text.includes('\t'))
+    // (a form or sample letter among the appendices has its own blanks: "NAME", "DATE")
+    const appendix = ctx.s.appendicesHeading ?? ctx.s.appendices[0]?.heading
+    if (!p.inTable && !p.text.includes('\t') && !(appendix !== undefined && p.i > appendix))
       for (const [re, name] of LONE) if (re.test(t)) hit(name, p)
     // "Content" is a cell of the sample table, beside its "Column 1": a table of the student's
     // own may have one too.
@@ -186,8 +188,16 @@ function colour(ctx: Ctx): Finding {
   if (doc.kind === 'pdf') {
     // Charts and links may be coloured on purpose, so a PDF's coloured text is for a second look.
     const pages = doc.pages ?? []
+    // (a page under one picture of it, a scan with a text layer: that text's colours are the
+    // scan's, sampled from the picture, not a font colour)
+    // (or text in many near-black shades, one per word: colours a scan's reader sampled)
+    const dark = (c: string) =>
+      Math.max(...(c.match(/[0-9a-f]{2}/gi) ?? []).map((h) => parseInt(h, 16))) < 0x40
+    const scan = (pg: (typeof pages)[number]) =>
+      pg.images.some((b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.9 * pg.width * pg.height) ||
+      new Set(pg.colored.filter((c) => dark(c.color)).map((c) => c.color)).size >= 5
     const shown = pages.flatMap((pg) =>
-      pg.colored
+      (scan(pg) ? [] : pg.colored)
         .filter((c) => coloured(c.color.replace('#', '').toLowerCase()))
         .map((c) => ({ page: pg.n, text: c.text, color: c.color })),
     )
@@ -195,7 +205,9 @@ function colour(ctx: Ctx): Finding {
     const hits = shown.filter(
       (h) =>
         !URL.test(h.text) &&
-        !(/^#?f{6}$/i.test(h.color) && /^(\s*\d+([.,]\d+)?\s?%)+\s*$/.test(h.text)),
+        !(/^#?f{6}$/i.test(h.color) && /^(\s*\d+([.,]\d+)?\s?%)+\s*$/.test(h.text)) &&
+        // (nor a slice's label with its share, "19-25 25%", in the slice's colour)
+        !(h.text.trim().length <= 30 && /\d\s?%$/.test(h.text.trim())),
     )
     if (!hits.length)
       return black(shown.some((h) => URL.test(h.text)) || pages.some((pg) => pg.linked))

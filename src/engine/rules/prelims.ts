@@ -84,7 +84,24 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
     ack: /acknowledg/i,
     dedication: /dedication/i,
   }
-  const notAbsent = required.filter((k) => !found.includes(k) && !(k === 'dedication' && dedicated))
+  // A biographical sketch under another heading ("THE AUTHOR", "Biographical Data"): there, its
+  // heading to rename.
+  const bioHead = found.includes('bio')
+    ? undefined
+    : doc.paras.find(
+        (p) =>
+          // (on a page of its own after the acceptance page, which the range may run over)
+          p.i > (s.acceptance?.heading ?? s.title.end) &&
+          p.i < (s.chapters[0]?.start ?? s.references?.start ?? doc.paras.length) &&
+          p.newPage &&
+          isHeadingish(p) &&
+          /^(the (author|researcher)|biographical (data|profile|information|note)|(the )?author['’]?s profile|profile of the (author|researcher))$/i.test(
+            headingText(p),
+          ),
+      )
+  const notAbsent = required.filter(
+    (k) => !found.includes(k) && !(k === 'dedication' && dedicated) && !(k === 'bio' && bioHead),
+  )
   const listed = notAbsent.filter((k) => IN_TOC[k]?.test(tocText))
   const absent = notAbsent.filter((k) => !listed.includes(k))
   // The MDC template has a biographical sketch and a dedication; UPOU's style guide (2022)
@@ -188,6 +205,12 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
         : `${pagesText([dedicated.page!])} opens “${quote(dedicated.text, 30)}” under no heading: if it is the Dedication, give it the heading “Dedication”, as in the template.`,
     )
     statuses.push('review')
+  }
+  if (bioHead) {
+    issues.push(
+      `Head the biographical sketch “Biographical Sketch”, as in the template: ${bioHead.page === undefined ? 'the page' : pagesText([bioHead.page])} is headed “${quote(headingText(bioHead), 30)}”.`,
+    )
+    statuses.push(mdc ? 'fix' : 'review')
   }
   // A list under a heading worded otherwise ("LISTS OF FIGURES", "List of Table"): found, but the
   // template's words are "List of Tables" and "List of Figures".
@@ -403,11 +426,18 @@ function sectionEnd(ctx: Ctx, x: Prelim): number {
 }
 
 export function prelimRules(ctx: Ctx, caps: Caption[]): Finding[] {
-  const prose = ctx.s.prelims
-    .filter(
-      (p) => p.key === 'bio' || p.key === 'ack' || p.key === 'dedication' || p.key === 'abstract',
-    )
-    .flatMap((p) => bodyParas(ctx, p.heading + 1, sectionEnd(ctx, p)))
+  const sections = ctx.s.prelims.filter(
+    (p) => p.key === 'bio' || p.key === 'ack' || p.key === 'dedication' || p.key === 'abstract',
+  )
+  let prose = sections.flatMap((p) => bodyParas(ctx, p.heading + 1, sectionEnd(ctx, p)))
+  // Pages whose text is all set in bold (a sketch in bold throughout): the long paragraphs are
+  // their running text still, not a line set apart.
+  if (!prose.length)
+    prose = sections
+      .flatMap((p) => ctx.doc.paras.slice(p.heading + 1, sectionEnd(ctx, p)))
+      .filter(
+        (p) => bolded(p) && (p.lines?.length ?? 0) >= 3 && norm(p.text).length > 200 && !p.inTable,
+      )
   return [
     present(ctx, caps),
     prelimJustified(ctx, prose),
