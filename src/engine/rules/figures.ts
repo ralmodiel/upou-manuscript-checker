@@ -15,6 +15,8 @@ export interface Caption {
   title?: Para
   /** Where the figure or table itself stands: after the caption (right), before it, or unknown. */
   object: 'after' | 'before' | 'unknown'
+  /** The number written with a space inside it ("Table 1 9"). */
+  split?: boolean
 }
 
 // "Chart S1:", "Figure 4a", "Figure 6-A" and "Table 3 .1" (a stray space) are labels too; "Figure 5.
@@ -103,7 +105,8 @@ function objectSide(ctx: Ctx, p: Para, kind: Caption['kind'], title?: Para): Cap
     let rowsBefore = false
     if (kind === 'table') {
       const row = (q: Para) => q.text.includes('\t')
-      if (doc.paras.slice(from, from + 3).some(row)) return 'after'
+      // (below it, a table's cells read one to a line count too)
+      if (doc.paras.slice(from, from + 3).some((q) => row(q) || q.inTable)) return 'after'
       // (rows above it, with no running text between: a paragraph of three lines or more ends them)
       for (let k = p.i - 1; k >= Math.max(0, p.i - 3); k--) {
         const q = doc.paras[k]
@@ -304,8 +307,10 @@ export function findCaptions(ctx: Ctx): Caption[] {
       doc.paras[k - 1].page === p.page
     )
       continue
-    const number = m[2].replace(/\s/g, '')
-    const rest = m[3]
+    // ("Table 1 9", its title on the next line: a stray space inside the number, Table 19)
+    const split = /^\d+$/.test(m[2]) && /^\d{1,2}$/.test(m[3])
+    const number = split ? m[2] + m[3] : m[2].replace(/\s/g, '')
+    const rest = split ? '' : m[3]
     // "Table 1 shows that…" and "Table 1, the…" are sentences about the table, not its caption;
     // nor is a continued table's.
     if (
@@ -354,6 +359,7 @@ export function findCaptions(ctx: Ctx): Caption[] {
       inline: rest,
       title,
       object: objectSide(ctx, p, kind, title),
+      ...(split ? { split } : {}),
     }
     // (a label left alone at the foot of a page and repeated with its title on the next is one too)
     if (
@@ -472,12 +478,17 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
                 n.y1 >= m.y0 + 2,
             )),
       )
+    const formula = [doc.paras[pg.paras[0] - 1], ...pg.paras.map((i) => doc.paras[i])].some(
+      (q) => !!q && /\b(formulas?|equations?)\b/i.test(q.text),
+    )
     const big = pg.images.filter(
       (b) =>
         Math.min(b.x1 - b.x0, b.y1 - b.y0) >= 72 &&
         b.y1 > 0.12 * pg.height &&
         b.y0 < 0.88 * pg.height &&
-        !cell(b),
+        !cell(b) &&
+        // (nor an equation set as a picture, a line or two high, under "the formula below")
+        !(b.y1 - b.y0 < 100 && formula),
     )
     // A number closing the page before, its title (a few lines) opening this one, the picture
     // below the title.
@@ -525,7 +536,18 @@ function unlabelledPictures(ctx: Ctx, caps: Caption[]): { sure: string[]; maybe:
         (x) => !caps.some((c) => c.kind === x[1].toLowerCase() && c.number === x[2]),
       ),
     )
-    if (runsOn || named) maybe.push(pg.n)
+    // (or a picture under a label of another name, "Graph 4.", "Extract 2": numbered, not as a figure)
+    // (above the picture: one under it is a caption below its figure, which is to move)
+    const other = texts.some(
+      (q) =>
+        norm(q.text).length <= 80 &&
+        !!q.lines?.length &&
+        big.every((b) => q.lines!.at(-1)!.y <= b.y0 + 2) &&
+        /\b(graph|plate|map|photo(graph)?|diagram|illustration|exhibit|extract|image|picture|screenshot)\s*\d+\b/i.test(
+          norm(q.text),
+        ),
+    )
+    if (runsOn || named || other) maybe.push(pg.n)
     else out.push(pg.n)
   }
   return { sure: out.map((n) => `a picture on ${pagesText([n])}`), maybe }
@@ -686,6 +708,10 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       else if (skips) order.push(`${name}s are not numbered in order (${list}).`)
     }
   }
+  for (const c of caps.filter((x) => x.split))
+    order.push(
+      `${name(c)} has a space inside its number (“${quote(c.para.text, 12)}”): write it as one number.`,
+    )
   const apaStatus = worst([
     number.status,
     title.status,

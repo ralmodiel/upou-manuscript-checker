@@ -9,7 +9,7 @@ import { pagesText } from './numbering.ts'
 export const DOUBLE = 1.7
 // A bullet may be typed in a symbol font ("o", a black circle) or come out as a private-use letter.
 const LIST =
-  /^(\(?\d{1,2}[.)]|[IVXLivxl]{1,5}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·–—⚫⚪○◆◇■□➢➤➔✓✔-]|o|[a-z](?=\s[-–—]\s))\s/i
+  /^(\(?\d{1,2}[.)]|\(?[IVXLivxl]{1,5}[.)]|\(?[a-z][.)]|[•●▪◦‣∙·–—⚫⚪○◆◇■□➢➤➔✓✔-]|o|[a-z](?=\s[-–—]\s))\s/i
 const symbolBullet = (t: string) => {
   const c = t.trimStart().charCodeAt(0)
   return c >= 0xf000 && c <= 0xf0ff
@@ -65,7 +65,10 @@ const glossary = (p: Para) =>
  *  two figures side by side, one with decimals. */
 const wrappedRow = (p: Para) => {
   const rows = (p.lines ?? []).filter((l) =>
-    /(?<!\S)\d+(\.\d+)?\*{0,3}\s+\d+\.\d+\*{0,3}(?!\S)/.test(l.text),
+    // (or a count and its share, "194 (69.8%)")
+    /(?<!\S)\d+(\.\d+)?\*{0,3}\s+\d*\.\d+\*{0,3}(?!\S)|(?<!\S)\d+\s*\(\d+(\.\d+)?\s?%\)/.test(
+      l.text,
+    ),
   ).length
   // (a few lines of a row, or several rows)
   return rows >= 2 || (rows === 1 && p.lines!.length <= 4)
@@ -134,6 +137,8 @@ export function bodyParas(ctx: Ctx, start: number, end: number, skip = new Set<n
       // (a line with a column's gap inside it, after any list label: cells of a table side by side)
       !p.lines?.some((l) => /\S\t/.test(l.text.replace(/^\S{1,5}\t/, ''))) &&
       !transcript(t) &&
+      // A legend's row: a range of scores, then what it means ("1.00 to 1.79 Very low").
+      !/^\d+(\.\d+)?\s*(to|[-–—])\s*\d+(\.\d+)?\s+\p{L}/u.test(t) &&
       !glossary(p) &&
       !wrappedRow(p) &&
       !figureRow(t) &&
@@ -261,7 +266,15 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
       !isList(p) &&
       p.align !== 'center' &&
       !blockQuote(ctx, p) &&
-      !titleLines(ctx, p),
+      !titleLines(ctx, p) &&
+      // PDF: two lines ending a paragraph carried over from the page before, the first reaching to
+      // within a hair of the margin (too little to tell justified from left-aligned)
+      !(
+        ctx.doc.kind === 'pdf' &&
+        p.lines?.length === 2 &&
+        /^\p{Ll}/u.test(norm(p.text)) &&
+        p.lines[0].x1 >= (ctx.doc.pages?.[p.lines[0].page].margins?.right ?? Infinity) - 3
+      ),
   )
   if (ctx.doc.kind === 'doc')
     return review(
@@ -346,7 +359,10 @@ export function doubleSpaced(ctx: Ctx, id: string, paras: Para[], name: string):
   const all = [...paras.filter((p) => p.spacing !== undefined), ...lists]
   // Indented quotations are often set single-spaced: for the student to look at, not to correct.
   const quotes = all.filter((p) => blockQuote(ctx, p))
-  const checked = all.filter((p) => !quotes.includes(p))
+  // (the items of a questionnaire or scale set in from the margin, an inch or so, are no running text)
+  const checked = all.filter(
+    (p) => !quotes.includes(p) && !(isList(p) && (p.indent?.left ?? 0) >= 54),
+  )
   if (!all.length) return na(id, `No body text found in ${name}.`)
   const bad = checked.filter((p) => p.spacing! < DOUBLE).sort((a, b) => a.i - b.i)
   if (!bad.length) {

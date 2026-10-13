@@ -191,8 +191,14 @@ function colour(ctx: Ctx): Finding {
         .filter((c) => coloured(c.color.replace('#', '').toLowerCase()))
         .map((c) => ({ page: pg.n, text: c.text, color: c.color })),
     )
-    const hits = shown.filter((h) => !URL.test(h.text))
-    if (!hits.length) return black(hits.length < shown.length || pages.some((pg) => pg.linked))
+    // (white shares, "73% 24%", are a chart's value labels set on its coloured slices)
+    const hits = shown.filter(
+      (h) =>
+        !URL.test(h.text) &&
+        !(/^#?f{6}$/i.test(h.color) && /^(\s*\d+([.,]\d+)?\s?%)+\s*$/.test(h.text)),
+    )
+    if (!hits.length)
+      return black(shown.some((h) => URL.test(h.text)) || pages.some((pg) => pg.linked))
     return review(id, 'Change colored text to black (unless it is part of a chart or figure).', {
       details: hits
         .slice(0, 5)

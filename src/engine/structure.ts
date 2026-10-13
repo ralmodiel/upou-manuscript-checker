@@ -67,16 +67,16 @@ const PRELIMS: [PrelimKey, RegExp][] = [
   ['toc', /^(table of contents?|contents)$/i],
   // (a list's heading is often miswritten: "LISTS OF FIGURES", "List of Table", "LIST OF TABLE/S";
   // a PDF may glue its words: "List ofTables")
-  ['tables', /^lists? ?of ?tables?(\/s)?( and (figures?|illustrations?))?$/i],
+  ['tables', /^lists? ?of ?tables?(\/s)?( and (figures?|illustrations?|charts?|graphs?))?$/i],
   [
     'figures',
-    /^lists? ?of ?(figures?|illustrations?)(\/s)?$|^lists? ?of ?tables?(\/s)? and (figures?|illustrations?)$/i,
+    /^lists? ?of ?(figures?|illustrations?)(\/s)?$|^lists? ?of ?tables?(\/s)? and (figures?|illustrations?|charts?|graphs?)$/i,
   ],
   ['abstract', /^(research |executive )?abstract$/i],
 ]
 
 export const LIST_HEADING =
-  /^lists? ?of ?(tables?|figures?|illustrations?)(\/s)?( and (figures?|illustrations?))?$/i
+  /^lists? ?of ?(tables?|figures?|illustrations?)(\/s)?( and (figures?|illustrations?|charts?|graphs?))?$/i
 /** The template's own spelling of the list headings: any other is a slip for the student to look at.
  *  (Words a PDF glued, "List ofTables", are the reader's slip, not the student's.) */
 export const LIST_HEADING_EXACT =
@@ -307,7 +307,16 @@ export function findStructure(doc: Doc): Structure {
     }
     if (entry) continue
     if (!s.references && (s.chapters.length || s.prelims.length)) {
-      if (REFERENCES.test(t)) {
+      // (not a contents line whose page number fell just below it, at the right: "REFERENCES" / "101")
+      const num = paras[p.i + 1]?.lines?.[0]
+      const folio =
+        !!num &&
+        !!p.lines &&
+        num.page === p.lines[0].page &&
+        /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(paras[p.i + 1].text) &&
+        num.x0 > p.lines[0].x1 + 100 &&
+        num.y - p.lines[0].y <= 1.5 * p.lines[0].size
+      if (REFERENCES.test(t) && !folio) {
         s.references = { heading: p.i, start: p.i, end: paras.length }
         continue
       }

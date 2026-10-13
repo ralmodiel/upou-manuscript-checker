@@ -2,7 +2,7 @@
 import type { Para } from '../model.ts'
 import { fix, na, ok, review, worst, type Ctx, type Finding } from '../report.ts'
 import { bolded, isHeadingish, nextText } from '../structure.ts'
-import { list, norm, plural, quote } from '../text.ts'
+import { list, norm, plural, quote, unmapped } from '../text.ts'
 import { DOUBLE } from './body.ts'
 import { bodyNumbers, pushedDown } from './chapters.ts'
 import { readTitlePage } from './front.ts'
@@ -181,9 +181,10 @@ const key = (e: Entry, ignoreThe = false) =>
     .trim()
 
 /** An entry read through a font that came out as control characters: its words cannot be judged. */
+// (or a name in a font whose signs are not letters: glyph numbers, combining marks for stops)
 const scrambled = (e: Entry) =>
   [...e.text.slice(0, 40)].filter((c) => c.charCodeAt(0) < 32 && c !== '\t' && c !== '\n').length >=
-  2
+    2 || unmapped(e.text.split(/[,(]/)[0]) > 0
 
 /** The order, read both ways when entries open with "The" (APA puts a group author under its
  *  first significant word, but not every style does): a verdict that depends on it is for the
@@ -341,7 +342,7 @@ function order(ctx: Ctx, refs: Entry[], ignoreThe = false): Finding {
       (etal(e) || etal(prev!) ? flagEtAl() : true)
     ) {
       pairs.push(
-        `${at}“${quote(e.text, 45)}” should come before “${quote(prev!.text, 45)}”: works with the same first author go by the next author's surname`,
+        `${at}“${quote(e.text, 45)}” should come before “${quote(prev!.text, 45)}”: ${y1.names.length < 2 ? 'an author’s works alone come before those written with others' : 'works with the same first author go by the next author’s surname'}`,
       )
       misplaced.push(e)
     }
@@ -730,7 +731,8 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   for (const e of own) {
     const y = byline(e)
     if (!y) continue
-    const k = `${y.who}|${y.year.slice(0, 4)}`
+    // (by the surnames: initials written two ways, "C. R." and "C.", may be one author)
+    const k = `${y.names.length ? y.names.join(',') : y.who}|${y.year.slice(0, 4)}`
     works.set(k, [...(works.get(k) ?? []), e])
   }
   const lone = [...works.values()].flatMap((es) =>
@@ -931,11 +933,33 @@ function labels(ctx: Ctx): Finding {
     )
     statuses.push('review')
   }
-  const letters = romans
+  // A label misspelt ("APPENDX B"): not read as one, its letter seems to be skipped.
+  const typos = doc.paras.filter(
+    (p) =>
+      p.i > aps[0].heading &&
+      p.i < aps.at(-1)!.end &&
+      norm(p.text).length <= 100 &&
+      /^(appendx|apendix|appendex|appedix|apppendix|appenidx|appendux)\s+[a-z]\b/i.test(
+        norm(p.text),
+      ),
+  )
+  if (typos.length) {
+    issues.push(
+      `Spell the label “Appendix”: ${list(typos.slice(0, 3).map((p) => `“${quote(p.text, 30)}”`))}.`,
+    )
+    statuses.push('fix')
+  }
+  const all = romans
     ? []
-    : marks.filter((m) => /^[a-z]$/i.test(m)).map((m) => m.toUpperCase().charCodeAt(0))
+    : [
+        ...aps.map((a) => ({ i: a.heading, m: a.mark ?? '' })),
+        ...typos.map((p) => ({ i: p.i, m: norm(p.text).split(' ')[1] })),
+      ]
+        .sort((a, b) => a.i - b.i)
+        .map((x) => x.m)
+  const letters = all.filter((m) => /^[a-z]$/i.test(m)).map((m) => m.toUpperCase().charCodeAt(0))
   if (letters.some((c, k) => k > 0 && c !== letters[k - 1] + 1)) {
-    issues.push(`The appendix letters skip or repeat (${marks.join(', ')}).`)
+    issues.push(`The appendix letters skip or repeat (${all.join(', ')}).`)
     statuses.push(picturePages.length ? 'review' : 'fix')
   } else if (letters.length && marks[0] && letters[0] !== 65) {
     // The first appendix is unlabelled, or the letters begin further on.
@@ -1000,7 +1024,8 @@ function labels(ctx: Ctx): Finding {
       continue
     }
     if (inline) sameLine.push(head)
-    if (!centred(head) || (!inline && !centred(doc.paras[next!]))) offCentre.push(head)
+    // (a title of two or three lines, each centred, is centred)
+    if (!centred(head) || (!inline && !centred(doc.paras[next!], 3))) offCentre.push(head)
   }
   if (sameLine.length) {
     issues.push(

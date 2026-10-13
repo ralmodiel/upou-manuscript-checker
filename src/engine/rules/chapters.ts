@@ -663,6 +663,8 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     const label =
       lines.length === 1 &&
       !p.inTable &&
+      // (a row of a legend, "5.00 Very important", has its cells apart)
+      !p.text.includes('\t') &&
       t.length <= 60 &&
       /\p{L}.*\p{L}/u.test(t) &&
       !/^["“‘'[(\-–—]/.test(t) &&
@@ -812,7 +814,25 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       while (doc.paras[k]?.page === p.page && row(doc.paras[k])) k++
       const rows = doc.paras.slice(top, k).flatMap((q) => q.lines ?? [])
       const rest = doc.paras[k]
+      // The table's header row and at least one row of its data on the page: the title is kept with
+      // its table, which goes on over the page (APA). A header: bold, or short labels in capitals.
+      const header = (l: (typeof rows)[number]) =>
+        l.runs.filter((r) => r.text.trim()).every((r) => r.bold) ||
+        l.text
+          .split(/\t+/)
+          .map((c) => norm(c).split(' '))
+          .every(
+            (ws) =>
+              ws.length <= 4 &&
+              ws.every((w) =>
+                /^[\p{Lu}\d(&/]|^(of|and|the|in|on|for|to|or|by|per|vs\.?)$/u.test(w),
+              ),
+          )
+      const here0 = rows.filter((l) => l.page === pg.n)
+      const heads = here0.findIndex((l) => !header(l))
+      const kept = heads > 0
       if (
+        !kept &&
         rows.length &&
         rest?.page === pg.n + 1 &&
         row(rest) &&
@@ -938,9 +958,10 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
         onFirst === 1 &&
         onNext === 1 &&
         l0.x1 < (pg.margins?.right ?? Infinity) - 10 &&
+        // (or a run-in heading closing on a colon, “Theme”:)
         ((/[.!?]["”’)]?$/.test(norm(l0.text)) &&
-          !/[.,;:!?]$/.test(norm(l1.text)) &&
-          /^[\p{Lu}\d]/u.test(norm(l1.text)) &&
+          !/[.,;!?]$/.test(norm(l1.text)) &&
+          /^["“‘']?[\p{Lu}\d]/u.test(norm(l1.text)) &&
           l1.x1 - l1.x0 < 0.6 * (l0.x1 - l0.x0)) ||
           (/^(https?:\/\/|www\.)/i.test(norm(l1.text)) && l1.x0 < l0.x0 - 3))
       // (a one-line sentence leading in to a quotation set in on the next page: "… said that:")
@@ -958,7 +979,9 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
           room > ((l1.x1 - l1.x0) / Math.max(1, l1.text.length)) * word.length)
       // (a line near the top of its page is no foot of it, nor one near the foot its top: pages of
       // headings only, set over a picture)
-      const atFoot = onFirst === 1 && !stray && lines[0].y > 0.5 * pg.height
+      // (a page number read into the paragraph that opens the next page is no line of it)
+      const folio = onFirst === 1 && /^\d{1,4}$/.test(norm(lines[0].text))
+      const atFoot = onFirst === 1 && !stray && !folio && lines[0].y > 0.5 * pg.height
       const atTop =
         onNext === 1 &&
         closes &&
