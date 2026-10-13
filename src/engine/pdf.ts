@@ -192,6 +192,8 @@ export async function readPdf(
       // Text drawn invisibly (render mode 3 or 7): a scan's machine-read layer over its picture.
       let mode = 0
       let visible = 0
+      // Pieces of text painted black, against the coloured ones.
+      let black = 0
       let hidden = 0
       const stack: { ctm: Matrix; fill: string; mode: number; alpha: number }[] = []
       // A note filled white over its whole box (a "white-out" laid on the page): what lies under it
@@ -252,8 +254,10 @@ export async function readPdf(
                 .join('')
             : ''
           if (text.trim()) drawn.push([...apply(ctm, tlm[4], tlm[5]), k])
-          if (fill === '#000000') run = undefined
-          else {
+          if (fill === '#000000') {
+            run = undefined
+            if (text.trim()) black++
+          } else {
             // Pieces drawn one by one (letters, kerned parts): their spaces come back from the
             // page's lines below.
             if (!text.trim()) continue
@@ -573,16 +577,30 @@ export async function readPdf(
             }
           : l
       }
-      const covered = (l: Line) =>
-        covers.some(
-          (c) =>
-            c.x0 <= l.x0 + 2 &&
-            c.x1 >= l.x1 - 2 &&
-            c.y0 <= l.y - l.size + 2 &&
-            c.y1 >= l.y &&
-            !c.said.includes(flat(l.text).toLowerCase()),
-        )
-      const shown = covers.length ? lines.map(typedOn).filter((l) => !covered(l)) : lines
+      const inside = (c: Box, l: Line) =>
+        c.x0 <= l.x0 + 2 && c.x1 >= l.x1 - 2 && c.y0 <= l.y - l.size + 2 && c.y1 >= l.y
+      // (a note over one line only, with words of its own not read elsewhere on the page: a
+      // correction typed over the line, which reads as the note's words)
+      const shown = covers.length
+        ? lines.map(typedOn).flatMap((l) => {
+            const c = covers.find(
+              (c) => inside(c, l) && !c.said.includes(flat(l.text).toLowerCase()),
+            )
+            if (!c) return [l]
+            return c.typed &&
+              lines.filter((q) => inside(c, q)).length === 1 &&
+              !lines.some((q) => flat(q.text).toLowerCase().includes(c.said))
+              ? [
+                  {
+                    ...l,
+                    text: c.typed,
+                    runs: [{ ...l.runs[0], text: c.typed }],
+                    spans: [{ text: c.typed, x0: l.x0, x1: l.x1 }],
+                  },
+                ]
+              : []
+          })
+        : lines
       allLines.push(
         whites.length
           ? shown.filter(
@@ -638,7 +656,15 @@ export async function readPdf(
         marks,
         glyphs,
         ...(turned ? { turned } : {}),
-        colored: own.map(readable),
+        // (a scan's text layer painted in the colours sampled from the picture under it, dark
+        // greys each word its own: the scan's colours, not the writer's)
+        colored:
+          images.some((b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.8 * vp.width * vp.height) &&
+          colored.length >= 5 &&
+          new Set(colored.map((c) => c.color)).size >= 0.5 * colored.length &&
+          black < colored.length
+            ? []
+            : own.map(readable),
         ...(own.length < colored.length ? { linked: true } : {}),
         ...(hidden > visible ? { ocr: true } : {}),
         ...(hiddenFoot ? { hiddenFoot } : {}),
@@ -705,6 +731,31 @@ export async function readPdf(
     for (const r of runsAll) {
       r.unknown = true
       r.italic = false
+    }
+  // A ligature the font left without letters (U+0000 for "ti": "Communica" U+0000 "on"): put back
+  // from the one word the text spells so elsewhere, where there is just one.
+  const known = new Set(
+    allLines.flat().flatMap((l) => l.text.toLowerCase().match(/\p{L}{2,}/gu) ?? []),
+  )
+  const fits = new Map<string, string | undefined>()
+  const NUL = String.fromCharCode(0)
+  const ligature = (t: string) =>
+    t.replace(new RegExp(`(\\p{L}+)${NUL}(\\p{L}+)`, 'gu'), (m, a: string, b: string) => {
+      const k = `${a} ${b}`.toLowerCase()
+      if (!fits.has(k)) {
+        const re = new RegExp(`^${a.toLowerCase()}(\\p{L}{1,3})${b.toLowerCase()}$`, 'u')
+        const found = new Set([...known].flatMap((w) => re.exec(w)?.[1] ?? []))
+        fits.set(k, found.size === 1 ? [...found][0] : undefined)
+      }
+      const f = fits.get(k)
+      if (f === undefined) return m
+      return a + (/\p{Lu}$/u.test(a) && /^\p{Lu}/u.test(b) ? f.toUpperCase() : f) + b
+    })
+  for (const l of allLines.flat())
+    if (l.text.includes(NUL)) {
+      l.text = ligature(l.text)
+      for (const r of l.runs) r.text = ligature(r.text)
+      for (const s of l.spans) s.text = ligature(s.text)
     }
   // Headers and footers, once every page is read: a running title can only be told by its repeats.
   const running = runningLines(allLines, pages)
@@ -777,17 +828,27 @@ export async function readPdf(
 function toLines(spans: Span[], page: number): Line[] {
   const sorted = spans.filter((s) => s.text).sort((a, b) => a.y - b.y || a.x0 - b.x0)
   const groups: Span[][] = []
+  // (a piece of another size printed over one of the line's, a table's text run into the footer
+  // set across it, is a line of its own)
+  // (words, not the underscores of a signature line a name is typed on)
+  const clash = (g: Span[], s: Span) =>
+    /\p{L}/u.test(s.text) &&
+    g.some(
+      (q) =>
+        // (a name in a big script font over its label is a signature typed there: kept with it)
+        Math.abs(q.size - s.size) >= 1 &&
+        Math.abs(q.size - s.size) < 4 &&
+        Math.min(q.x1, s.x1) - Math.max(q.x0, s.x0) > 3 &&
+        /\p{L}/u.test(q.text),
+    )
   for (const s of sorted) {
-    const g = groups.at(-1)
-    if (g) {
-      const anchor = g[0].y
-      const size = Math.max(s.size, ...g.map((x) => x.size))
-      if (s.y - anchor <= 0.45 * size) {
-        g.push(s)
-        continue
-      }
-    }
-    groups.push([s])
+    const g = groups
+      .slice(-3)
+      .findLast(
+        (g) => s.y - g[0].y <= 0.45 * Math.max(s.size, ...g.map((x) => x.size)) && !clash(g, s),
+      )
+    if (g) g.push(s)
+    else groups.push([s])
   }
   const lines: Line[] = []
   for (const g0 of groups) {
@@ -905,6 +966,8 @@ function runningLines(pagesLines: Line[][], pages: Page[]): Set<Line> {
         .replace(/(…|\.{2,}|\s)\s*([ivxlcdm]+|\d+)\s*$/i, '')
         // (a number run into the last word: "Learning118")
         .replace(/(?<=\p{L})\d+\s*$/u, '')
+        // (the bar before the number, which a font may print as "I": "Title | ii", "Title I iii")
+        .replace(/\s+[|│I]$/, '')
         .replace(/\d+/g, '#')
         .replace(/[’‘]/g, "'")
         .replace(/\s+/g, ' ')
@@ -1029,7 +1092,8 @@ function splitBands(
         !(running.has(under) && !running.has(l) && /\p{L}/u.test(l.text)) &&
         l.y > height - 100 &&
         under.y - l.y <= 1.35 * Math.max(l.size, under.size) &&
-        Math.abs(l.size - under.size) < 0.6
+        // (a page number on a line of its own over the title may be set in the text's size)
+        (Math.abs(l.size - under.size) < 0.6 || /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text))
       )
         foot.add(l)
     }
@@ -1067,7 +1131,15 @@ function splitBands(
       }
       const top = block[block.length - 1]
       const above = lines[lines.indexOf(top) - 1]
-      if (!above || top.y - above.y >= 18) for (const l of block) foot.add(l)
+      const above2 = lines[lines.indexOf(top) - 2]
+      // (a line that goes on from the text above, in lower case or at its own line spacing, is
+      // the text's last line: double-spaced text runs that low)
+      const goesOn =
+        !!above &&
+        Math.abs(top.size - above.size) < 0.6 &&
+        (/^\p{Ll}/u.test(top.text.trim()) ||
+          (!!above2 && Math.abs(top.y - above.y - (above.y - above2.y)) < 1.5))
+      if ((!above || top.y - above.y >= 18) && !goesOn) for (const l of block) foot.add(l)
     }
   }
   for (let k = 0; k < lines.length; k++) {

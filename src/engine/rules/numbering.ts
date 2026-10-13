@@ -1,7 +1,7 @@
 // Page numbers ("folios"): the shortened title, an ellipsis, then i, ii... before Chapter I and
 // 2, 3... after it, none on the title page and on the first page of each chapter. A PDF shows every
 // footer as printed; a Word file is read from its section settings and footers instead.
-import type { Doc, HeaderFooter, Line, NumberFormat, Section } from '../model.ts'
+import type { Doc, HeaderFooter, Line, NumberFormat, Page, Section } from '../model.ts'
 import { distance, fromRoman, norm, quote, rejoin, roman, unmapped } from '../text.ts'
 
 export interface Folio {
@@ -22,8 +22,10 @@ export interface Folio {
 }
 
 const PLACEHOLDER = /shortened (thesis |dissertation |manuscript |project )?title here/i
-// The number after an ellipsis, a space, or a bar or dot set where the ellipsis goes ("Title │ii").
-const FOLIO = /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s*[|│¦•·]\s*|\s+|^)([ivxlcdm]+|\d+)\s*$/i
+// The number after an ellipsis, a space, or a bar or dot set where the ellipsis goes ("Title │ii",
+// its bar printed as "I" by some fonts: "Title I ii").
+const FOLIO =
+  /^(.*?)(?:(…|\.{2,}|(?:\.\s?){3})\s*|\s*[|│¦•·]\s*|\s+I\s+|\s+|^)([ivxlcdm]+|\d+)\s*$/i
 
 /** The number run into the last word of a footer ("Learningii", "Studies12"): split off when the
  *  word without it is one the manuscript uses and the whole is not. */
@@ -547,13 +549,17 @@ export function noTextPages(doc: Doc): Set<number> {
           // A picture over most of the page (a scan), or outlines of letters (many small filled
           // shapes); not a figure on a page of its own.
           (pg.images.some((b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.7 * pg.width * pg.height) ||
-            pg.marks.filter(
-              (m) => m.kind === 'path' && m.x1 - m.x0 < 40 && m.y1 - m.y0 < 40 && !!m.fill,
-            ).length >= 30),
+            outlined(pg)),
       )
       .map((pg) => pg.n),
   )
 }
+
+/** A page whose writing is drawn as outlines of letters: many small filled shapes. */
+export const outlined = (pg: Page) =>
+  (pg.marks ?? []).filter(
+    (m) => m.kind === 'path' && m.x1 - m.x0 < 40 && m.y1 - m.y0 < 40 && !!m.fill,
+  ).length >= 30
 
 /** A footer title set against the thesis title: the whole title (ten words or more, so no
  *  shortening), or the title with a word misspelled (a word of the footer one or two letters off a

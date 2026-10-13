@@ -800,8 +800,10 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
   const chair = committee[0] ? spelling(committee[0]) : ''
   const mine = spelling(name)
   // A name read through a signature over it or a misread glyph ("JUAiN", "CR�Z"): a letter
-  // missing from the font, or a small letter inside a word in capitals.
-  const misread = (s: string) => /�/.test(s) || /\p{Lu}{2}\p{Ll}+\p{Lu}/u.test(s)
+  // missing from the font, or a small letter inside a word in capitals, or after punctuation glued
+  // to one (a ligature read as other glyphs: "MARI.-a" for "MARIA").
+  const misread = (s: string) =>
+    /�/.test(s) || /\p{Lu}{2}\p{Ll}+\p{Lu}|\p{Lu}{2}[^\p{L}\s]+\p{Ll}(?!\p{L})/u.test(s)
   if (chair && chair !== mine && distance(chair, mine) <= 3 && misread(committee[0] + name))
     return review(
       id,
@@ -873,7 +875,7 @@ function typedChoice(text: string): Choice {
   const t = norm(text)
     .replace(/[☐□]\s*O\b/g, '☒ ')
     .replace(/[☐□]/g, ' ')
-  const yes = /\byes\b/i.exec(t)
+  const yes = /\by ?e ?s\b/i.exec(t)
   const no = /\bno\b/i.exec(t)
   if (yes && !no) return 'yes'
   if (no && !yes) return 'no'
@@ -911,13 +913,14 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
   const line = row.lines?.[0]
   if (!page || !line) return 'none'
   // One of the two words deleted, as in a Word file.
-  const yes = /\byes\b/i.test(line.text)
+  // ("Y e s": the word letter-spaced)
+  const yes = /\by ?e ?s\b/i.test(line.text)
   if (yes !== /\bno\b/i.test(line.text)) return yes ? 'yes' : 'no'
   // "or" may share its span with "No" ("or No"). With no "or", the Yes group ends before the next
   // thing on the line: that is the No box when the boxes stand before the words ("☐ Yes ☐ No"), the
   // Yes box when they stand after them ("Yes ☐ No ☐").
   const or = line.spans.find((s) => /^or\b/i.test(s.text))
-  const yesWord = line.spans.find((s) => /^yes$/i.test(s.text))
+  const yesWord = line.spans.find((s) => /^y ?e ?s$/i.test(s.text))
   const noWord = line.spans.find((s) => /^no$/i.test(s.text))
   const symbol = (s: { text: string }) => /^[^\p{L}\p{N}\s]$/u.test(s.text)
   // Same row: the mark's middle within half a line of the row's middle.
@@ -970,7 +973,15 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     b.y1 - b.y0 <= 5 * line.size &&
     b.y0 <= mid - 0.3 * line.size &&
     b.y1 >= mid + 0.3 * line.size
-  const pics = page.images.filter((b) => (band(b) || column(b)) && b.x0 > from)
+  // (a box picture set higher than the text, its bottom near the baseline: it holds the row's middle
+  // and most of the text's height, not only the top of the text as the next row's mark may)
+  const holds = (b: Box) =>
+    width(b) <= 4 * line.size &&
+    b.y1 - b.y0 <= 2.5 * line.size &&
+    b.y0 <= mid &&
+    b.y1 >= mid &&
+    Math.min(b.y1, line.y) - Math.max(b.y0, line.y - line.size) >= 0.5 * line.size
+  const pics = page.images.filter((b) => (band(b) || column(b) || holds(b)) && b.x0 > from)
   const on = (s: Choice) => pics.filter((b) => side(b.x0) === s)
   const ink = (s: Choice) => Math.max(0, ...on(s).map((b) => b.ink ?? 0))
   const [left, right] = [on('yes').length, on('no').length]
@@ -981,7 +992,7 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
     right === 1 &&
     // (a box filled in is much darker: that one is the mark, not the taller)
     Math.abs(ink('yes') - ink('no')) < 0.4 &&
-    Math.abs(tall('yes') - tall('no')) > 0.2 * tall('no')
+    Math.abs(tall('yes') - tall('no')) > 0.2 * Math.min(tall('yes'), tall('no'))
       ? tall('yes') > tall('no')
         ? 'yes'
         : 'no'
@@ -1271,7 +1282,9 @@ function signature(
       { where: at(label) },
     )
   // A name typed after "Signature:" may be meant as the signature (a script font): not for us to rule.
-  const typed = found === 'typed' || /signature\s*:\s*(\p{L}.*)$/iu.test(norm(label.text))
+  // (not the next label on the same line: "Student's signature: Thesis adviser signature:")
+  const after = /signature\s*:\s*(\p{L}.*)$/iu.exec(norm(label.text))?.[1] ?? ''
+  const typed = found === 'typed' || !!after.replace(/(?:\S+\s+){0,2}signature\s*:.*$/i, '').trim()
   if (ctx.doc.kind === 'pdf' && typed)
     return review(
       id,
@@ -1529,7 +1542,8 @@ function permissionStatement(ctx: Ctx): Finding {
   const r = ctx.s.permission
   if (!r) return fix(id, 'Add the University Permission Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
-  const allow = find(paras, /I specifically allow/i) ?? paras.find((p) => ALLOW.test(p.text))
+  // (a lower-case L typed for the I: "l specifically allow")
+  const allow = find(paras, /\b[IL] specifically allow/i) ?? paras.find((p) => ALLOW.test(p.text))
   const grant = find(paras, /Specifically,? I grant/i)
   if (allow && grant)
     return fix(id, 'Omit the “I specifically allow…”; retain the “Specifically, I grant…”.', {
@@ -1552,7 +1566,8 @@ function permissionStatement(ctx: Ctx): Finding {
     readable &&
     !paras.some(
       (p) =>
-        !/^["“]?\s*I hereby grant/i.test(norm(p.text)) && /grant|allow|specifically/i.test(p.text),
+        !/^["“]?\s*[IL] hereby grant/i.test(norm(p.text)) &&
+        /grant|allow|specifically/i.test(p.text),
     )
   )
     return fix(id, msg, { where: at(paras[0]) })
@@ -1581,13 +1596,21 @@ function permissionSignature(ctx: Ctx): Finding {
   // "04/08/2021"), and a typed name ("Juan B. Cruz"): only what is missing is asked for.
   const dated =
     DATE.test(typed.join(' ')) ||
+    // (no space after an abbreviated month, "Nov.5, 2024", or between two dates, "…2023August…")
+    DATE.test(
+      typed
+        .join(' ')
+        .replace(/(?<=\b[a-z]{3,4})\.(?=\d)/gi, '. ')
+        .replace(/(?<=\d)(?=\p{L})/gu, ' '),
+    ) ||
     typed.some((t) =>
       /(?<!\d)\d{1,2}[\s/.-]+(?:[a-z]{3,9}|\d{1,2})[\s/.,-]+\d{2,5}(?!\d)/i.test(t),
     ) ||
     // (a month and year, "5/20")
     typed.some((t) => /(?<![\d/])(0?[1-9]|1[0-2])\/(\d{2}|\d{4})(?![\d/])/.test(t))
   const named = typed.some((t) =>
-    /^\p{Lu}[\p{L}.'’-]*(?:\s+\p{Lu}[\p{L}.'’-]*){1,5}$/u.test(
+    // (a comma before a suffix: "Juan Cruz, Jr.")
+    /^\p{Lu}[\p{L}.'’-]*(?:,?\s+\p{Lu}[\p{L}.'’-]*){1,5}$/u.test(
       t.replace(/_+|\s[/|,]\s.*$|,?\s*\d.*$/g, ' ').trim(),
     ),
   )
@@ -1633,7 +1656,11 @@ function permissionSignature(ctx: Ctx): Finding {
     'University Permission Page',
   )
   if (sig.status !== 'ok') {
-    issues.push(sig.message)
+    issues.push(
+      sig.status === 'fix' && typed.some((t) => /\bsgd\b/i.test(t))
+        ? 'A typed “sgd.” is not a signature: affix your signature on the University Permission Page.'
+        : sig.message,
+    )
     statuses.push(sig.status)
   }
   if (!issues.length)
@@ -1800,7 +1827,8 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   const paras = textIn(ctx, r.start, r.end)
   // (or no word for it: "The dissertation attached hereto A STUDY OF RADIO in partial fulfilment…")
   // (a "ti" printed as one glyph the file reads as "(": "(tled")
-  const p = find(paras, /with the title|entitled|titled|\(tled\b|\btitle\s*:|attached hereto/i)
+  // (a gap the text layer puts inside a word: "with the ti tle:")
+  const p = find(paras, /with the ti ?tle|entitled|titled|\(tled\b|\bti ?tle\s*:|attached hereto/i)
   // The sentence may come in pieces (a PDF splits it where the bold title starts): read on to "accepted".
   const k = p ? paras.indexOf(p) : -1
   const end = paras.findIndex((q, j) => j >= k && /accepted/i.test(q.text))
@@ -1813,6 +1841,7 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
             .map(shown)
             .join(' ')
             .replace(/\((?=tled\b)/g, 'ti')
+            .replace(/\bti tle\b/gi, 'title')
             // A re-encoded font prints the quotes around the title as ³ and ´.
             .replace(/(title|titled)(\s*:?\s*)³/i, '$1$2“')
             .replace(/´(?=\s*(is hereby|which|has been|is accepted))/i, '”'),
