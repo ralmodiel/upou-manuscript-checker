@@ -5,7 +5,7 @@ import { bolded, isHeadingish, type Chapter } from '../structure.ts'
 import { isUpper, list, norm, plural, quote, roman, shown } from '../text.ts'
 import { bodyParas, CAPTION, doubleSpaced, inShape, isList, justified, textSize } from './body.ts'
 import type { Caption } from './figures.ts'
-import { thesisTitle } from './front.ts'
+import { readTitlePage, thesisTitle } from './front.ts'
 import {
   auditPdf,
   lookNote,
@@ -65,6 +65,17 @@ function typeface(p: Para, what: string, scale?: number): { issues: string[]; sc
   const sizes = off.filter((z) => scale === undefined || Math.abs(z! - scale) > 0.3)
   if (sizes.length) out.push(`${what} is ${sizes.join(', ')} pt, not 12 pt`)
   return { issues: out, scaled: scale !== undefined && off.length > sizes.length }
+}
+
+/** The title page calls the work a thesis or dissertation ("Thesis Adviser:"). A special problem
+ *  or capstone may number its sections "I. INTRODUCTION"; when the work is not named so, the
+ *  missing "Chapter" label stays for review. */
+const thesisWork = (ctx: Ctx) => {
+  try {
+    return /^(thesis|dissertation)\b/i.test(norm(readTitlePage(ctx).adviserLabel?.text ?? ''))
+  } catch {
+    return false
+  }
 }
 
 const chapterName = (c: Chapter) =>
@@ -170,8 +181,10 @@ function number(ctx: Ctx): Finding {
   const unsure: string[] = []
   const scaled: string[] = []
   const scale = reducedScale(ctx)
-  // Sections numbered "I. INTRODUCTION" with no label: the UPOU-wide checklist asks every program
-  // for a "Chapter I" label with the title on its own line.
+  // Sections numbered "I. INTRODUCTION" with no label: the UPOU-wide checklist asks for a
+  // "Chapter I" label with the title on its own line; a fix in a thesis or dissertation.
+  const thesis = thesisWork(ctx)
+  const soft: string[] = []
   let unlabelled = false
   for (const c of chapters) {
     const p = paras[c.heading]
@@ -180,10 +193,10 @@ function number(ctx: Ctx): Finding {
     const right = `Chapter ${(c.number ? roman(c.number) : c.numeral).toUpperCase()}`
     const before = issues.length
     if (c.unlabelled) {
-      issues.push(
+      ;(thesis ? issues : soft).push(
         `${chapterName(c)}: the chapter number is missing (write ${right} on its own line, with the title below it)`,
       )
-      unlabelled = true
+      unlabelled = thesis
       wrong.push(p)
       continue
     }
@@ -211,6 +224,12 @@ function number(ctx: Ctx): Finding {
         `Chapter numbers should run I, II, III… in order (found ${chapters.map((c) => c.numeral).join(', ')})`,
       )
   }
+  if (!issues.length && soft.length)
+    return review(
+      id,
+      'The sections are numbered “I.”, “II.”… with no “Chapter” label. The format checklist asks for a “Chapter I” label with the title on the next line; check with your program whether a special problem or capstone project does too.',
+      { details: soft.slice(0, 8), where: wrong.slice(0, 5).flatMap(at) },
+    )
   if (!issues.length && scaled.length)
     return review(
       id,
@@ -262,6 +281,9 @@ function title(ctx: Ctx): Finding {
   const where: ReturnType<typeof at> = []
   const unsure: string[] = []
   const scaled: string[] = []
+  // Titles on their number's line ("I. INTRODUCTION") in a work not named a thesis: for review.
+  const thesis = thesisWork(ctx)
+  const inline: string[] = []
   // Titles whose last letters stand alone on the line below ("INTRODUCTIO" / "N").
   const broken: string[] = []
   const scale = reducedScale(ctx)
@@ -281,7 +303,8 @@ function title(ctx: Ctx): Finding {
       if (tf.scaled) scaled.push(name)
       if (issues.length > before) where.push(...at(p))
       if (faceUnknown(tp)) unsure.push(name)
-      if (c.inlineTitle) {
+      if (c.inlineTitle && !thesis) inline.push(name)
+      else if (c.inlineTitle) {
         issues.push(
           `${name}: the title shares the number’s line (put it on its own line, below the “Chapter” label)`,
         )
@@ -363,6 +386,15 @@ function title(ctx: Ctx): Finding {
       'The last letters of a chapter title stand alone on the next line, as if a word were broken in two. Check that each chapter title is set on one line.',
       {
         details: broken.slice(0, 8).map((n) => `${n}: the title breaks a word across two lines`),
+        where: where.slice(0, 5),
+      },
+    )
+  if (!issues.length && inline.length)
+    return review(
+      id,
+      'The chapter titles share a line with their numbers (“I. INTRODUCTION”). The format checklist puts each title on its own line below the “Chapter I” label (see the chapter number item); check with your program whether a special problem or capstone project does too.',
+      {
+        details: inline.slice(0, 8).map((n) => `${n}: title on the number’s line`),
         where: where.slice(0, 5),
       },
     )
