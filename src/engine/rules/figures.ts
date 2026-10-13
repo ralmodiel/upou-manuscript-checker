@@ -768,35 +768,46 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       // (PDF numbers that only skip, 1, 3, 4, may be a caption not read here: for the student to
       // check; numbers going back are a fault whatever was missed)
       const skips = wholes.some((n, k) => k > 0 && n !== wholes[k - 1] + 1)
+      // (the numbers on each side of every break, not the first few, which may run in order)
+      const gaps = wholes
+        .flatMap((n, k) => (k > 0 && n !== wholes[k - 1] + 1 ? [`${wholes[k - 1]} then ${n}`] : []))
+        .slice(0, 4)
+        .join(', ')
       if (skips && ctx.doc.kind === 'pdf' && wholes.every((n, k) => k === 0 || n > wholes[k - 1]))
-        odd.push(`${name} numbers skip (${list}): check that none is missing or misnumbered.`)
-      else if (skips) order.push(`${name}s are not numbered in order (${list}).`)
+        odd.push(`${name} numbers skip (${gaps}): check that none is missing or misnumbered.`)
+      else if (skips) order.push(`${name}s are not numbered in order (${gaps}).`)
     }
   }
   for (const c of caps.filter((x) => x.split))
     order.push(
       `${name(c)} has a space inside its number (“${quote(c.para.text, 12)}”): write it as one number.`,
     )
-  // Only the APA item's own findings (numbering out of order or skipping): the number and title
-  // items carry theirs, and what is not read here (title case, notes, table lines) is no finding.
-  const apa = order.length
+  // The rest of the APA setup the file shows (the number and title on lines of their own is the
+  // title item's): titles in title case, captions flush left, notes as "Note.", tables with no
+  // lines between the columns.
+  const setup = apaSetup(ctx, caps)
+  const issues = [...order, ...setup.faults]
+  const apa = issues.length
     ? fix(
         'figures.apa',
         'Follow the APA style figure and table setup (see the APA pages linked here).',
-        { details: [...order, ...odd] },
+        { details: [...issues, ...odd, ...setup.unsure], where: setup.where },
       )
-    : odd.length
+    : odd.length || setup.unsure.length
       ? review(
           'figures.apa',
           'Check the APA style figure and table setup (see the APA pages linked here).',
-          { details: odd },
+          { details: [...odd, ...setup.unsure] },
         )
-      : ok(
-          'figures.apa',
-          number.status === 'ok' && title.status === 'ok'
-            ? 'Numbers, titles and numbering follow the APA setup.'
-            : 'Numbering follows the APA setup (numbers and titles: see the items above).',
-        )
+      : ctx.doc.kind === 'doc'
+        ? review(
+            'figures.apa',
+            'Titles are in title case and numbered in order. Check that numbers and titles are flush left and notes start with “Note.” in italics (an old .doc file does not say).',
+          )
+        : ok(
+            'figures.apa',
+            `Titles in title case, numbers and titles flush left${setup.notes ? ', notes as “Note.”' : ''}${setup.tables ? ', tables with no lines between the columns' : ''}, and numbering in order.`,
+          )
   // Pages with no text layer among the chapters may hold figures and captions that cannot be read.
   const unread = [...noTextPages(ctx.doc)].filter(
     (n) => ctx.s.chapters.length > 0 && n >= (ctx.doc.paras[ctx.s.chapters[0].heading].page ?? 0),
@@ -808,5 +819,189 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
           `${pagesText(unread.slice(0, 6))}${unread.length > 6 ? ' and others' : ''} ${unread.length === 1 ? 'has' : 'have'} no text layer (a picture or drawn letters), so the figures and tables there could not be read. Check them yourself.`,
         )
       : f
-  return [soften(number), soften(title), apa]
+  return [soften(number), soften(title), soften(apa)]
+}
+
+// Words APA keeps in lower case inside a title (and longer prepositions a writer may keep so:
+// not judged), Filipino ones too.
+const MINOR = new Set(
+  'a an the and but or nor for so yet as at by in of off on per to up via vs versus with from into onto upon over than within among between across through during toward towards without against about after before under along like amid ng sa mga ang ni kay nang para at'.split(
+    ' ',
+  ),
+)
+/** A title's case: 'caps' (all capitals), 'sentence' (major words in lower case) or ok. */
+export function titleCase(title: string): 'caps' | 'sentence' | undefined {
+  // (its first sentence: a description may follow it)
+  const t = title
+    .split(/(?<=\p{Ll}{2}\.)\s+(?=\p{Lu})/u)[0]
+    .replace(/\([^)]*\)?|\[[^\]]*\]?|[“"][^”"]*[”"]?|‘[^’]*’/g, ' ')
+  const letters = t.replace(/[^\p{L}]/gu, '')
+  if (letters.length >= 10 && !/\p{Ll}/u.test(letters) && t.trim().split(/\s+/).length >= 2)
+    return 'caps'
+  let lower = 0
+  let upper = 0
+  let prev = ''
+  let afterColon = true
+  for (const raw of t.split(/\s+/).slice(0, 25)) {
+    const w = raw.replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, '').split('-')[0]
+    const skip = afterColon || !w || /[\d/]/.test(w) || /^\p{Lu}{2,}/u.test(w)
+    afterColon = /[:—]$/.test(raw) || raw === '–' || raw === '—'
+    if (!skip) {
+      if (/^\p{Lu}/u.test(w)) upper++
+      // (a species' second name after its genus, "Oryza sativa", is lower case)
+      else if (
+        /^\p{Ll}+$/u.test(w) &&
+        w.length >= 4 &&
+        !MINOR.has(w) &&
+        !(/^\p{Lu}\p{Ll}+$/u.test(prev) && /(a|us|um|is|ae|ii|i|ensis|oides)$/.test(w)) &&
+        !/^(spp?|var|cf)\.?$/.test(prev)
+      )
+        lower++
+    }
+    prev = w
+  }
+  return lower >= 2 || (lower >= 1 && upper === 0) ? 'sentence' : undefined
+}
+
+/** The APA setup of the captions, notes and tables, as the file shows it. */
+function apaSetup(
+  ctx: Ctx,
+  caps: Caption[],
+): {
+  faults: string[]
+  unsure: string[]
+  where: ReturnType<typeof spread>
+  notes: number
+  tables: number
+} {
+  const { doc } = ctx
+  const bad = {
+    sentence: [] as Caption[],
+    caps: [] as Caption[],
+    centred: [] as Caption[],
+    colon: [] as Caption[],
+    source: [] as Caption[],
+    upperNote: [] as Caption[],
+    plainNote: [] as Caption[],
+    ruled: [] as Caption[],
+    scanned: [] as Caption[],
+    noteFace: [] as Caption[],
+  }
+  const examples = new Map<keyof typeof bad, string>()
+  const add = (k: keyof typeof bad, c: Caption, ex?: string) => {
+    if (bad[k].includes(c)) return
+    bad[k].push(c)
+    if (ex && !examples.has(k)) examples.set(k, ex)
+  }
+  let notes = 0
+  let tables = 0
+  for (const [n, c] of caps.entries()) {
+    const page = c.para.page === undefined ? undefined : doc.pages?.[c.para.page]
+    if (page?.ocr) {
+      add('scanned', c)
+      continue
+    }
+    const t = c.inline || norm(c.title?.text ?? '')
+    const tc = t && !garbled(t) ? titleCase(t) : undefined
+    if (tc) add(tc, c, `${name(c)}: “${quote(t, 50)}”`)
+    if (c.para.align === 'center' || (!c.inline && c.title?.align === 'center')) add('centred', c)
+    // A note right below the figure or table: after the caption, before the next one or any
+    // running text, on the caption's page or the next.
+    const from = (c.title ?? c.para).i + 1
+    const to = Math.min(caps[n + 1]?.para.i ?? doc.paras.length, from + 80)
+    for (let k = from; k < to; k++) {
+      const q = doc.paras[k]
+      if (c.para.page !== undefined && (q.page ?? 0) > c.para.page + 1) break
+      const qt = norm(q.text)
+      if (q.inTable || q.text.includes('\t')) continue
+      const m = /^(notes?|sources?)\s*([.:])/i.exec(qt)
+      if (m) {
+        notes++
+        const ex = `${name(c)}: “${quote(qt, 30)}”`
+        if (/^source/i.test(m[1])) add('source', c, ex)
+        else if (m[2] === ':') add('colon', c, ex)
+        else if (/^NOTE/.test(m[1])) add('upperNote', c, ex)
+        else if (q.plain || faceUnknown(q)) add('noteFace', c)
+        else {
+          // ("Note" itself in italics: the runs that hold its four letters)
+          let seen = 0
+          for (const r of q.runs) {
+            if (seen >= 4) break
+            const len = r.text.replace(/\s/g, '').length
+            if (len && !r.italic) {
+              add('plainNote', c, ex)
+              break
+            }
+            seen += len
+          }
+        }
+        break
+      }
+      if (qt.length > 300) break
+    }
+    // Lines between a table's columns.
+    if (c.kind !== 'table') continue
+    if (doc.kind === 'docx') {
+      const near = doc.paras
+        .slice(Math.max(0, c.para.i - 3), from + 4)
+        .find((q) => q.inTable && q.table !== undefined)
+      if (near?.table === undefined) continue
+      tables++
+      if (doc.ruled?.includes(near.table)) add('ruled', c)
+    } else if (page && c.object === 'after') {
+      const end = (c.title ?? c.para).lines?.findLast((l) => l.page === page.n)
+      if (!end) continue
+      const next = caps[n + 1]?.para.lines?.[0]
+      const bottom = next && next.page === page.n ? next.y - next.size : page.height
+      const xs = new Set<number>()
+      for (const m of page.marks) {
+        if (m.kind !== 'path' || m.clip || m.fill === '#ffffff') continue
+        if (m.y0 < end.y || m.y1 > bottom) continue
+        const w = m.x1 - m.x0
+        const h = m.y1 - m.y0
+        // (a thin upright rule, or the sides of a cell's drawn frame)
+        if (w <= 2.5 && h >= 6) xs.add(Math.round((m.x0 + m.x1) / 4))
+        else if (w > 20 && h >= 6 && h < 0.5 * page.height && !m.fill) {
+          xs.add(Math.round(m.x0 / 2))
+          xs.add(Math.round(m.x1 / 2))
+        }
+      }
+      // (rows read under the caption: a table drawn in text, not a picture)
+      if (!doc.paras.slice(from, from + 3).some((q) => q.text.includes('\t') || q.inTable)) continue
+      tables++
+      // (the frame's two sides and one inside at least, each a few points from the next)
+      const sorted = [...xs].sort((a, b) => a - b).filter((x, k, all) => !k || x - all[k - 1] > 3)
+      if (sorted.length >= 3) add('ruled', c)
+    }
+  }
+  const line = (k: keyof typeof bad, text: string) =>
+    bad[k].length
+      ? // (one example, named only among several)
+        [
+          `${text}: ${names(bad[k])}${!examples.has(k) ? '' : bad[k].length > 1 ? ` (e.g. ${examples.get(k)})` : ` (${examples.get(k)!.replace(/^[^“]*/, '')})`}.`,
+        ]
+      : []
+  const faults = [
+    ...line('sentence', 'Title not in title case (capitalise each major word)'),
+    ...line('caps', 'Title in capital letters (write it in title case)'),
+    ...line('centred', 'Number and title centred (set them flush left)'),
+    ...line('colon', 'Note opened with “Note:” (write “Note.”, “Note” in italics)'),
+    ...line('upperNote', 'Note opened with “NOTE” (write “Note.”, “Note” in italics)'),
+    ...line(
+      'source',
+      'Source given as “Source:” (write it as a note: “Note.” in italics, then the source)',
+    ),
+    ...line('plainNote', '“Note” not in italics (set “Note” in italics, then a full stop)'),
+    ...line('ruled', 'Lines between the columns (APA tables have no vertical lines)'),
+  ]
+  const unsure = [
+    ...line('scanned', 'On a scanned page, its setup could not be read (check it yourself)'),
+    ...line('noteFace', 'The note’s font could not be read (check that “Note.” is in italics)'),
+  ]
+  const where = spread(
+    (Object.keys(bad) as (keyof typeof bad)[])
+      .filter((k) => k !== 'scanned' && k !== 'noteFace')
+      .flatMap((k) => bad[k].map(at)),
+  )
+  return { faults, unsure, where, notes, tables }
 }
