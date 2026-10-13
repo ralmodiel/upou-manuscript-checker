@@ -8,6 +8,9 @@ import { reportDocx } from '../report/docx.ts'
 import { reportModel } from '../report/model.ts'
 import { check, FileProblem, sniff } from './check.ts'
 import { ITEMS } from './checklist.ts'
+import { guard, MISREAD } from './guard.ts'
+import type { Ctx } from './report.ts'
+import { parseFolio } from './rules/numbering.ts'
 import { readsOddly } from './text.ts'
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -925,5 +928,74 @@ describe('Word comments', () => {
     const doc = new DOMParser().parseFromString(xml, 'application/xml')
     expect(doc.getElementsByTagName('parsererror')).toHaveLength(0)
     expect(doc.documentElement.textContent).toContain('Thesis <final> & "v2".docx')
+  })
+})
+
+describe('consistency guard', () => {
+  const ctxOf = (paras: unknown[], footers: string[] = [], chapters: unknown[] = []) =>
+    ({
+      doc: {
+        kind: 'pdf',
+        paras,
+        notes: [],
+        pages: footers.map((footer, n) => ({ n, footer, footerLines: [], header: '' })),
+      },
+      s: { chapters },
+      env: {},
+    }) as unknown as Ctx
+  const fixOn = (id: string, details: string[], where?: { page: number; quote: string }[]) => ({
+    id,
+    status: 'fix' as const,
+    message: 'Fix it.',
+    details,
+    where,
+  })
+
+  it('reads an ellipsis inside the closing quotation mark of a footer', () => {
+    expect(parseFolio('“A Study of Radio…” 12')).toMatchObject({ ellipsis: true, number: '12' })
+    expect(parseFolio('A Study of Radio 12')).toMatchObject({ ellipsis: false })
+  })
+
+  it('takes no sentence opening with “Chapter two” for a chapter heading', async () => {
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('Chapter two reviews the studies on radio listening.', '<w:jc w:val="center"/>'),
+        para('Body text.'),
+      ),
+      opts,
+    )
+    expect(finding(r, 'chapterStart.number').details?.join(' ') ?? '').not.toContain('two')
+  })
+
+  it('turns a footer claim the footers contradict to review, and keeps a uniform real fault', () => {
+    const claim = ['No ellipsis (…) after the shortened title on pp. 2–5']
+    const odd = ctxOf([], ['A Study… of Radio 2', 'A Study… of Radio 3', 'A Study… of Radio 4'])
+    const [f] = guard(odd, [fixOn('body.pageNumbers', claim)])
+    expect(f.status).toBe('review')
+    expect(f.message).toContain(MISREAD)
+    const plain = ctxOf([], ['A Study of Radio 2', 'A Study of Radio 3', 'A Study of Radio 4'])
+    expect(guard(plain, [fixOn('body.pageNumbers', claim)])[0].status).toBe('fix')
+    // (a footer item with another claim besides keeps its fix)
+    const mixed = [...claim, 'p. 3: shows 4; it should be 3']
+    expect(guard(odd, [fixOn('body.pageNumbers', mixed)])[0].status).toBe('fix')
+  })
+
+  it('turns findings of several items that rest on one line of running text to review', () => {
+    const text = `Chapter two reviews ${'the studies of radio listening in towns '.repeat(5)}.`
+    const p = { i: 0, page: 4, text, lines: [{}, {}, {}], runs: [] }
+    const where = [{ page: 4, quote: 'Chapter two reviews the studies of…' }]
+    const ids = ['chapterStart.newPage', 'chapterStart.number', 'chapterStart.title']
+    const out = guard(ctxOf([p], [], [{ heading: 0 }]), [
+      ...ids.map((id) => fixOn(id, ['x'], where)),
+      fixOn('body.justified', ['y'], [{ page: 9, quote: 'Other text…' }]),
+    ])
+    expect(out.map((f) => f.status)).toEqual(['review', 'review', 'review', 'fix'])
+    // (a short bold heading is no running text: its faults stand)
+    const head = { i: 0, page: 4, text: 'Chapter 2', lines: [{}], runs: [] }
+    const kept = guard(ctxOf([head], [], [{ heading: 0 }]), [
+      ...ids.map((id) => fixOn(id, ['x'], [{ page: 4, quote: 'Chapter 2' }])),
+    ])
+    expect(kept.map((f) => f.status)).toEqual(['fix', 'fix', 'fix'])
   })
 })

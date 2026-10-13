@@ -1309,6 +1309,8 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
       details,
       where: at(lines[0]),
     })
+  // (outside MDC the case is for the student to check; the words differing are still a fault)
+  if (details.length && !upperRule(tp)) details[0] = `Check the case of the title. ${CASE_NOTE}`
   if (differs) {
     const d = wordDiff(main, t)
     details.push(
@@ -1318,7 +1320,7 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
   if (details.length)
     return fix(
       id,
-      `Use the final ${tp.work.toLowerCase()} title, in upper case, as on the Title Page.`,
+      `Use the final ${tp.work.toLowerCase()} title${upperRule(tp) ? ', in upper case,' : ''} as on the Title Page.`,
       {
         details,
         where: at(lines[0]),

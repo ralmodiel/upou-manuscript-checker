@@ -236,7 +236,16 @@ export function findStructure(doc: Doc): Structure {
     // or styled as a heading, or at least short and opening a page.
     const styled = bolded(p) || p.align === 'center' || /heading|title/i.test(p.style ?? '')
     const tocLike = /\s(\d+|[ivxlc]+)$/i.test(ch?.[2] ?? '')
-    if (ch && t.length <= 90 && !tocLike && (styled || (p.newPage && t.length <= 40))) {
+    // (a sentence, "Chapter two reviews the…", goes on in small letters: in plain type, even on a
+    // line of its own that reads as centred, it is no heading)
+    const sentence = !bolded(p) && /^\p{Ll}/u.test(ch?.[2] ?? '')
+    if (
+      ch &&
+      t.length <= 90 &&
+      !tocLike &&
+      !sentence &&
+      (styled || (p.newPage && t.length <= 40))
+    ) {
       const numeral = ch[1]
       const word = NUMBER_WORDS.indexOf(numeral.toLowerCase())
       s.chapters.push({

@@ -112,6 +112,25 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
         `the heading on ${pagesText(odd.map((p) => p.page!))} is in a font that cannot be read`,
       )
   }
+  // (an abstract headed by the study's title, not "Abstract": its page has the keywords line)
+  // (not where a page or heading could not be read: the heading may be there)
+  const keyLine =
+    missing.includes('abstract') && !unread.length
+      ? doc.paras.find(
+          (p) =>
+            p.page !== undefined &&
+            p.page >= first &&
+            (last === undefined || p.page < last) &&
+            /^key\s?words?\s*[:.–—-]/i.test(norm(p.text)),
+        )
+      : undefined
+  if (keyLine) {
+    missing.splice(missing.indexOf('abstract'), 1)
+    issues.push(
+      `Head the abstract “Abstract”, as in the template: ${pagesText([keyLine.page!])} has its “Keywords” line, under no “Abstract” heading.`,
+    )
+    statuses.push('fix')
+  }
   // (a training report's summary stands for its abstract)
   if (
     missing.includes('abstract') &&

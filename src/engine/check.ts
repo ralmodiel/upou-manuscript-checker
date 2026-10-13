@@ -16,6 +16,7 @@ import { garbled } from './text.ts'
 import { prelimRules } from './rules/prelims.ts'
 import { FileProblem } from './problem.ts'
 import { findStructure } from './structure.ts'
+import { guard } from './guard.ts'
 
 export { FileProblem }
 
@@ -173,14 +174,15 @@ export async function check(name: string, bytes: Uint8Array, opts: Options): Pro
   } catch (e) {
     console.error(e)
   }
-  const found = [
+  // (one misreading may make many findings: those the pages contradict go to review)
+  const found = guard(ctx, [
     ...(await safely(idsOf('title', 'permission', 'acceptance'), () => frontRules(ctx))),
     ...(await safely(idsOf('prelims'), () => prelimRules(ctx, captions))),
     ...(await safely(idsOf('chapterStart', 'body'), () => chapterRules(ctx, captions))),
     ...(await safely(idsOf('figures'), () => figureRules(ctx, captions))),
     ...(await safely(idsOf('references', 'appendices'), () => backRules(ctx))),
     ...(await safely(idsOf('extra'), () => extraRules(ctx))),
-  ]
+  ])
   const byId = new Map(found.map((f) => [f.id, f]))
   let title: string | undefined
   try {

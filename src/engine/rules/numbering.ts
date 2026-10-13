@@ -69,9 +69,10 @@ export function parseFolio(raw: string, words?: Set<string>): Folio | undefined 
   const label = /(?:^|\s)(?:p|pp|pg|page)\.?$/i.test(title)
   if (label) title = title.replace(/\s*(?:p|pp|pg|page)\.?$/i, '').trim()
   let ellipsis = !!m[2]
-  if (!ellipsis && /(…|\.{2,})$/.test(title)) {
+  // (a quoted title may close its quotation marks after the ellipsis: “A Study…” 12)
+  if (!ellipsis && /(…|\.{2,})["'”’»]*$/.test(title)) {
     ellipsis = true
-    title = title.replace(/(…|\.{2,})$/, '').trim()
+    title = title.replace(/(…|\.{2,})(["'”’»]*)$/, '$2').trim()
   }
   const number = m[3]
   const r = fromRoman(number)
