@@ -963,6 +963,26 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
   // (all that follows the heading: an entry the list's reading missed still counts)
   const listParas = ctx.doc.paras.slice(head.i + 1)
   const listLetters = letters(listParas.map((p) => p.text).join(' '))
+  // An organisation cited by an abbreviation the list writes out: "CENRO" for "Community
+  // Environment and Natural Resources Office", "PhilRice" for "Philippine Rice Research
+  // Institute", "DepEd-Region" by either part. Each capital, or capitalised piece, opens a word.
+  const listWords = listParas
+    .map((p) => p.text)
+    .join(' ')
+    .split(/[^\p{L}]+/u)
+    .filter((w) => w && !/^(?:and|of|the|for|in|on|at|ng|sa)$/i.test(w))
+    .map((w) => w.toLowerCase())
+  // (a surname of two parts, "Reyes-Cruz", is not: one part listed may be the other misspelt)
+  const spelt = (raw: string) =>
+    /\p{Lu}[^-–\s]*\p{Lu}/u.test(raw) &&
+    raw.split(/[-–\s]+/).some((part) => {
+      if (part.length >= 4 && listLetters.includes(letters(part))) return true
+      const bits = (part.match(/\p{Lu}\p{Ll}+|\p{Lu}/gu) ?? []).map((b) => b.toLowerCase())
+      return (
+        bits.length >= 2 &&
+        listWords.some((_, i) => bits.every((b, j) => listWords[i + j]?.startsWith(b)))
+      )
+    })
   // Words written in small letters in the text: "Survey (2021)" names no author.
   const lower = new Set(
     textParas.flatMap((p) => p.text.match(/(?<![\p{L}'’-])\p{Ll}[\p{L}'’-]*/gu) ?? []).map(letters),
@@ -1023,6 +1043,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
         /\p{Ll}/u.test(raw) &&
         !STOPWORD.test(n) &&
         !listLetters.includes(n) &&
+        !spelt(raw) &&
         // (a place before listed authors: "in Laguna, Tala and Dagat (2018)")
         !ns.some((x) => firstBy(x, ns.length === 1).length) &&
         // (in the sentence: after a capitalised word, "United Kingdom (2020)", or a word also written
