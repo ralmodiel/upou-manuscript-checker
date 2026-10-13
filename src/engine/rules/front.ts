@@ -807,7 +807,7 @@ function adviser(tp: TitlePage, committee: string[]): Finding {
   // A name read through a signature over it or a misread glyph ("JUAiN", "CR�Z"): a letter
   // missing from the font, or a small letter inside a word in capitals, or after punctuation glued
   // to one (a ligature read as other glyphs: "MARI.-a" for "MARIA").
-  // (or a sign inside a word, a font re-encoded: "Gon]ale]" for "Gonzalez")
+  // (or a sign inside a word, a font re-encoded: "Ro]ari]" for "Rozariz")
   const misread = (s: string) =>
     /�/.test(s) ||
     /\p{Lu}{2}\p{Ll}+\p{Lu}|\p{Lu}{2}[^\p{L}\s]+\p{Ll}(?!\p{L})/u.test(s) ||
