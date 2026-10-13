@@ -279,6 +279,23 @@ export function findStructure(doc: Doc): Structure {
       })
       continue
     }
+    // An appendix's label alone atop a page that holds a contents of its own (a guide's): a label,
+    // not a line of the manuscript's contents, once the references or "Appendices" are behind.
+    if (
+      entry &&
+      (s.references || s.appendicesHeading !== undefined) &&
+      pageStartOn(doc, p.i) === p.i &&
+      /^(appendix|annex)\s+([a-z]|\d{1,2})$/i.test(t)
+    ) {
+      s.appendices.push({
+        heading: p.i,
+        start: p.i,
+        end: paras.length,
+        label: t,
+        mark: t.split(/\s+/)[1],
+      })
+      continue
+    }
     if (entry) continue
     if (!s.references && (s.chapters.length || s.prelims.length)) {
       if (REFERENCES.test(t)) {
