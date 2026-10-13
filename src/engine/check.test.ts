@@ -778,6 +778,7 @@ describe('check', () => {
     const good = await check(
       'thesis.docx',
       thesis(
+        para('Table 1 gives the ages.'),
         para('Table 1'),
         para('Profile of the Respondents by Age Group'),
         table('<w:insideH w:val="single"/><w:insideV w:val="nil"/>'),
@@ -786,6 +787,37 @@ describe('check', () => {
       opts,
     )
     expect(finding(good, 'figures.apa').details ?? []).toEqual([])
+  })
+
+  it('checks that each table is called out in the text and its notes stand below it, general first', async () => {
+    const cell = (t: string) => `<w:tc>${para(t)}</w:tc>`
+    const table = `<w:tbl><w:tr>${cell('Age')}${cell('Count')}</w:tr></w:tbl>`
+    const note = (t: string) =>
+      `<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Note.</w:t></w:r><w:r><w:t xml:space="preserve"> ${t}</w:t></w:r></w:p>`
+    const r = await check(
+      'thesis.docx',
+      thesis(
+        para('The ages of the members are in Tables 1–2.'),
+        para('Table 1'),
+        para('Members of the Garden Club by Age'),
+        table,
+        para('*p &lt; .05.'),
+        note('Counts from the club roll.'),
+        para('Table 2'),
+        para('Members of the Garden Club by Town'),
+        note('Counts from the club roll.'),
+        table,
+        para('Table 3'),
+        para('Visits to the Garden by Month'),
+        table,
+      ),
+      opts,
+    )
+    const d = finding(r, 'figures.apa').details?.join(' ') ?? ''
+    expect(d).toMatch(/Probability note.*: Table 1 /)
+    expect(d).toMatch(/Note above.*: Table 2 /)
+    expect(d).toMatch(/Not mentioned in the text.*: Table 3\./)
+    expect(d).not.toMatch(/Not mentioned in the text.*Table [12]/)
   })
 
   it('leaves a missing biographical sketch and dedication to the student outside the MDC', async () => {
