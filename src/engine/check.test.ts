@@ -130,9 +130,9 @@ describe('check', () => {
     const r = await check(
       'thesis.docx',
       thesis(
-        para('Radio reaches the hills (Abad, 2019; Tolentino, 2021).'),
+        para('Radio reaches the hills (Malaya, 2019; Bituin, 2021).'),
         para('Reference', '<w:jc w:val="center"/>'),
-        para('Abad, R. (2019). Notes on the field. Press.', double),
+        para('Malaya, R. (2019). Notes on the field. Press.', double),
         para('Lim, B. (2020). One work. Press.', double),
       ),
       opts,
@@ -144,8 +144,8 @@ describe('check', () => {
     expect(d).toMatch(/on a new page/)
     expect(d).toMatch(/Title the list/)
     expect(d).toMatch(/Not found cited in the text.*“Lim/)
-    expect(d).not.toMatch(/Not found cited.*Abad/)
-    expect(d).toMatch(/not found in the reference list: “Tolentino”/)
+    expect(d).not.toMatch(/Not found cited.*Malaya/)
+    expect(d).toMatch(/not found in the reference list: “Bituin”/)
   })
 
   it('reads a chapter title put under its label with a line break', async () => {
@@ -201,8 +201,8 @@ describe('check', () => {
       thesis(
         para('REFERENCES', '<w:jc w:val="center"/>'),
         para('2020 census of the town. (2021). Town Office.', double),
-        para('Abad, R. (2019). Notes from Unit II. Reading the field. Course pack.', double),
-        para('Abad, R. (2019). Notes from Unit II. Writing it up. Course pack.', double),
+        para('Alon, R. (2019). Notes from Unit II. Reading the field. Course pack.', double),
+        para('Alon, R. (2019). Notes from Unit II. Writing it up. Course pack.', double),
         para('Bautista, L. (August 2006). A dated piece. Daily News.', double),
         para('Republic Act No. 10173, Data Privacy Act of 2012.', double),
       ),
