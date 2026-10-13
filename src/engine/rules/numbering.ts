@@ -160,6 +160,7 @@ export interface Problem {
     | 'label'
     | 'overlap'
     | 'unread'
+    | 'covered'
   page?: number
   text: string
   /** The number shown less the number expected (a wrong page number). */
@@ -634,6 +635,19 @@ export function auditPdf(
     ]
     return pdfFolio(doc, p)?.number !== undefined && found.length ? found : noLayer(p)
   }
+  // A number missing from the foot that is in the file there, hidden under something drawn over it
+  // (a caption's white box laid across the footer): it does not print, but it is not left out.
+  const covered = (q: Problem): Problem => {
+    const hid = q.page === undefined ? undefined : doc.pages?.[q.page]?.hiddenFoot
+    const n = /(?:^|\s)(\d{1,3}|[ivxlcdm]{1,6})(?=\s|$)/i.exec(hid ?? '')?.[1]
+    return q.type === 'missing' && n
+      ? {
+          ...q,
+          type: 'covered',
+          text: `${pagesText([q.page!])}: the page number (${n}) is in the file but covered by something drawn over the footer, so it does not print`,
+        }
+      : q
+  }
   // A wholly blank page (no text, no picture, no footer) is the blank-pages item's.
   const inked = new Set(doc.paras.flatMap((q) => (q.lines ?? []).map((l) => l.page)))
   const blank = (p: number) =>
@@ -649,7 +663,8 @@ export function auditPdf(
         unread.has(p)
           ? pictured(p)
           : [...judge(pdfFolio(doc, p), want(p), p), ...againstTitle(pdfFolio(doc, p), thesis, p)],
-      ),
+      )
+      .map(covered),
     ...titleChanges(doc, pages, thesis, ref),
   ]
 }
@@ -739,6 +754,8 @@ const LABEL: Record<Problem['type'], string> = {
   label: 'The number has “p.” or “page” before it on',
   overlap: 'The footer prints over itself, so it could not be read, on',
   unread: 'The page number could not be read (no text layer, or not as text) on',
+  covered:
+    'The page number is in the file but covered (a white box or white text over the footer), so it does not print, on',
 }
 
 /** Problems grouped by kind, one line each ("No page number on pp. 4–6, e.g. …"). */

@@ -661,6 +661,14 @@ export async function readPdf(
         const k = t ? bare.indexOf(t) : -1
         return k < 0 ? c : { ...c, text: said.slice(at[k], at[k + t.length - 1] + 1) }
       }
+      // A picture over most of a front page that is all but see-through (a faint overlay on typed
+      // text) does not show: it is no scan of the page.
+      if (n < 12)
+        for (let k = images.length - 1; k >= 0; k--) {
+          const b = images[k]
+          if (!b.id || (b.x1 - b.x0) * (b.y1 - b.y0) < 0.4 * vp.width * vp.height) continue
+          if (((await opacity(page, b.id)) ?? 1) < 0.05) images.splice(k, 1)
+        }
       pages.push({
         n,
         width: vp.width,
@@ -1733,14 +1741,43 @@ function stackPixels(parts: Pixels[]): Pixels {
   return { width, height, data }
 }
 
-/** Decoded pixels of a painted image object (RGBA, shrunk to at most 64 px a side). */
-async function imagePixels(
-  page: {
-    objs: { get(id: string, cb: (v: unknown) => void): void }
-    commonObjs: { get(id: string, cb: (v: unknown) => void): void }
-  },
-  id: string,
-): Promise<Pixels | undefined> {
+type ObjPage = {
+  objs: { get(id: string, cb: (v: unknown) => void): void }
+  commonObjs: { get(id: string, cb: (v: unknown) => void): void }
+}
+type ImageObj = {
+  width?: number
+  height?: number
+  kind?: number
+  data?: Uint8Array | Uint8ClampedArray
+  bitmap?: ImageBitmap
+}
+
+/** How opaque a painted image object is on average (0 see-through to 1 solid), where it can tell. */
+async function opacity(page: ObjPage, id: string): Promise<number | undefined> {
+  const img = await imageObj(page, id)
+  if (!img?.width || !img.height) return undefined
+  if (img.data) {
+    if (img.kind !== 3) return 1
+    let a = 0
+    let n = 0
+    // (a sample of the pixels: enough for an average)
+    const step = 4 * Math.max(1, Math.floor((img.width * img.height) / 4096))
+    for (let i = 3; i < img.data.length; i += step, n++) a += img.data[i]
+    return n ? a / n / 255 : undefined
+  }
+  if (!img.bitmap || typeof OffscreenCanvas === 'undefined' || !canvasReadsBack()) return undefined
+  const canvas = new OffscreenCanvas(64, 64)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return undefined
+  ctx.drawImage(img.bitmap, 0, 0, 64, 64)
+  const d = ctx.getImageData(0, 0, 64, 64).data
+  let a = 0
+  for (let i = 3; i < d.length; i += 4) a += d[i]
+  return a / (d.length / 4) / 255
+}
+
+async function imageObj(page: ObjPage, id: string): Promise<ImageObj | undefined> {
   const store = id.startsWith('g_') ? page.commonObjs : page.objs
   const obj = await new Promise<unknown>((resolve) => {
     const timer = setTimeout(() => resolve(undefined), 2000)
@@ -1754,13 +1791,12 @@ async function imagePixels(
       resolve(undefined)
     }
   })
-  const img = obj as {
-    width?: number
-    height?: number
-    kind?: number
-    data?: Uint8Array | Uint8ClampedArray
-    bitmap?: ImageBitmap
-  }
+  return obj as ImageObj | undefined
+}
+
+/** Decoded pixels of a painted image object (RGBA, shrunk to at most 64 px a side). */
+async function imagePixels(page: ObjPage, id: string): Promise<Pixels | undefined> {
+  const img = await imageObj(page, id)
   if (!img?.width || !img.height) return undefined
   const { width, height } = img
   if (img.bitmap && typeof OffscreenCanvas !== 'undefined') {
