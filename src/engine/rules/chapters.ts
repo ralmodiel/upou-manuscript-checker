@@ -946,6 +946,7 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       // (a one-line sentence leading in to a quotation set in on the next page: "… said that:")
       const leadIn =
         onFirst === 1 &&
+        !isList(p) &&
         /[.!?:]["”’)]?$/.test(norm(l0.text)) &&
         l1.x0 > l0.x0 + 20 &&
         (onNext === 1 || lines[onFirst + 1].x0 > l0.x0 + 20)

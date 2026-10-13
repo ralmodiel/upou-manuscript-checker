@@ -231,7 +231,9 @@ function present(ctx: Ctx, caps: Caption[]): Finding {
   const abstractParas = abstract ? doc.paras.slice(abstract.start, abstract.end) : []
   if (abstract && !abstractParas.some(hasKeywords)) {
     // (a line of the abstract in a font read as other letters may be the keywords line)
-    const unread = abstractParas.some((p) => garbled(p.text))
+    // (its last line, short, where the keywords go)
+    const last = abstractParas.findLast((p) => norm(p.text))
+    const unread = !!last && norm(last.text).length < 400 && garbled(last.text)
     issues.push(
       unread
         ? 'Check that the keywords are right below the abstract (Keywords: …): some of its text could not be read.'
