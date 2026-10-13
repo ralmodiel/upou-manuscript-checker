@@ -35,7 +35,8 @@ function unglue(t: string, words: Set<string>): { text: string; number: string }
     const stem = w.slice(0, -k).toLowerCase()
     if (!(/^\d{1,3}$/.test(tail) || fromRoman(tail) !== undefined)) continue
     if (
-      stem.length >= 3 &&
+      // (a short word too before digits: "at100")
+      stem.length >= (/^\d+$/.test(tail) ? 2 : 3) &&
       !/^[ivxlcdm\d]+$/.test(stem) &&
       words.has(stem) &&
       !words.has(w.toLowerCase())

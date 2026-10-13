@@ -2,7 +2,7 @@
 // page-number item say the same thing, a sentence taken for a chapter heading makes several
 // chapter items fault it. Before the findings go out, such a cascade is checked against the pages
 // themselves; where they show positive signs of a misreading, its claims are only for review.
-import type { Para } from './model.ts'
+import type { Doc, Page, Para } from './model.ts'
 import { review, type Ctx, type Finding } from './report.ts'
 import { pdfFolio } from './rules/numbering.ts'
 import { bolded } from './structure.ts'
@@ -102,12 +102,32 @@ const PART = /^(title|permission|acceptance)\./
  *  words may be misread too. A finding whose pages are all such pages is for review; with no page
  *  named, so is one of a manuscript mostly scanned (its own part's page decides for the front
  *  pages), and a pass on the layout of such a manuscript. */
-function scanDoubts(ctx: Ctx, found: Finding[]): Set<string> {
+function scanDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
   const { doc, s } = ctx
-  const out = new Set<string>()
-  const ocr = new Set(doc.pages?.filter((pg) => pg.ocr).map((pg) => pg.n))
+  const out = new Map<string, string>()
+  const pages = doc.pages ?? []
+  // A pass judged on the pages that could be read says nothing of the pages that are pictures:
+  // where these are a material share (a fifth) of the pages a whole-manuscript item covers, its
+  // pass is for review. Pages from the appendices on count only for the items that cover them.
+  const unread = new Set(pages.filter((pg) => pg.ocr || scanPage(doc, pg)).map((pg) => pg.n))
+  const appx = s.appendicesHeading ?? s.appendices[0]?.heading
+  const appxPage = appx === undefined ? undefined : doc.paras[appx]?.page
+  const material = (all: boolean) => {
+    const scope = all || appxPage === undefined ? pages : pages.filter((pg) => pg.n < appxPage)
+    const n = scope.filter((pg) => unread.has(pg.n)).length
+    return n >= 2 && n >= 0.2 * scope.length
+  }
+  const share = { all: material(true), own: material(false) }
+  for (const f of found)
+    if (
+      f.status === 'ok' &&
+      !PART.test(f.id) &&
+      (/^(extra|appendices)\./.test(f.id) ? share.all : share.own)
+    )
+      out.set(f.id, PARTLY)
+  const ocr = new Set(pages.filter((pg) => pg.ocr).map((pg) => pg.n))
   if (!ocr.size) return out
-  const mostly = ocr.size * 2 >= doc.pages!.length
+  const mostly = ocr.size * 2 >= pages.length
   // (in a manuscript mostly so, a page whose text stands over a picture of the whole page is a
   // scan too, its layer merely left visible)
   if (mostly)
@@ -130,19 +150,32 @@ function scanDoubts(ctx: Ctx, found: Finding[]): Set<string> {
       : PART.test(f.id)
         ? ocr.has(partPage(f.id) ?? -1)
         : mostly
-    if (doubt) out.add(f.id)
+    if (doubt && !out.has(f.id)) out.set(f.id, SCANNED)
   }
   return out
 }
 
+/** A page that is a picture with hardly any text over it: a scanned page, its words unread. */
+export function scanPage(doc: Doc, pg: Page): boolean {
+  const t = pg.paras.map((i) => doc.paras[i].text).join(' ')
+  const area = pg.images.reduce((a, b) => a + (b.x1 - b.x0) * (b.y1 - b.y0), 0)
+  return (
+    t.length < 150 &&
+    t.split(/\s+/).filter(Boolean).length < 30 &&
+    area >= 0.4 * pg.width * pg.height
+  )
+}
+
 const SCANNED =
   'The pages this item rests on are scanned pictures with a machine-read text layer, so their fonts, spacing, alignment and even words may be misread. Check this item yourself.'
+const PARTLY =
+  'Some pages of this PDF are scanned pictures whose words could not be read, so this item was checked only on the other pages. Check it yourself on the scanned pages.'
 
 /** The findings, with the claims of a likely misreading turned to review. */
 export function guard(ctx: Ctx, found: Finding[]): Finding[] {
   let footer: ReturnType<typeof footerDoubts>
   let anchored: Map<string, string>
-  let scanned: Set<string>
+  let scanned: Map<string, string>
   try {
     footer = footerDoubts(ctx)
     anchored = anchorDoubts(ctx, found)
@@ -152,7 +185,8 @@ export function guard(ctx: Ctx, found: Finding[]): Finding[] {
     return found
   }
   return found.map((f) => {
-    if (scanned.has(f.id)) return review(f.id, SCANNED, { where: f.where })
+    const scan = scanned.get(f.id)
+    if (scan) return review(f.id, scan, { where: f.where })
     if (f.status !== 'fix') return f
     let why = anchored.get(f.id)
     // (a footer item is downgraded only when every claim it makes is a doubted one)

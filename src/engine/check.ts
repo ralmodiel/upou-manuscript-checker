@@ -16,7 +16,7 @@ import { garbled } from './text.ts'
 import { prelimRules } from './rules/prelims.ts'
 import { FileProblem } from './problem.ts'
 import { findStructure } from './structure.ts'
-import { guard } from './guard.ts'
+import { guard, scanPage } from './guard.ts'
 
 export { FileProblem }
 
@@ -110,13 +110,8 @@ function unreadWhy(doc: Doc): 'garbled' | 'scanned' | undefined {
   for (const pg of doc.pages) {
     const t = pg.paras.map((i) => doc.paras[i].text).join(' ')
     const ws = t.split(/\s+/).filter(Boolean)
-    if (ws.length < 30) {
-      const cover = pg.images.some(
-        (b) => (b.x1 - b.x0) * (b.y1 - b.y0) >= 0.4 * pg.width * pg.height,
-      )
-      if (cover && t.length < 150) scans++
-      continue
-    }
+    if (scanPage(doc, pg)) scans++
+    if (ws.length < 30) continue
     text++
     // ponytail: needs 30 words a page and under 6% common words; a page of code or a table of codes can look so.
     if (garbled(t) && ws.filter((w) => STOP.test(w)).length < 0.06 * ws.length) bad++

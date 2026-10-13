@@ -253,6 +253,12 @@ export function justified(ctx: Ctx, id: string, paras: Para[], name: string): Fi
   if (!checked.length) return na(id, `No body text found in ${name}.`)
   const run = runOns(ctx, checked)
   const bad = checked.filter((p) => p.align !== 'justify' || run.includes(p))
+  // (one paragraph is too little to stand for the rest: other pages may not have been read as such)
+  if (!bad.length && checked.length === 1)
+    return review(
+      id,
+      `Only one paragraph of body text in ${name} could be checked, and it is justified. Check that the rest of the body text there is justified too.`,
+    )
   if (!bad.length)
     return ok(
       id,

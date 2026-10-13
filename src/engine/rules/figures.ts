@@ -70,10 +70,13 @@ const labelBold = (p: Para) => {
   if (p.plain || faceUnknown(p)) return true
   const label = LABEL.exec(norm(p.text).replace(/^[(](.*)[)]$/, '$1'))
   if (!label) return false
-  const head = norm(p.text).slice(0, norm(p.text).length - label[3].length)
+  // (the number's own letters decide: the stop or colon after it may share the title's plain run)
+  const head = norm(p.text)
+    .slice(0, norm(p.text).length - label[3].length)
+    .replace(/[\s.:–—-]+$/, '')
   let seen = ''
   for (const r of p.runs) {
-    if (seen.length >= head.trim().length) break
+    if (seen.length >= head.length) break
     // (the full stop or colon after the number may be set apart from it, not in bold)
     if (r.text.trim() && !/^[.:–—-]+$/.test(r.text.trim()) && !r.bold) return false
     seen += r.text

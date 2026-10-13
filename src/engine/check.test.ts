@@ -790,6 +790,16 @@ describe('check', () => {
       'Dean',
     )
     expect(finding(mix, 'acceptance.convention').status).toBe('fix')
+    // One degree written two ways is a mix for the student to look at, not a pass.
+    const twoWays = await names(
+      'MARIA B. SANTOS, Ph.D.',
+      'Adviser',
+      'ANA D. LIM, PhD',
+      'Member',
+      'JOSE R. REYES, Ph.D.',
+      'Dean',
+    )
+    expect(finding(twoWays, 'acceptance.convention').status).toBe('review')
   })
 
   it('accepts the list headings written “LISTS OF FIGURES” or “List of Table”, with a note', async () => {
@@ -978,9 +988,16 @@ describe('consistency guard', () => {
         kind: 'pdf',
         paras,
         notes: [],
-        pages: footers.map((footer, n) => ({ n, footer, footerLines: [], header: '' })),
+        pages: footers.map((footer, n) => ({
+          n,
+          footer,
+          footerLines: [],
+          header: '',
+          paras: [],
+          images: [],
+        })),
       },
-      s: { chapters },
+      s: { chapters, appendices: [] },
       env: {},
     }) as unknown as Ctx
   const fixOn = (id: string, details: string[], where?: { page: number; quote: string }[]) => ({
@@ -1002,9 +1019,18 @@ describe('consistency guard', () => {
         kind: 'pdf',
         paras: [{ i: 0, page: 0, text: 'A', runs: [] }],
         notes: [],
-        pages: [0, 1, 2].map((n) => ({ n, footer: '', footerLines: [], images: [], ocr: n > 0 })),
+        pages: [0, 1, 2].map((n) => ({
+          n,
+          paras: [],
+          width: 600,
+          height: 800,
+          footer: '',
+          footerLines: [],
+          images: [],
+          ocr: n > 0,
+        })),
       },
-      s: { chapters: [], title: { start: 0, end: 1 } },
+      s: { chapters: [], appendices: [], title: { start: 0, end: 1 } },
       env: {},
     } as unknown as Ctx
     const out = guard(ctx, [
@@ -1015,6 +1041,35 @@ describe('consistency guard', () => {
     ])
     expect(out.map((f) => f.status)).toEqual(['review', 'review', 'fix', 'review'])
     expect(out[0].details).toBeUndefined()
+  })
+
+  it('gives no pass over a manuscript whose pages are partly scanned pictures', () => {
+    const ctx = (scans: number) =>
+      ({
+        doc: {
+          kind: 'pdf',
+          paras: [{ i: 0, page: 0, text: 'A', runs: [] }],
+          notes: [],
+          pages: Array.from({ length: 10 }, (_, n) => ({
+            n,
+            paras: n ? [] : [0],
+            width: 600,
+            height: 800,
+            footer: '',
+            footerLines: [],
+            images: n >= 10 - scans ? [{ x0: 0, y0: 0, x1: 600, y1: 800 }] : [],
+          })),
+        },
+        s: { chapters: [], appendices: [], title: { start: 0, end: 1 } },
+        env: {},
+      }) as unknown as Ctx
+    const found = [
+      { id: 'extra.blankPages', status: 'ok' as const, message: 'No blank pages.' },
+      { id: 'body.hanging', status: 'ok' as const, message: 'No hanging headings.' },
+      { id: 'permission.statement', status: 'ok' as const, message: 'Statement as template.' },
+    ]
+    expect(guard(ctx(3), found).map((f) => f.status)).toEqual(['review', 'review', 'ok'])
+    expect(guard(ctx(1), found).map((f) => f.status)).toEqual(['ok', 'ok', 'ok'])
   })
 
   it('takes no sentence opening with “Chapter two” for a chapter heading', async () => {

@@ -192,6 +192,18 @@ function scannedFront(ctx: Ctx): number[] {
     .map((pg) => pg.n)
 }
 
+const INSTITUTION =
+  /^(faculty of|university of|open university|college of|submitted|in partial fulfil|for the degree|(associate|bachelor|master|doctor) (of|in))\b/i
+/** A short line of names, no sentence's small words: an author's name. */
+const nameLike = (p: Para) => {
+  const w = norm(p.text).split(' ')
+  return (
+    w.length <= 6 &&
+    !/[:\d]/.test(p.text) &&
+    !w.some((x) => /^(of|the|and|in|for|on|a|an|to|with|among|at|by|from|using|via)$/i.test(x))
+  )
+}
+
 export function readTitlePage(ctx: Ctx): TitlePage {
   const { start, end } = ctx.s.title
   const page = titlePage(ctx.doc, ctx.s)
@@ -259,9 +271,22 @@ export function readTitlePage(ctx: Ctx): TitlePage {
     !authorAbove &&
     !!between[1] &&
     top.includes(norm(between[0].text + ' ' + between[1].text).toUpperCase())
-  const author = authorAbove ?? (noAuthor ? undefined : between[0])
+  // An older layout sets the title first and the author's name under it, then the degree
+  // ("Submitted in partial fulfillment…"), the faculty and the university: where the lines the
+  // template's order gives hold no title (none, or the faculty's), the lines above are the title.
+  const k0 = paras.findIndex((p) => p === program || INSTITUTION.test(norm(p.text)))
+  const above =
+    k0 >= 2 &&
+    nameLike(paras[k0 - 1]) &&
+    !nameLike(paras[0]) &&
+    (!between.length || INSTITUTION.test(norm(between[0].text)) || (!program && !adviserLabel))
+      ? paras.slice(0, k0)
+      : undefined
+  const author = above ? above.at(-1) : (authorAbove ?? (noAuthor ? undefined : between[0]))
   // The student number and the academic year are lines of the page, not of the title.
-  const title = (authorAbove || noAuthor ? between : between.slice(1)).filter(
+  const title = (
+    above ? above.slice(0, -1) : authorAbove || noAuthor ? between : between.slice(1)
+  ).filter(
     (p) =>
       !STUDENT_NUMBER.test(norm(p.text)) && !ACADEMIC_YEAR.test(norm(p.text)) && !labelled.has(p),
   )
@@ -1412,8 +1437,11 @@ function permissionSignature(ctx: Ctx): Finding {
       t.replace(/_+|\s[/|,]\s.*$|,?\s*\d.*$/g, ' ').trim(),
     ),
   )
-  // A name or a date whose digits came out of the font as control characters.
-  const unreadable = typed.some((t) => [...t].some((c) => c.charCodeAt(0) < 32 && c !== '	'))
+  // A name or a date whose digits came out of the font as control characters, or a scan's
+  // machine reading of handwriting (letters it could not make out).
+  const unreadable = typed.some((t) =>
+    [...t].some((c) => (c.charCodeAt(0) < 32 && c !== '\t') || c === '\uFFFD'),
+  )
   // The signature block as a picture under the text (name, line and date typed in it).
   const last = paras.at(-1)?.lines?.at(-1)
   const pg = ctx.doc.pages?.[last?.page ?? -1]
@@ -1609,6 +1637,13 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
       ))
     : null
   const t = m?.[1]?.replace(/["”]$/, '').trim() ?? ''
+  // No word of the sentence that names the title, not even its "is hereby accepted": the text
+  // layer lost it (a scan's machine reading printed over itself), not the student.
+  if (!p && !paras.some((q) => /\baccepted\b/i.test(q.text)) && paras.length >= 3)
+    return review(
+      id,
+      `The sentence that names the title could not be read on the Acceptance Page. Check that it gives the same ${tp.work.toLowerCase()} title as the Title Page.`,
+    )
   if (!t || /^x{4,}$/i.test(t))
     return fix(id, `Indicate the final ${tp.work.toLowerCase()} title on the Acceptance Page.`, {
       where: at(p),
@@ -1838,6 +1873,22 @@ function convention(names: Names): Finding {
       id,
       'No name on the Acceptance Page has a title before it or a degree after it. Check whether your program asks for titles before all names (DR. JUAN A. CRUZ) or degree abbreviations after all names (JUAN A. CRUZ, Ph.D.).',
       { where: styles.flatMap((x) => at(x.para)) },
+    )
+  // One degree written two ways ("Ph.D." and "PhD"): a mixed style the student is to look at.
+  const forms = new Map<string, Map<string, string>>()
+  for (const s of styles) {
+    const d = SUFFIX.exec(s.name.replace(/[,;]\s*$/, ''))?.[0].replace(/^,\s*/, '')
+    const key = d?.replace(/\W/g, '').toLowerCase()
+    // (its last stop and spaces aside: "Ph.D," for "Ph.D.," is the names item's typo, and a PDF
+    // may read "Ph. D." where the writer typed "Ph.D.")
+    if (d && key) forms.set(key, (forms.get(key) ?? new Map()).set(d.replace(/\.$|\s/g, ''), d))
+  }
+  const twoWays = [...forms.values()].find((f) => f.size > 1)
+  if (kinds.size === 1 && kinds.has('degree') && twoWays)
+    return review(
+      id,
+      `A degree is written two ways (${list([...twoWays.values()].map((d) => `“${d}”`))}). Check that the names on the Acceptance Page write it the same way.`,
+      { details: styles.map((s) => s.name) },
     )
   if (kinds.size === 1 && !kinds.has('both'))
     return ok(
