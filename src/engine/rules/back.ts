@@ -983,6 +983,21 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
         listWords.some((_, i) => bits.every((b, j) => listWords[i + j]?.startsWith(b)))
       )
     })
+  // A name read through a font that prints some letters as capitals: "TaQaw" for "Tanaw",
+  // "BulaNlak" for "Bulaklak". A capital after the first stands for any one letter, and the name is
+  // found when one of the list's words, or two in a row, reads so; or it has a shape no name has,
+  // a capital ending it after a small letter ("SinagV"), or two before a small one ("BXWlag").
+  // (one capital inside a name, "DeLeon", "McArthur", "YouTube", is how names are written)
+  const readings = listWords.map(letters).flatMap((w, i, ws) => [w, w + (ws[i + 1] ?? '')])
+  const misread = (raw: string) => {
+    if (/\p{Ll}\p{Lu}$|\p{Lu}{2}\p{Ll}/u.test(raw)) return true
+    const chars = [...raw.replace(/[^\p{L}]/gu, '')]
+    if (!chars.slice(1).some((c) => /\p{Lu}/u.test(c))) return false
+    const pat = new RegExp(
+      `^${chars.map((c, i) => (i && /\p{Lu}/u.test(c) ? '[a-z]' : letters(c))).join('')}$`,
+    )
+    return readings.some((w) => pat.test(w))
+  }
   // Words written in small letters in the text: "Survey (2021)" names no author.
   const lower = new Set(
     textParas.flatMap((p) => p.text.match(/(?<![\p{L}'’-])\p{Ll}[\p{L}'’-]*/gu) ?? []).map(letters),
@@ -1044,6 +1059,7 @@ function apa(ctx: Ctx, refs: Entry[], groups: number): Finding {
         !STOPWORD.test(n) &&
         !listLetters.includes(n) &&
         !spelt(raw) &&
+        !misread(raw) &&
         // (a place before listed authors: "in Laguna, Tala and Dagat (2018)")
         !ns.some((x) => firstBy(x, ns.length === 1).length) &&
         // (in the sentence: after a capitalised word, "United Kingdom (2020)", or a word also written

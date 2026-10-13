@@ -158,6 +158,7 @@ describe('check', () => {
         para('Signal reaches the coast (Tala, 2024).'),
         para('Bundok (2021) and Bundok (2021b) disagree.'),
         para('Schools report it (DepEd, 2020; Rice-Hub, 2019; LuntiangBukid, 2018).'),
+        para('A font misprints it (DUilon, 2017; MaWlab, 2016; LiwaV, 2015).'),
         para('Bagyo (1990), as cited by Tala (2024), and Ulan (2001) (cited in Tala, 2024) agree.'),
         para('So it was (Kidlat 1977, Kulog 1983 in Tala, 2024). Tala (2024) cited Araw (1999).'),
         para('Tala (2024), citing Kidlat et al. (1977) and Kulog et al. (1983), agrees.'),
@@ -171,6 +172,7 @@ describe('check', () => {
         para('Bundok, L. (2021b). Second work. Press.', double),
         para('Department of Education. (2020). A memo. Press.', double),
         para('Rice Hub Network. (2019). A brief. Press.', double),
+        para('Dagilon, P. (2017). A study. Press.', double),
       ),
       opts,
     )
@@ -184,6 +186,8 @@ describe('check', () => {
     expect(d).toMatch(/letter .*“Bundok \(2021\)” \(.*listed 2021a and 2021b\)/)
     expect(d).not.toMatch(/“Bundok \(2021b\)”/)
     expect(d).not.toMatch(/DepEd|Rice-Hub/)
+    expect(d).not.toMatch(/DUilon|LiwaV/)
+    expect(d).toMatch(/“MaWlab”/)
     expect(d).toMatch(/not found in the reference list: .*“LuntiangBukid”/)
   })
 
