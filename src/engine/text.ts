@@ -1,10 +1,55 @@
 // Text helpers shared by the rules: normalising, case, Roman numerals, dates, short quotes.
 import type { Para } from './model.ts'
 
+/** Characters a font's glyph numbers leave in a PDF's text where it has no map to letters:
+ *  control characters, letters of Latin Extended-B, rare combining marks, private-use signs. */
+const UNMAPPED = /[\u0180-\u024f\ue000-\uf8ff\ufffd]/gu
+export const unmapped = (s: string) =>
+  (s.match(UNMAPPED) ?? []).length +
+  [...s].filter((c) => {
+    const k = c.charCodeAt(0)
+    // (controls, and combining marks no language writes: not the common accents)
+    return (
+      (k < 32 && !'\t\n\r'.includes(c)) || (k >= 0x310 && k <= 0x36f && k !== 0x327 && k !== 0x328)
+    )
+  }).length
+
+/** A word a font printed with wrong glyphs: glyph numbers for letters, a symbol stuck to a letter
+ *  ("KHUHb\\" for "hereby"), capitals inside it twice or in a run ("SeUPiVViRQ", "aOORZ").
+ *  Not one capital inside a word, as names and degrees have ("YouTube", "PhD", "DepEd"). */
+export const oddWord = (w: string) =>
+  unmapped(w) > 0 ||
+  /\p{L}[\\^|~]|[\\^|~]\p{L}/u.test(w) ||
+  (w.match(/\p{Ll}\p{Lu}/gu) ?? []).length >= 2 ||
+  /\p{Ll}\p{Lu}{3}/u.test(w)
+
+/** A PDF's text with what a font's glyph numbers stand for put back where that is sure: the
+ *  space (glyph 3), the ellipsis of a Calibri font (U+0359), a font's digits read as Coptic
+ *  letters ("Ϯ0ϭϳ" for 2017). */
+export const mend = (s: string) =>
+  s
+    .replaceAll(String.fromCharCode(3), ' ')
+    .replace(/\u0359/g, '…')
+    .replace(/[\d\u03ec-\u03f5]{2,}/gu, (m) =>
+      m.replace(/[\u03ec-\u03f5]/gu, (c) => String(c.charCodeAt(0) - 0x3ec)),
+    )
+
+/** A page number's first digit or letter read with the ellipsis, apart from the rest ("…1 4"
+ *  for "…14", "…i ii" for "…iii"): put back together. */
+export const rejoin = (t: string) =>
+  t.replace(/(…|\.{2,})(\d|[ivx]) (\d{1,2}|[ivx]{1,4})$/, (m, e: string, a: string, b: string) =>
+    /\d/.test(a) === /\d/.test(b) && (/\d/.test(a) || fromRoman(a + b) !== undefined)
+      ? `${e}${a}${b}`
+      : m,
+  )
+
 /** Curly quotes and dashes made plain, spaces collapsed. */
 export const norm = (s: string) =>
   s
     .normalize('NFKC')
+    // (a font read in its glyph order: "’s" printed as "¶V")
+    .replace(/(?<=\p{L})¶V(?=\s|$)/gu, "'s")
+    .replace(/(?<=\p{L})¶(?=s\b)/gu, "'")
     .replace(/[‘’‛′]/g, "'")
     .replace(/[“”‟″]/g, '"')
     .replace(/[‐-―−]/g, '-')
@@ -106,6 +151,9 @@ export function garbled(s: string): boolean {
     if (k < 32 && k !== 9 && k !== 10 && k !== 13) control++
   }
   if (control >= 2) return true
+  // Glyph numbers in place of letters (a font with no map to Unicode).
+  const u = unmapped(s)
+  if (u >= 3 && u >= 0.1 * (s.match(/\p{L}/gu) ?? []).length) return true
   // Backslashes and carets stuck to letters (a shifted font's "y" and "w"): not how text is written.
   if ((s.match(/\p{L}[\\^|~]|[\\^|~]\p{L}/gu) ?? []).length >= 2) return true
   const words = s.split(/\s+/).filter((w) => w.replace(/[^\p{L}]/gu, '').length >= 3)

@@ -7,6 +7,7 @@ import type { Box, Doc, Line, Page, Para, Picture, Pixels, Run } from './model.t
 import { canvasReadsBack } from './canvas.ts'
 import { darkness, shrink } from './images.ts'
 import { FileProblem } from './problem.ts'
+import { mend, oddWord, rejoin } from './text.ts'
 
 export type PdfJs = typeof PdfJsModule
 type Matrix = number[]
@@ -192,11 +193,17 @@ export async function readPdf(
       let mode = 0
       let visible = 0
       let hidden = 0
-      const stack: { ctm: Matrix; fill: string; mode: number }[] = []
+      const stack: { ctm: Matrix; fill: string; mode: number; alpha: number }[] = []
       // A note filled white over its whole box (a "white-out" laid on the page): what lies under it
       // is not seen.
       let note: { rect: number[]; white: boolean } | undefined
       const whiteouts: Box[] = []
+      // Where each piece of text starts (user space) and when it is drawn: a white shape drawn
+      // later over it (a box laid over the footer) hides it.
+      const drawn: number[][] = []
+      // (a shape filled see-through hides nothing)
+      let alpha = 1
+      const whiteBoxes: (Box & { z: number })[] = []
       for (let k = 0; k < ops.fnArray.length; k++) {
         const fn = ops.fnArray[k]
         const args = ops.argsArray[k] as unknown[]
@@ -209,12 +216,18 @@ export async function readPdf(
             )
           note = undefined
         }
-        if (fn === OPS.save) stack.push({ ctm, fill, mode })
-        else if (fn === OPS.restore) ({ ctm, fill, mode } = stack.pop() ?? { ctm, fill, mode })
-        else if (fn === OPS.setTextRenderingMode) mode = args[0] as number
+        if (fn === OPS.save) stack.push({ ctm, fill, mode, alpha })
+        else if (fn === OPS.restore)
+          ({ ctm, fill, mode, alpha } = stack.pop() ?? { ctm, fill, mode, alpha })
+        else if (fn === OPS.setGState && Array.isArray(args[0])) {
+          for (const kv of args[0] as unknown[])
+            if (Array.isArray(kv) && kv[0] === 'ca' && typeof kv[1] === 'number') alpha = kv[1]
+        } else if (fn === OPS.setTextRenderingMode) mode = args[0] as number
         else if (fn === OPS.transform) ctm = mul(ctm, args as Matrix)
         else if (fn === OPS.beginText) tlm = [1, 0, 0, 1, 0, 0]
-        else if (fn === OPS.setTextMatrix) tlm = Array.from(args as ArrayLike<number>)
+        else if (fn === OPS.setTextMatrix)
+          // (pdf.js 6 passes the matrix as one typed array; older ones as six numbers)
+          tlm = Array.from((typeof args[0] === 'number' ? args : args[0]) as ArrayLike<number>)
         else if (fn === OPS.moveText || fn === OPS.setLeadingMoveText) {
           if (fn === OPS.setLeadingMoveText) leading = -(args[1] as number)
           tlm = mul(tlm, [1, 0, 0, 1, args[0] as number, args[1] as number])
@@ -232,16 +245,15 @@ export async function readPdf(
           if (mode === 3 || mode === 7) hidden++
           else visible++
           if (fill === '#ffffff') whiteAt.push(apply(ctm, tlm[4], tlm[5]))
+          const glyphs = args.at(-1)
+          const text = Array.isArray(glyphs)
+            ? glyphs
+                .map((g) => (g && typeof g === 'object' && 'unicode' in g ? String(g.unicode) : ''))
+                .join('')
+            : ''
+          if (text.trim()) drawn.push([...apply(ctm, tlm[4], tlm[5]), k])
           if (fill === '#000000') run = undefined
           else {
-            const glyphs = args.at(-1)
-            const text = Array.isArray(glyphs)
-              ? glyphs
-                  .map((g) =>
-                    g && typeof g === 'object' && 'unicode' in g ? String(g.unicode) : '',
-                  )
-                  .join('')
-              : ''
             // Pieces drawn one by one (letters, kerned parts): their spaces come back from the
             // page's lines below.
             if (!text.trim()) continue
@@ -249,11 +261,11 @@ export async function readPdf(
             else colored.push((run = { text, color: fill }))
           }
         } else if (fn === OPS.paintFormXObjectBegin) {
-          stack.push({ ctm, fill, mode })
+          stack.push({ ctm, fill, mode, alpha })
           if (Array.isArray(args[0]) || ArrayBuffer.isView(args[0]))
             ctm = mul(ctm, Array.from(args[0] as ArrayLike<number>))
         } else if (fn === OPS.paintFormXObjectEnd)
-          ({ ctm, fill, mode } = stack.pop() ?? { ctm, fill, mode })
+          ({ ctm, fill, mode, alpha } = stack.pop() ?? { ctm, fill, mode, alpha })
         else if (
           fn === OPS.paintImageXObject ||
           fn === OPS.paintInlineImageXObject ||
@@ -277,6 +289,8 @@ export async function readPdf(
             mm[3] - mm[1] >= 0.9 * (note.rect[3] - note.rect[1])
           )
             note.white = true
+          if (mm && fill === '#ffffff' && alpha >= 0.9 && FILLS.has(args[0] as number))
+            whiteBoxes.push({ ...boxOf(ctm, mm[0], mm[1], mm[2], mm[3]), z: k })
           if (path && mm)
             marks.push({
               ...boxOf(ctm, mm[0], mm[1], mm[2], mm[3]),
@@ -365,6 +379,7 @@ export async function readPdf(
       const sideways: { text: string; x0: number; x1: number; y: number; size: number }[] = []
       for (const item of text.items) {
         if (!('str' in item) || !item.str) continue
+        const str = mend(item.str)
         const [a, b, c, d, e, f] = item.transform as Matrix
         // Words set slanted (a font with no italic, slanted by the writer's program) read in line.
         const slanted =
@@ -372,12 +387,12 @@ export async function readPdf(
           a > 0 &&
           Math.abs(c) > 0.01 &&
           Math.abs(c) <= 0.5 * Math.abs(d) &&
-          (item.str.trim().length > 1 ||
-            (/^[\p{L}\p{N}]$/u.test(item.str.trim()) && !/^[xXoO]$/.test(item.str.trim())))
+          (str.trim().length > 1 ||
+            (/^[\p{L}\p{N}]$/u.test(str.trim()) && !/^[xXoO]$/.test(str.trim())))
         // Rotated text (a turned table, a chart label) is not part of the running text. A mark
         // set at an angle (a slanted "/" in a tick box) is still a mark.
         if (!slanted && (Math.abs(b) > 0.01 || Math.abs(c) > 0.01 || a <= 0)) {
-          turned += item.str.replace(/\s/g, '').length
+          turned += str.replace(/\s/g, '').length
           if (
             Math.abs(a) < 0.01 &&
             Math.abs(d) < 0.01 &&
@@ -387,14 +402,14 @@ export async function readPdf(
             const cw = b < 0
             const x0 = cw ? ry : vp.height - ry
             sideways.push({
-              text: item.str,
+              text: str,
               x0,
               x1: x0 + item.width,
               y: cw ? vp.width - rx : rx,
               size: Math.abs(b),
             })
           }
-          if (item.str.trim().length === 1) {
+          if (str.trim().length === 1) {
             const [rx, ry] = toView(e, f)
             const rs = Math.hypot(a, b) * Math.abs(vp.transform[3] || 1)
             glyphs.push({
@@ -402,7 +417,7 @@ export async function readPdf(
               x1: rx + item.width,
               y0: ry - rs * 0.8,
               y1: ry + rs * 0.2,
-              text: item.str.trim(),
+              text: str.trim(),
             })
           }
           continue
@@ -411,11 +426,11 @@ export async function readPdf(
         const [x1] = toView(e + item.width, f)
         const size = Math.abs(d) * Math.abs(vp.transform[3] || 1)
         const font = fontOf(item.fontName)
-        const span: Span = { text: item.str, x0, x1, y, size, ...font }
+        const span: Span = { text: str, x0, x1, y, size, ...font }
         if (slanted && !font.unknown) span.italic = true
         spans.push(span)
-        if (item.str.trim().length === 1)
-          glyphs.push({ x0, x1, y0: y - size * 0.8, y1: y + size * 0.2, text: item.str.trim() })
+        if (str.trim().length === 1)
+          glyphs.push({ x0, x1, y0: y - size * 0.8, y1: y + size * 0.2, text: str.trim() })
       }
 
       // Text drawn inside a hyperlink's area has the link's colour, not the writer's.
@@ -479,12 +494,40 @@ export async function readPdf(
           : undefined,
       )
       const whiteView = whiteAt.map(([x, y]) => toView(x, y))
+      // Text a white shape drawn after it lies over (a box laid on a footer to hide it): not seen.
+      // (by the baseline's whole point, for finding a piece's own drawing quickly)
+      const drawnAt = new Map<number, number[][]>()
+      if (whiteBoxes.length)
+        for (const [x, y, z] of drawn) {
+          const v = [...toView(x, y), z]
+          const k = Math.round(v[1])
+          drawnAt.set(k, [...(drawnAt.get(k) ?? []), v])
+        }
+      const whitedOut = (s: Span) => {
+        const k = Math.round(s.y)
+        const z = Math.max(
+          -1,
+          ...[k - 2, k - 1, k, k + 1, k + 2]
+            .flatMap((y) => drawnAt.get(y) ?? [])
+            .filter(([x, y]) => Math.abs(x - s.x0) <= 2 && Math.abs(y - s.y) <= 2)
+            .map((d) => d[2]),
+        )
+        if (z < 0) return false
+        // (several boxes may cover it between them, one above the other)
+        const over = whiteBoxes
+          .filter((b) => b.z > z && b.x0 <= s.x0 + 2 && b.x1 >= s.x1 - 2)
+          .sort((a, b) => a.y0 - b.y0)
+        let top = s.y - 0.7 * s.size
+        for (const b of over) if (b.y0 <= top + 0.5 && b.y1 > top) top = b.y1
+        return top >= s.y - 0.5
+      }
+      const unhidden = drawnAt.size ? spans.filter((s) => !whitedOut(s)) : spans
       const lines = toLines(
         whites.length
-          ? spans.filter(
+          ? unhidden.filter(
               (s) =>
-                flat(s.text).length < 4 ||
-                !whites.some((w) => w.includes(flat(s.text))) ||
+                // (a short piece, a page number, only where white text begins exactly)
+                (flat(s.text).length >= 4 && !whites.some((w) => w.includes(flat(s.text)))) ||
                 // (white text begins where the piece does: another piece of the same words
                 // elsewhere on the page is the visible one)
                 !whiteView.some(
@@ -495,7 +538,7 @@ export async function readPdf(
                     m.x0 <= s.x0 + 2 && m.x1 >= s.x1 - 2 && m.y0 <= s.y - s.size && m.y1 >= s.y,
                 ),
             )
-          : spans,
+          : unhidden,
         n,
       )
       // A typed-over box (a free-text note with its own look) hides a template line beneath it:
@@ -689,6 +732,12 @@ export async function readPdf(
     pages[n].footer = footer.map((l) => l.text).join('\n')
     pages[n].footerLines = footer
   }
+  // How far each page's words can be trusted: words a font printed with wrong glyphs.
+  for (const [n, lines] of allLines.entries()) {
+    const words = lines.flatMap((l) => l.text.split(/\s+/)).filter((w) => /\p{L}/u.test(w))
+    const odd = words.filter(oddWord).length
+    if (odd >= 4 && odd >= 0.03 * words.length) pages[n].unreliable = odd / words.length
+  }
   const paras = toParas(allLines, pages, tableLines(allLines, pages))
   const notes: string[] = []
   const chars = paras.reduce((s, p) => s + p.text.length, 0)
@@ -808,7 +857,7 @@ function toLines(spans: Span[], page: number): Line[] {
       x0: ink[0].x0,
       x1: Math.max(...ink.map((s) => s.x1)),
       size: main.size,
-      text: text.replace(/\s+$/, ''),
+      text: rejoin(text.replace(/\s+$/, '')),
       runs,
       spans: ink.map((s) => ({ text: s.text.trim(), x0: s.x0, x1: s.x1 })),
     })
