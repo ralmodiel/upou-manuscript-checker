@@ -4,8 +4,9 @@
 // themselves; where they show positive signs of a misreading, its claims are only for review.
 import type { Doc, Page, Para } from './model.ts'
 import { review, type Ctx, type Finding } from './report.ts'
-import { pagesText, pdfFolio } from './rules/numbering.ts'
+import { outlined, pagesText, pdfFolio } from './rules/numbering.ts'
 import { bolded } from './structure.ts'
+import { readTitlePage, titleOf } from './rules/front.ts'
 import { norm } from './text.ts'
 
 const FOLIO_ITEMS =
@@ -197,6 +198,24 @@ function scanDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
         : s.acceptance
     return r ? doc.paras[r.start]?.page : undefined
   }
+  // (a title that "matches the Title Page" when that page is a scan whose title could not be read
+  // was compared with nothing)
+  const titlePage = s.title ? (doc.paras[s.title.start]?.page ?? 0) : 0
+  const unreadTitle = () => {
+    try {
+      return !titleOf(readTitlePage(ctx))
+    } catch {
+      return true
+    }
+  }
+  for (const f of found)
+    if (
+      f.status === 'ok' &&
+      /^(permission|acceptance)\.title$/.test(f.id) &&
+      ocr.has(titlePage) &&
+      unreadTitle()
+    )
+      out.set(f.id, TITLE_SCANNED)
   // (a pass on a front page so read is the scan's guess too)
   for (const f of found) {
     if (
@@ -215,19 +234,22 @@ function scanDoubts(ctx: Ctx, found: Finding[]): Map<string, string> {
   return out
 }
 
-/** A page that is a picture with hardly any text over it: a scanned page, its words unread. */
+/** A page that is a picture, or letters drawn as outlines, with hardly any text over it: a
+ *  scanned page, its words unread. */
 export function scanPage(doc: Doc, pg: Page): boolean {
   const t = pg.paras.map((i) => doc.paras[i].text).join(' ')
   const area = pg.images.reduce((a, b) => a + (b.x1 - b.x0) * (b.y1 - b.y0), 0)
   return (
     t.length < 150 &&
     t.split(/\s+/).filter(Boolean).length < 30 &&
-    area >= 0.4 * pg.width * pg.height
+    (area >= 0.4 * pg.width * pg.height || outlined(pg))
   )
 }
 
 const SCANNED =
   'The pages this item rests on are scanned pictures with a machine-read text layer, so their fonts, spacing, alignment and even words may be misread. Check this item yourself.'
+const TITLE_SCANNED =
+  'The Title Page is a scanned picture whose title could not be read, so it was not compared. Check that the title here is the same as on the Title Page.'
 const PARTLY =
   'Some pages of this PDF are scanned pictures whose words could not be read, so this item was checked only on the other pages. Check it yourself on the scanned pages.'
 

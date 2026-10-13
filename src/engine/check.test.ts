@@ -1244,6 +1244,24 @@ describe('consistency guard', () => {
     ]
     expect(guard(ctx(3), found).map((f) => f.status)).toEqual(['review', 'review', 'ok'])
     expect(guard(ctx(1), found).map((f) => f.status)).toEqual(['ok', 'ok', 'ok'])
+    // (pages whose letters are drawn as outlines, no text and no picture, are unread too)
+    const glyph = (k: number) => ({
+      x0: k,
+      y0: 100,
+      x1: k + 6,
+      y1: 108,
+      kind: 'path',
+      fill: '#000000',
+    })
+    const drawn = ctx(0)
+    for (const pg of drawn.doc.pages!.slice(7))
+      pg.marks = Array.from({ length: 40 }, (_, k) => glyph(10 * k))
+    expect(guard(drawn, found).map((f) => f.status)).toEqual(['review', 'review', 'ok'])
+    // (a title that matches a Title Page that is a scan matched the scan's guess)
+    const scannedTitle = ctx(0)
+    scannedTitle.doc.pages![0].images = [{ x0: 0, y0: 0, x1: 600, y1: 800 }]
+    const same = { id: 'permission.title', status: 'ok' as const, message: 'Matches.' }
+    expect(guard(scannedTitle, [same])[0].status).toBe('review')
   })
 
   it('takes no sentence opening with “Chapter two” for a chapter heading', async () => {
