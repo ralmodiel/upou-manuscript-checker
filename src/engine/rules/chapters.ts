@@ -495,6 +495,16 @@ const headingLike = (p: Para) => {
 const CODE_LINE =
   /=>|:=|^\s*(,|--|\/\/)\S|^\s*'|#[A-Z_]{3,}#|<\/?[a-z][\w-]*[\s>]|\b[a-z]+_[a-z0-9_]+\s*[=(]|\w\(\s*'[^']*'|\.\w+_\w+\(|"[a-z0-9]+_[a-z0-9_]+"/i
 
+// Words of a sentence, not of a heading: four or more in small letters besides the little ones
+// ("Some pictures were also drawn and…"; a heading has "the", "of" and capitals).
+const prose = (t: string) =>
+  (t.match(/(?<![\p{L}'’-])\p{Ll}{3,}\b/gu) ?? []).filter(
+    (w) =>
+      !/^(the|and|for|with|from|into|onto|upon|between|among|through|over|under|its|their|our|your|his|her|via|per|not|but|nor|yet)$/.test(
+        w,
+      ),
+  ).length >= 4
+
 function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
   const id = 'body.hanging'
   const { doc, s } = ctx
@@ -718,7 +728,7 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       )
     ) {
       details.push(
-        `${place(pg.n, p)}: ${caption ? 'the caption' : sentence ? 'the line' : 'the heading'} “${quote(p.text, 40)}” is the last line of the page`,
+        `${place(pg.n, p)}: ${caption ? 'the caption' : sentence ? 'the line' : prose(t) ? 'the single line' : 'the heading'} “${quote(p.text, 40)}” is the last line of the page`,
       )
       where.push({ page: pg.n, quote: quote(p.text, 40) })
       continue

@@ -102,11 +102,20 @@ export function entries(ctx: Ctx): { list: Entry[]; groups: number } {
       (!!out.length &&
         /\s\p{Lu}[\p{L}'’-]+,$/u.test(out.at(-1)!.text) &&
         /^(\p{Lu}\.\s?){1,3}\(/u.test(t)) ||
+      // An editor's surname and "(Eds.)" at the margin: the rest of "In A. Name, & B. C."
+      // above, never how an entry begins (an edited book's opens "Surname, A. (Ed.).").
+      (!!out.length && /^\p{Lu}[\p{L}'’-]+\s*\(Eds?\.\)/u.test(t)) ||
       // A publisher's name alone on a line (a few words, no year): the end of the entry above.
       (!!out.length &&
         t.split(' ').length <= 6 &&
         /\b(press|publishers?|publishing|publications?|books|verlag|editions?)\.?$/i.test(t) &&
         !/\d|,/.test(t)) ||
+      // A place of publication and its publisher, with no year ("Lakeview City: Hill Institute."):
+      // the end of the entry above, not an entry.
+      (!!out.length &&
+        /^\p{Lu}\p{Ll}+(\s\p{Lu}\p{Ll}+){0,2}:\s+\p{Lu}/u.test(t) &&
+        !YEAR.test(t) &&
+        !/\b(1[89]|20)\d{2}\b/.test(t)) ||
       // The end of an entry that lost its indent: a journal, then volume, issue and pages.
       (!!out.length &&
         !startsEntry(t) &&

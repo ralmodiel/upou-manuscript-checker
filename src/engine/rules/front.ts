@@ -249,7 +249,13 @@ export function readTitlePage(ctx: Ctx): TitlePage {
   // and the adviser: lines of the page, not of the title.
   const labelled = new Set<Para>()
   for (const [k, q] of between.entries())
-    if (k > 1 && /:\s*$/.test(norm(q.text)) && norm(q.text).split(' ').length <= 4) {
+    if (
+      k > 1 &&
+      /:\s*$/.test(norm(q.text)) &&
+      norm(q.text).split(' ').length <= 4 &&
+      // (a title's line under one that breaks off at "AND" goes on with the title)
+      !/\b(and|or|of|the|to|in|for|on|a|an|with|by)$/i.test(norm(between[k - 1].text))
+    ) {
       labelled.add(q)
       if (between[k + 1]) labelled.add(between[k + 1])
     }
@@ -394,7 +400,11 @@ const spelling = (s: string) =>
 
 /** What signature-like sits around a label line on a PDF page: a mark (a picture, ink, a stamp,
  *  a drawn signature) or only a signature field, which may be signed or empty. */
-function pdfMarkNear(ctx: Ctx, label: Para, floor?: number): 'mark' | 'field' | undefined {
+function pdfMarkNear(
+  ctx: Ctx,
+  label: Para,
+  floor?: number,
+): 'mark' | 'field' | 'typed' | undefined {
   const page = ctx.doc.pages?.[label.page ?? -1]
   const line = label.lines?.[0]
   if (!page || !line) return undefined
@@ -441,11 +451,16 @@ function pdfMarkNear(ctx: Ctx, label: Para, floor?: number): 'mark' | 'field' | 
     (m.count ?? 0) >= 20 &&
     !white(m)
   if (
-    near.some((m) =>
-      m.kind === 'path' ? scrawl(m) : /^(Ink|Stamp|FreeText|FileAttachment)$/.test(m.kind),
-    )
+    near.some((m) => (m.kind === 'path' ? scrawl(m) : /^(Ink|Stamp|FileAttachment)$/.test(m.kind)))
   )
     return 'mark'
+  // A text box only: typed words, which may or may not be meant as the signature; one typed onto
+  // the label's own lines is the name and date the label asks for (read as its text), no signature.
+  const onLabel = (m: Box) =>
+    (label.lines ?? []).some(
+      (l) => m.y0 <= l.y && m.y1 >= l.y - l.size / 2 && m.x0 < l.x1 && m.x1 > l.x0,
+    )
+  if (near.some((m) => m.kind === 'FreeText' && !onLabel(m))) return 'typed'
   // pdf.js does not tell a signed signature field from an empty one.
   return near.some((m) => m.kind === 'Widget:Sig') ? 'field' : undefined
 }
@@ -635,7 +650,8 @@ function sequence(tp: TitlePage, emblem: boolean): Finding {
       const at = re.exec(whole)?.index ?? 0
       const label = whole
         .slice(whole.lastIndexOf(':', Math.max(0, at - 1)) + 1)
-        .replace(/\s*:$/, '')
+        // (and the line to sign on after it: "Adviser signature: ____")
+        .replace(/[\s:_]+$/, '')
         .trim()
       const want = right || `${titleCase(label.replace(/['’]?\s*signature\s*$/i, ''))}'s Signature`
       soft.push(
@@ -1175,7 +1191,7 @@ function signature(
       { where: at(label) },
     )
   // A name typed after "Signature:" may be meant as the signature (a script font): not for us to rule.
-  const typed = /signature\s*:\s*(\p{L}.*)$/iu.test(norm(label.text))
+  const typed = found === 'typed' || /signature\s*:\s*(\p{L}.*)$/iu.test(norm(label.text))
   if (ctx.doc.kind === 'pdf' && typed)
     return review(
       id,
@@ -1680,7 +1696,8 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
   if (!r) return fix(id, 'Add the Acceptance Page from the template.')
   const paras = textIn(ctx, r.start, r.end)
   // (or no word for it: "The dissertation attached hereto A STUDY OF RADIO in partial fulfilment…")
-  const p = find(paras, /with the title|entitled|titled|\btitle\s*:|attached hereto/i)
+  // (a "ti" printed as one glyph the file reads as "(": "(tled")
+  const p = find(paras, /with the title|entitled|titled|\(tled\b|\btitle\s*:|attached hereto/i)
   // The sentence may come in pieces (a PDF splits it where the bold title starts): read on to "accepted".
   const k = p ? paras.indexOf(p) : -1
   const end = paras.findIndex((q, j) => j >= k && /accepted/i.test(q.text))
@@ -1692,6 +1709,7 @@ function acceptanceTitle(ctx: Ctx, tp: TitlePage): Finding {
             .slice(k, end >= k ? end + 1 : k + 1)
             .map(shown)
             .join(' ')
+            .replace(/\((?=tled\b)/g, 'ti')
             // A re-encoded font prints the quotes around the title as ³ and ´.
             .replace(/(title|titled)(\s*:?\s*)³/i, '$1$2“')
             .replace(/´(?=\s*(is hereby|which|has been|is accepted))/i, '”'),

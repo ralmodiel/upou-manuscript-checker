@@ -193,9 +193,22 @@ export async function readPdf(
       let visible = 0
       let hidden = 0
       const stack: { ctm: Matrix; fill: string; mode: number }[] = []
+      // A note filled white over its whole box (a "white-out" laid on the page): what lies under it
+      // is not seen.
+      let note: { rect: number[]; white: boolean } | undefined
+      const whiteouts: Box[] = []
       for (let k = 0; k < ops.fnArray.length; k++) {
         const fn = ops.fnArray[k]
         const args = ops.argsArray[k] as unknown[]
+        if (fn === OPS.beginAnnotation && Array.isArray(args[1]))
+          note = { rect: args[1] as number[], white: false }
+        else if (fn === OPS.endAnnotation) {
+          if (note?.white)
+            whiteouts.push(
+              boxOf([1, 0, 0, 1, 0, 0], ...(note.rect as [number, number, number, number])),
+            )
+          note = undefined
+        }
         if (fn === OPS.save) stack.push({ ctm, fill, mode })
         else if (fn === OPS.restore) ({ ctm, fill, mode } = stack.pop() ?? { ctm, fill, mode })
         else if (fn === OPS.setTextRenderingMode) mode = args[0] as number
@@ -255,6 +268,15 @@ export async function readPdf(
         else if (fn === OPS.constructPath) {
           const path = (args[1] as (Float32Array | null)[] | undefined)?.[0]
           const mm = args[2] as ArrayLike<number> | null
+          if (
+            note &&
+            mm &&
+            fill === '#ffffff' &&
+            FILLS.has(args[0] as number) &&
+            mm[2] - mm[0] >= 0.9 * (note.rect[2] - note.rect[0]) &&
+            mm[3] - mm[1] >= 0.9 * (note.rect[3] - note.rect[1])
+          )
+            note.white = true
           if (path && mm)
             marks.push({
               ...boxOf(ctm, mm[0], mm[1], mm[2], mm[3]),
@@ -265,6 +287,18 @@ export async function readPdf(
             })
         }
       }
+      // (notes are drawn over the page's content: a picture wholly under a white-out is hidden)
+      for (let k = images.length - 1; k >= 0; k--)
+        if (
+          whiteouts.some(
+            (w) =>
+              w.x0 <= images[k].x0 + 2 &&
+              w.x1 >= images[k].x1 - 2 &&
+              w.y0 <= images[k].y0 + 2 &&
+              w.y1 >= images[k].y1 - 2,
+          )
+        )
+          images.splice(k, 1)
       for (const a of annots as {
         subtype?: string
         rect?: number[]
@@ -478,7 +512,24 @@ export async function readPdf(
         .map((a) => ({
           ...boxOf([1, 0, 0, 1, 0, 0], a.rect![0], a.rect![1], a.rect![2], a.rect![3]),
           said: flat(a.contentsObj?.str ?? '').toLowerCase(),
+          typed: (a.contentsObj?.str ?? '').replace(/\s+/g, ' ').trim(),
         }))
+      // A note typed onto a blank line (a name or a title over "_____"): its words are the line's.
+      const typedOn = (l: Line): Line => {
+        const c = /^_{3,}$/.test(flat(l.text))
+          ? covers.find(
+              (c) => c.typed && c.x0 < l.x1 && c.x1 > l.x0 && c.y0 - 2 <= l.y && c.y1 + 2 >= l.y,
+            )
+          : undefined
+        return c
+          ? {
+              ...l,
+              text: c.typed,
+              runs: [{ ...l.runs[0], text: c.typed }],
+              spans: [{ text: c.typed, x0: l.x0, x1: l.x1 }],
+            }
+          : l
+      }
       const covered = (l: Line) =>
         covers.some(
           (c) =>
@@ -488,7 +539,7 @@ export async function readPdf(
             c.y1 >= l.y &&
             !c.said.includes(flat(l.text).toLowerCase()),
         )
-      const shown = covers.length ? lines.filter((l) => !covered(l)) : lines
+      const shown = covers.length ? lines.map(typedOn).filter((l) => !covered(l)) : lines
       allLines.push(
         whites.length
           ? shown.filter(
