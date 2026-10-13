@@ -72,7 +72,13 @@ function typeface(p: Para, what: string, scale?: number): { issues: string[]; sc
  *  missing "Chapter" label stays for review. */
 const thesisWork = (ctx: Ctx) => {
   try {
-    return /^(thesis|dissertation)\b/i.test(norm(readTitlePage(ctx).adviserLabel?.text ?? ''))
+    // A special project on the thesis template keeps its "Thesis Adviser" line: the pages before
+    // the first chapter name the work.
+    const front = ctx.doc.paras.slice(0, ctx.s.chapters[0]?.heading ?? 0)
+    return (
+      /^(thesis|dissertation)\b/i.test(norm(readTitlePage(ctx).adviserLabel?.text ?? '')) &&
+      !front.some((p) => /\b(special (project|problem|paper)|capstone)\b/i.test(p.text))
+    )
   } catch {
     return false
   }
