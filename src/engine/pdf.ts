@@ -993,11 +993,15 @@ function splitBands(
       /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(l.text)
     )
       header.push(l)
-    // (a chapter or appendix label at the top of a page is a heading, not a running head)
+    // (a chapter or appendix label at the top of a page is a heading, not a running head; nor is
+    // a front-matter page's heading set high: "ACKNOWLEDGEMENT")
     else if (
       l.y < 54 &&
       (!below || below.y - l.y >= 18) &&
-      !/^(chapter|appendix|annex)\b/i.test(l.text.trim())
+      !/^(chapter|appendix|annex)\b/i.test(l.text.trim()) &&
+      !/^(acknowledge?ments?|dedication|abstract|table of contents|lists? of (tables|figures))$/i.test(
+        l.text.trim(),
+      )
     )
       header.push(l)
     else body.push(l)

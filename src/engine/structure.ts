@@ -60,25 +60,27 @@ export const PRELIM_NAMES: Record<PrelimKey, string> = {
 const PRELIMS: [PrelimKey, RegExp][] = [
   [
     'bio',
-    /^(biographical sketch|bio-?sketch|biography|curriculum vitae|about the (author|researcher))$/i,
+    /^((the )?(author|researcher)['’]?s )?(biographical sketch|bio-?sketch|biography|curriculum vitae)$|^about the (author|researcher)$/i,
   ],
   ['ack', /^acknowledge?ments?( page)?$/i],
   ['dedication', /^dedications?( page)?$/i],
   ['toc', /^(table of contents?|contents)$/i],
-  // (a list's heading is often miswritten: "LISTS OF FIGURES", "List of Table", "LIST OF TABLE/S")
-  ['tables', /^lists? of tables?(\/s)?( and (figures?|illustrations?))?$/i],
+  // (a list's heading is often miswritten: "LISTS OF FIGURES", "List of Table", "LIST OF TABLE/S";
+  // a PDF may glue its words: "List ofTables")
+  ['tables', /^lists? ?of ?tables?(\/s)?( and (figures?|illustrations?))?$/i],
   [
     'figures',
-    /^lists? of (figures?|illustrations?)(\/s)?$|^lists? of tables?(\/s)? and (figures?|illustrations?)$/i,
+    /^lists? ?of ?(figures?|illustrations?)(\/s)?$|^lists? ?of ?tables?(\/s)? and (figures?|illustrations?)$/i,
   ],
   ['abstract', /^(research |executive )?abstract$/i],
 ]
 
 export const LIST_HEADING =
-  /^lists? of (tables?|figures?|illustrations?)(\/s)?( and (figures?|illustrations?))?$/i
-/** The template's own spelling of the list headings: any other is a slip for the student to look at. */
+  /^lists? ?of ?(tables?|figures?|illustrations?)(\/s)?( and (figures?|illustrations?))?$/i
+/** The template's own spelling of the list headings: any other is a slip for the student to look at.
+ *  (Words a PDF glued, "List ofTables", are the reader's slip, not the student's.) */
 export const LIST_HEADING_EXACT =
-  /^list of (tables|figures|illustrations)( and (figures|illustrations))?$/i
+  /^list ?of ?(tables|figures|illustrations)( and (figures|illustrations))?$/i
 
 /** A table of contents line: a title, then a page number after a tab, dot leaders or spaces. */
 const TOC_ENTRY = /(\t|\.{3,}|…|\s{2,})\s*([ivxlcdm]+|\d+(\s*[-–]\s*\d+)?)\s*$/i
@@ -227,6 +229,13 @@ export function findStructure(doc: Doc): Structure {
     )
       stops.push(pageStartOn(doc, p.i))
     if (!isHeadingish(p) && !plainList) continue
+    // (on a contents page, a plain entry whose page number fell to the next line is no heading)
+    if (
+      entry &&
+      !isHeadingish(p) &&
+      /^\s*([ivxlcdm]+|\d{1,3})\s*$/i.test(paras[p.i + 1]?.text ?? '')
+    )
+      continue
     if (!s.permission && /^(university )?permission page$/i.test(t)) {
       s.permission = { heading: p.i, start: p.i, end: paras.length }
       continue
@@ -547,5 +556,8 @@ function findUnlabelled(doc: Doc, s: Structure, lists: Set<number>) {
       unlabelled: true,
     })
   }
+  // An unnumbered heading ("SUMMARY") before the sections numbered from "I." is front matter.
+  const one = found.findIndex((c) => c.inlineTitle && c.number === 1)
+  if (one > 0 && found.slice(0, one).every((c) => !c.inlineTitle)) found.splice(0, one)
   s.chapters.unshift(...found)
 }

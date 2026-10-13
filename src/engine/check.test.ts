@@ -932,6 +932,29 @@ describe('check', () => {
     expect((present.details ?? []).concat(present.message).join(' ')).toMatch(/not worded as/)
   })
 
+  it('reads “List ofTables” (words glued) and “AUTHOR’S BIOGRAPHICAL SKETCH” as their pages', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const r = await check(
+      'thesis.docx',
+      docx(
+        ...['UNIVERSITY OF THE PHILIPPINES', 'OPEN UNIVERSITY', 'MASTER OF EDUCATION'].map((t) =>
+          para(t, c),
+        ),
+        para('AUTHOR’S BIOGRAPHICAL SKETCH', `<w:pageBreakBefore/>${c}`),
+        para('List ofTables', `<w:pageBreakBefore/>${c}`),
+        para('Abstract', `<w:pageBreakBefore/>${c}`),
+        para('Keywords: radio'),
+        para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+        para('INTRODUCTION', c),
+        para('Table 1. Second'),
+      ),
+      opts,
+    )
+    const present = finding(r, 'prelims.present')
+    const all = (present.details ?? []).concat(present.message).join(' ')
+    expect(all).not.toMatch(/List of Tables|Biographical Sketch/)
+  })
+
   it('stays fast on long runs of spaces and tabs', async () => {
     // These once made two patterns backtrack for minutes, freezing the page.
     const t0 = performance.now()
