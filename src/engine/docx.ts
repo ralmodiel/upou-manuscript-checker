@@ -329,10 +329,15 @@ export function readDocx(data: Uint8Array): Doc {
         pictures.push({ para: para.i, width, height, bytes: media(attr(blips[0], 'embed')) })
       }
       const box = all(d, 'txbxContent')
-      if (box.length || !isPicture) {
+      // (a picture set at a place of its own, a tick pasted over a box, stands there too)
+      if (box.length || !isPicture || offset !== undefined) {
+        // (a shape filled in a colour, not white: a box filled to mark it)
+        const fill = kid(all(d, 'spPr')[0], 'solidFill')
+        const colour = attr(kid(fill, 'srgbClr') ?? kid(fill, 'schemeClr'), 'val') ?? ''
         ;(para.shapes ??= []).push({
           x: offset === undefined ? undefined : offset / 12700,
           text: box.map((b) => b.textContent ?? '').join(' '),
+          filled: !!fill && !/^(ffffff|lt1|bg1|lt2|bg2)$/i.test(colour),
         })
         boxes.push(...box)
       }

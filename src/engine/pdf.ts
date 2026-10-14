@@ -88,6 +88,33 @@ export function familyOf(raw: string | undefined): string | undefined {
   return n || undefined
 }
 
+// Ticks, crosses and boxes of the symbol fonts, by the letter a PDF gives for each when the font
+// has no map to the signs ("p Yes n No" for "☐ Yes ■ No" in Wingdings).
+const SIGNS: [RegExp, Record<string, string>][] = [
+  [/^wingdings ?2/i, { P: '✓', O: '✗', Q: '✗', R: '☑', S: '☒', T: '☒', '£': '☐' }],
+  [
+    /^wingdings/i,
+    {
+      n: '■',
+      l: '●',
+      x: '☒',
+      o: '☐',
+      p: '☐',
+      q: '☐',
+      r: '☐',
+      '¨': '☐',
+      û: '✗',
+      ü: '✓',
+      ý: '☒',
+      þ: '☑',
+    },
+  ],
+  [/^symbol/i, { Ö: '√' }],
+  [/dingbats/i, { '3': '✓', '4': '✔', '7': '✗', '8': '✘', n: '■', l: '●', o: '☐', p: '☐', q: '☐' }],
+]
+const sign = (font: string | undefined, c: string) =>
+  (font && SIGNS.find(([re]) => re.test(font))?.[1][c]) || c
+
 const median = (xs: number[]) => {
   if (!xs.length) return 0
   const s = [...xs].sort((a, b) => a - b)
@@ -442,7 +469,13 @@ export async function readPdf(
         if (slanted && !font.unknown) span.italic = true
         spans.push(span)
         if (str.trim().length === 1)
-          glyphs.push({ x0, x1, y0: y - size * 0.8, y1: y + size * 0.2, text: str.trim() })
+          glyphs.push({
+            x0,
+            x1,
+            y0: y - size * 0.8,
+            y1: y + size * 0.2,
+            text: sign(font.font, str.trim()),
+          })
       }
 
       // Text drawn inside a hyperlink's area has the link's colour, not the writer's.

@@ -57,8 +57,9 @@ export interface Para {
   table?: number
   /** In a text box or frame. */
   inBox?: boolean
-  /** Drawn shapes anchored here (Word): their offset from the column (points) and their text. */
-  shapes?: { x?: number; text: string }[]
+  /** Drawn shapes and placed pictures anchored here (Word): their offset from the column (points),
+   *  their text, and whether a shape is filled in a colour (not white). */
+  shapes?: { x?: number; text: string; filled?: boolean }[]
   /** Holds a picture or drawing (Word); stands beside a picture (PDF: see Page.images). */
   image?: boolean
   /** Paragraph style name, e.g. 'Heading 1' or 'Caption'. */

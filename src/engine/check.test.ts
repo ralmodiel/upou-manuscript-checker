@@ -2,7 +2,17 @@
 // guards around it: files it cannot read are turned away with a reason, and the comments it writes
 // stay valid whatever the file name holds.
 import { strFromU8, strToU8, unzipSync, zipSync, zlibSync } from 'fflate'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
+import {
+  beginText,
+  endText,
+  moveText,
+  PDFDocument,
+  PDFName,
+  PDFHexString,
+  setFontAndSize,
+  showText,
+  StandardFonts,
+} from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { reportDocx } from '../report/docx.ts'
 import { reportModel } from '../report/model.ts'
@@ -1000,6 +1010,66 @@ describe('check', () => {
     expect(finding(r, 'extra.placeholders').details?.join(' ')).toMatch(/Name and Date/)
   })
 
+  it('reads a Word box filled in, or a tick laid over it, as the mark, and the permission page’s label', async () => {
+    const c = '<w:jc w:val="center"/>'
+    const ns = [
+      'wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"',
+      'a="http://schemas.openxmlformats.org/drawingml/2006/main"',
+      'wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"',
+    ].map((n) => `xmlns:${n}`)
+    // A shape as the template's boxes, so many points from the column, white or filled.
+    const box = (x: number, fill = 'FFFFFF') =>
+      `<w:r><w:drawing ${ns.join(' ')}><wp:anchor><wp:positionH relativeFrom="column"><wp:posOffset>${x * 12700}</wp:posOffset></wp:positionH><a:graphic><a:graphicData><wps:wsp><wps:spPr><a:solidFill><a:srgbClr val="${fill}"/></a:solidFill></wps:spPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`
+    const names = ['Invention (I)', 'Publication (P)', 'Confidential (C)', 'Free (F)']
+    const page = (boxes: (k: number) => string[], label = ['University Permission Page']) =>
+      check(
+        'thesis.docx',
+        docx(
+          ...[
+            'UNIVERSITY OF THE PHILIPPINES',
+            'OPEN UNIVERSITY',
+            'MASTER OF EDUCATION',
+            'Juan A. Cruz',
+            'A STUDY OF RADIO',
+            'Thesis Adviser:',
+            'MARIA B. SANTOS',
+            '12 May 2026',
+            'Permission of the classification of this academic work access is subject to the provisions of applicable laws:',
+          ].map((t) => para(t, c)),
+          ...names.map(
+            (n, k) =>
+              `<w:p><w:pPr>${c}</w:pPr><w:r><w:t>${n} Yes or No</w:t></w:r>${boxes(k).join('')}</w:p>`,
+          ),
+          para("Student's Signature:", c),
+          ...label.map((t, k) => para(t, `${k ? '' : '<w:pageBreakBefore/>'}${c}`)),
+          para('A STUDY OF RADIO', c),
+          para('Specifically, I grant the following rights to the University: …'),
+          para('Signature over Student Name and Date'),
+          para('CHAPTER I', `<w:pageBreakBefore/>${c}`),
+          para('INTRODUCTION', c),
+        ),
+        opts,
+      )
+    // Publication's Yes box filled in black, the No box of each other row.
+    const filled = await page((k) =>
+      k === 1 ? [box(55, '000000'), box(143)] : [box(55), box(143, '000000')],
+    )
+    expect(finding(filled, 'title.permission')).toMatchObject({ status: 'ok' })
+    expect(finding(filled, 'title.permission').message).toMatch(/Publication \(P\) is “Yes”/)
+    // Every box filled alike, in a shape's own colour: no box is marked.
+    const alike = await page(() => [box(55, '4472C4'), box(143, '4472C4')])
+    expect(finding(alike, 'title.permission').details?.join(' ')).toMatch(/No mark found/)
+    // A tick drawn as a shape and laid over its box: a drawing more on that side.
+    const laid = await page((k) => [box(55), box(143), box(k === 1 ? 56 : 144)])
+    expect(finding(laid, 'title.permission')).toMatchObject({ status: 'ok' })
+    // The page labelled without "University"; with it read as a line of its own above, no fault.
+    const bare = await page(() => [], ['Permission Page'])
+    expect(finding(bare, 'permission.title')).toMatchObject({ status: 'fix' })
+    expect(finding(bare, 'permission.title').message).toMatch(/University Permission Page/)
+    const split = await page(() => [], ['University', 'Permission Page'])
+    expect(finding(split, 'permission.title')).toMatchObject({ status: 'ok' })
+  })
+
   it('finds “I specifically allow” in a re-encoded font, and passes no statement on a page it cannot read', async () => {
     const statement = (...lines: string[]) =>
       check(
@@ -1232,6 +1302,33 @@ describe('PDF reader', () => {
     const read = await readPdf(await doc.save(), await import('pdfjs-dist/legacy/build/pdf.mjs'))
     expect(read.pages!.map((p) => p.footer)).toEqual(['1', '2', '3'])
     expect(read.paras.filter((p) => /^\d$/.test(p.text))).toEqual([])
+  })
+
+  it('reads the letters of a symbol font as the boxes they print (“p” and “n” in Wingdings)', async () => {
+    const { readPdf } = await import('./pdf.ts')
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([612, 792])
+    // A font named only, not embedded, as Word leaves the symbol fonts.
+    const wd = doc.context.obj({
+      Type: 'Font',
+      Subtype: 'TrueType',
+      BaseFont: 'Wingdings-Regular',
+      Encoding: 'WinAnsiEncoding',
+    })
+    page.node.setFontDictionary(PDFName.of('WD'), doc.context.register(wd))
+    for (const [x, c] of [
+      [72, '70'],
+      [300, '6E'],
+    ] as const)
+      page.pushOperators(
+        beginText(),
+        setFontAndSize('WD', 12),
+        moveText(x, 700),
+        showText(PDFHexString.of(c)),
+        endText(),
+      )
+    const read = await readPdf(await doc.save(), await import('pdfjs-dist/legacy/build/pdf.mjs'))
+    expect(read.pages![0].glyphs.map((g) => g.text)).toEqual(['☐', '■'])
   })
 
   it('reports a picture in a chapter with no caption beside it', async () => {

@@ -670,7 +670,8 @@ export function figureRules(ctx: Ctx, caps: Caption[]): Finding[] {
       `Below the ${below.length === 1 ? 'figure/table' : 'figures/tables'}: ${names(below)}.`,
     )
   if (notBold.length) numberIssues.push(`Not in bold: ${names(notBold)}.`)
-  if (lonely.length) numberIssues.push(`No number at all: ${list(lonely.slice(0, 3))}.`)
+  // (its number may be under it, or inside the picture where it cannot be read)
+  if (lonely.length) numberIssues.push(`No number above the figure: ${list(lonely.slice(0, 3))}.`)
   if (renamed.length)
     numberIssues.push(
       `Labelled by another name below the picture: ${list(renamed.slice(0, 3))}; number ${renamed.length > 1 ? 'each' : 'it'} as a figure, above it.`,

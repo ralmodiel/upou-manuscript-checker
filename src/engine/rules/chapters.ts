@@ -714,6 +714,8 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
     if (
       // (an italic line of the preliminary pages, a dedication's, is no heading either)
       (headingLike(p) || label) &&
+      // (nor a line with a link in it: a quoted post's "Click here https://…")
+      !/https?:\/\/|www\./i.test(t) &&
       (p.i >= firstBody || s.prelims.some((x) => x.heading === p.i)) &&
       // (a caption closing the page is judged below, by what opens the next one)
       !(
@@ -1034,8 +1036,14 @@ function hanging(ctx: Ctx, captions: Caption[] = []): Finding {
       // (a page number read into the paragraph that opens the next page is no line of it)
       const folio = onFirst === 1 && /^\d{1,4}$/.test(norm(lines[0].text))
       const atFoot = onFirst === 1 && !stray && !folio && lines[0].y > 0.5 * pg.height
+      // (a link, or the end of one, carried over alone: the address of a reference, no line of text)
+      const carried = norm(lines.at(-1)!.text)
+      const link =
+        /^(https?:\/\/|www\.)/i.test(carried) ||
+        (!/\s/.test(carried) && /(https?:\/\/|www\.)\S*$/i.test(norm(lines.at(-2)?.text ?? '')))
       const atTop =
         onNext === 1 &&
+        !link &&
         closes &&
         !goesOn &&
         !fragment &&

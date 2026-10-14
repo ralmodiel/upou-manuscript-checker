@@ -906,10 +906,21 @@ function rowChoice(ctx: Ctx, row: Para): Choice {
       (p) => p && /\byes\b|\bno\b/i.test(p.text) && p.table === row.table,
     )
     if (!cell) return 'none'
-    const boxes = (cell.shapes ?? []).filter((s) => s.x !== undefined).sort((a, b) => a.x! - b.x!)
+    const drawn = (cell.shapes ?? []).filter((s) => s.x !== undefined)
+    const xs = drawn.map((s) => s.x!)
+    // The Yes box stands left of the middle of the boxes, the No box right of it.
+    const mid = (Math.min(...xs) + Math.max(...xs)) / 2
+    const yes = drawn.filter((s) => s.x! < mid || drawn.length === 1)
+    const no = drawn.filter((s) => !yes.includes(s))
+    // Filled on both sides, the boxes are drawn so; on one side, that box is filled in. A drawing
+    // more on one side (a tick shape or picture laid over the box) marks it too.
+    const fill = yes.some((s) => s.filled) !== no.some((s) => s.filled)
+    const marked = (side: typeof drawn, other: typeof drawn) =>
+      side.some((s) => isMark(s.text) || (fill && s.filled)) ||
+      (drawn.length > 2 && side.length > other.length)
     const boxed = pick([
-      ...(boxes[0] && isMark(boxes[0].text) ? (['yes'] as const) : []),
-      ...(boxes[1] && isMark(boxes[1].text) ? (['no'] as const) : []),
+      ...(marked(yes, no) ? (['yes'] as const) : []),
+      ...(marked(no, yes) ? (['no'] as const) : []),
     ])
     if (boxed !== 'none') return boxed
     return typedChoice(cell.text)
@@ -1593,6 +1604,25 @@ function permissionTitle(ctx: Ctx, tp: TitlePage): Finding {
       },
     )
   return ok(id, 'The title matches the Title Page and is in upper case.')
+}
+
+/** The page's label as the template words it, "University Permission Page", with the title's
+ *  finding: a label without "University" is to be corrected too. */
+function permissionLabel(ctx: Ctx, f: Finding): Finding {
+  const r = ctx.s.permission
+  const head = r && ctx.doc.paras[r.heading]
+  // (not one whose "University" was read as a line of its own above it)
+  if (
+    !head ||
+    !/^permission page$/i.test(norm(head.text)) ||
+    /university$/i.test(norm(ctx.doc.paras[head.i - 1]?.text ?? ''))
+  )
+    return f
+  const d = `Label the page “University Permission Page”, as the template does (it reads “${norm(head.text)}”).`
+  if (f.status === 'ok') return fix(f.id, d, { where: at(head) })
+  if (f.status === 'fix')
+    return { ...f, details: [...(f.details ?? []), d], where: [...(f.where ?? []), ...at(head)] }
+  return f
 }
 
 /** A phrase as a font may have put it in the text layer: each letter as itself or as the glyph
@@ -2405,7 +2435,7 @@ export async function frontRules(ctx: Ctx): Promise<Finding[]> {
             : missing('University Permission Page'),
         )
       : [
-          permissionTitle(ctx, tp),
+          permissionLabel(ctx, permissionTitle(ctx, tp)),
           permissionStatement(ctx),
           permissionSignature(ctx),
           folioCheck(
