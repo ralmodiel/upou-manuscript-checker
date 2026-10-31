@@ -165,20 +165,30 @@ export const SCREENERS = [
 ]
 
 const q = encodeURIComponent
-/** Where to search. Those with an address open the search there; the rest are reached through
- *  a library's subscription. */
-export const SOURCES: { id: string; name: string; note: string; url?: (s: string) => string }[] = [
+/** Where to search. Those with an address open the search there (`home` when there is nothing to
+ *  search yet; else the address's origin); the rest are reached through a library's subscription.
+ *  The two UPOU sources open their concept sites while those are built: the search is the route
+ *  `#/search/<the string>` on each. */
+export const SOURCES: {
+  id: string
+  name: string
+  note: string
+  url?: (s: string) => string
+  home?: string
+}[] = [
   {
     id: 'upload',
     name: 'UPOU Repository',
-    note: 'UPOU theses, dissertations and student papers.',
-    url: (s) => `https://repository.upou.edu.ph/search?query=${q(s)}`,
+    note: 'UPOU theses, dissertations and student papers (concept site).',
+    url: (s) => `https://ralmodiel.github.io/upou-repository-concept/#/search/${q(s)}`,
+    home: 'https://ralmodiel.github.io/upou-repository-concept/',
   },
   {
     id: 'ijodel',
     name: 'IJODeL',
-    note: 'UPOU’s journal on open and distance e-learning; open access.',
-    url: (s) => `https://ijodel.upou.edu.ph/ijodel/search/search?query=${q(s)}`,
+    note: 'UPOU’s journal on open and distance e-learning; open access (concept site).',
+    url: (s) => `https://ralmodiel.github.io/upou-ijodel-concept/#/search/${q(s)}`,
+    home: 'https://ralmodiel.github.io/upou-ijodel-concept/',
   },
   {
     id: 'scholar',

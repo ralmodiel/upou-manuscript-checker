@@ -1082,7 +1082,11 @@ function SearchStep({ plan, patch }: { plan: Plan; patch: Patch }) {
                   )}
                   {src.url && (
                     <a
-                      href={query(src.id) ? src.url(query(src.id)) : new URL(src.url('')).origin}
+                      href={
+                        query(src.id)
+                          ? src.url(query(src.id))
+                          : (src.home ?? new URL(src.url('')).origin)
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       className={buttonClass('secondary', 'sm')}

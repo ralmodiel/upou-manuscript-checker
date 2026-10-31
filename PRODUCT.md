@@ -46,7 +46,8 @@ writing advice.
 - Topic planner (a second tab): shapes a systematic or scoping review question from its parts
   (PICO, PICo, PEO, PCC), the criteria, the search string (plain, and in PubMed's, Scopus's and
   Web of Science's syntax), a log of what each source found (the UPOU Repository and IJODeL
-  first), the PRISMA 2020 flow and a verdict on the topic's size with the hours of work it holds;
+  first, on their concept sites for now), the PRISMA 2020 flow and a verdict on the topic's size
+  with the hours of work it holds;
   points to where published reviews are listed; shows the PRISMA 2020 checklists in their
   published words (Page et al., 2021, CC BY 4.0, always credited); writes the plan as a Word file;
   keeps up to three candidate topics in the browser only, each savable as a file. Optional suggestions from a small language model run in the

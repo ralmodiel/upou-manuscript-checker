@@ -13,7 +13,8 @@ program's review emails.
 - **A Topic planner for systematic reviews.** A second tab shapes a review question from its parts
   (PICO, PICo, PEO or PCC), points to where published reviews are listed, builds the search string
   (in PubMed's, Scopus's and Web of Science's own syntax too), logs what each source found (the
-  UPOU Repository and IJODeL first), draws the PRISMA 2020 flow from the screening numbers and says
+  UPOU Repository and IJODeL first, on their concept sites while those are built), draws the
+  PRISMA 2020 flow from the screening numbers and says
   whether the topic is the right size and how many hours of work it holds, then fills the PRISMA
   2020 checklists (Page et al., 2021, reproduced under CC BY 4.0) and writes the plan as a Word
   file. Up to three candidate topics can be kept and compared side by side; a plan can be saved as

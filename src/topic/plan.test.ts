@@ -116,9 +116,15 @@ describe('topic plan', () => {
     expect(searchFor(own, 'pubmed')).toBe(
       '("student nurses"[tiab] OR "peer support"[tiab] OR (nurse* OR midwi*) OR (student nurses))',
     )
-    // The UPOU sources come first and open the plain string.
+    // The UPOU sources come first and open the plain string on their concept sites' search route.
     expect(SOURCES.slice(0, 2).map((x) => x.id)).toEqual(['upload', 'ijodel'])
-    expect(SOURCES[0].url!('a b')).toBe('https://repository.upou.edu.ph/search?query=a%20b')
+    expect(SOURCES[0].url!('a b')).toBe(
+      'https://ralmodiel.github.io/upou-repository-concept/#/search/a%20b',
+    )
+    expect(SOURCES[1].url!('"a b" AND c')).toBe(
+      'https://ralmodiel.github.io/upou-ijodel-concept/#/search/%22a%20b%22%20AND%20c',
+    )
+    expect(SOURCES[1].home).toBe('https://ralmodiel.github.io/upou-ijodel-concept/')
   })
 
   it('carries the numbers down the PRISMA flow and judges the topic by them', () => {
