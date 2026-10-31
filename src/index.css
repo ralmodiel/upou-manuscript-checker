@@ -81,6 +81,9 @@
 
   --radius-card: 18px;
   --radius-pill: 999px;
+  --radius-tile: 14px;
+  --radius-field: 12px;
+  --radius-chip: 10px;
   --shadow-elev-1: 0 1px 2px rgb(27 26 23 / 0.06), 0 2px 8px -3px rgb(27 26 23 / 0.1);
   --shadow-elev-2: 0 1px 3px rgb(27 26 23 / 0.06), 0 10px 24px -12px rgb(27 26 23 / 0.24);
   --shadow-elev-3: 0 2px 6px rgb(27 26 23 / 0.06), 0 24px 48px -18px rgb(27 26 23 / 0.34);
@@ -93,6 +96,14 @@
   --default-transition-duration: 200ms;
   --default-transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-sweep: sweep 1.4s ease-in-out infinite;
+  /* A step's content, and a suggestion, entering: a short rise (motion-safe only). */
+  --animate-rise: rise 320ms var(--ease-out-soft) both;
+  @keyframes rise {
+    from {
+      opacity: 0;
+      translate: 0 6px;
+    }
+  }
   @keyframes sweep {
     from {
       translate: -100% 0;
@@ -317,5 +328,10 @@ html[data-theme-fade]::view-transition-new(root) {
   }
   [data-print='avoid-break'] {
     break-inside: avoid;
+  }
+  /* The planner prints as the plan: its two columns one above the other, the side column's
+     summary after the step, without the sticky offset. */
+  aside[aria-label='Your plan so far'] > div {
+    position: static;
   }
 }

@@ -58,6 +58,16 @@ export default function Footer() {
                 APA style: reference list
               </a>
             </li>
+            <li>
+              <a
+                className={LINK}
+                href="https://www.prisma-statement.org/prisma-2020-checklist"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                PRISMA 2020 checklist (topic planner)
+              </a>
+            </li>
           </ul>
         </section>
         <section aria-labelledby="f-project">
