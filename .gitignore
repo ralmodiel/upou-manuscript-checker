@@ -27,6 +27,6 @@ data/
 # Impeccable design hook cache (the design briefs in .impeccable/ are kept)
 .impeccable/hook.cache.json
 
-# The briefing page for the repository and journal concept sessions lives outside the repo; a copy
-# dropped here must never be committed.
-upou-planner-sources-brief.md
+# The coordination pages with the repository and journal concept sessions (brief, reply, search
+# API) live outside the repo; a copy dropped here must never be committed.
+upou-planner-*.md
