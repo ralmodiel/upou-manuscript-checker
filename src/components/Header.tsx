@@ -5,20 +5,10 @@ import { BADGE, SHORT } from '../notice'
 import { InfoIcon, MoonIcon, SunIcon } from './icons'
 
 const NAV =
-  'rounded-pill px-3 py-2 text-sm whitespace-nowrap font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink'
+  'rounded-pill px-3 py-2 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink'
 
 // `home`: the start page, where the checklist and the files are; elsewhere only the questions are.
-export default function Header({
-  onHome,
-  home,
-  tab,
-  onTab,
-}: {
-  onHome: () => void
-  home: boolean
-  tab: 'check' | 'topic'
-  onTab: (t: 'check' | 'topic') => void
-}) {
+export default function Header({ onHome, home }: { onHome: () => void; home: boolean }) {
   const { theme, toggle } = useTheme()
   const next = theme === 'dark' ? 'light' : 'dark'
   return (
@@ -31,15 +21,13 @@ export default function Header({
           <a
             href="#top"
             onClick={onHome}
-            aria-label="UPOU Manuscript Topic Planner & Format Checker, start over"
-            className="flex min-h-10 min-w-0 items-center rounded-sm font-display text-[1.35rem] leading-[1.05] tracking-tight lg:text-[1.6rem]"
+            aria-label="UPOU Format Check, start over"
+            className="flex min-h-10 items-baseline gap-1.5 rounded-sm font-display text-[1.6rem] leading-none tracking-tight"
           >
-            <span className="text-balance">
-              <span className="text-ink">UPOU</span>{' '}
-              <span className="text-maroon">Manuscript Topic Planner &amp; Format Checker</span>
-            </span>
+            <span className="text-ink">UPOU</span>
+            <span className="text-maroon">Format Check</span>
           </a>
-          <span className="ml-1 hidden rounded-pill border border-line bg-surface px-2 py-1 text-[0.6875rem] leading-none font-semibold tracking-[0.06em] whitespace-nowrap text-ink-2 uppercase xl:inline">
+          <span className="ml-1 hidden rounded-pill border border-line bg-surface px-2 py-1 text-[0.6875rem] leading-none font-semibold tracking-[0.06em] text-ink-2 uppercase sm:inline">
             {BADGE}
           </span>
           <nav aria-label="Page" className="ml-auto hidden items-center gap-0.5 md:flex">
@@ -53,17 +41,6 @@ export default function Header({
                 </a>
               </>
             )}
-            <a
-              href={tab === 'topic' ? '#top' : '#topic'}
-              onClick={(e) => {
-                e.preventDefault()
-                onTab(tab === 'topic' ? 'check' : 'topic')
-                window.scrollTo({ top: 0 })
-              }}
-              className={NAV}
-            >
-              {tab === 'topic' ? 'Format check' : 'Topic planner'}
-            </a>
             <a href="#faq" className={NAV}>
               Questions
             </a>

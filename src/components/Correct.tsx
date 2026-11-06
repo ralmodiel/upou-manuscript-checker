@@ -178,7 +178,7 @@ function ItemRow({
               .map(([w, ...more], k) => (
                 <span
                   key={k}
-                  className="inline-flex max-w-full items-start gap-x-1.5 rounded-lg border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
+                  className="inline-flex max-w-full items-start gap-x-1.5 rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-xs text-ink-2"
                 >
                   {w.page !== undefined && (
                     <span className="shrink-0 font-semibold whitespace-nowrap text-ink tabular-nums">
@@ -436,11 +436,11 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
           </p>
         )}
         <div className="mt-6 grid gap-3 text-sm leading-relaxed md:grid-cols-2">
-          <p className="flex gap-2.5 rounded-field bg-review-soft p-3.5 text-ink [&_svg]:size-5">
+          <p className="flex gap-2.5 rounded-[12px] bg-review-soft p-3.5 text-ink [&_svg]:size-5">
             <InfoIcon className="mt-px shrink-0 text-review" />
             <span>{VERIFY}</span>
           </p>
-          <p className="flex gap-2.5 rounded-field bg-ok-soft p-3.5 text-ink [&_svg]:size-5">
+          <p className="flex gap-2.5 rounded-[12px] bg-ok-soft p-3.5 text-ink [&_svg]:size-5">
             <ShieldIcon className="mt-px shrink-0 text-ok" />
             <span>{PRIVATE_SHORT}</span>
           </p>
@@ -451,7 +451,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
         ].map((n) => (
           <p
             key={n}
-            className="mt-3 flex gap-2.5 rounded-field border border-line p-3.5 text-sm leading-relaxed text-ink-2 [&_svg]:size-5"
+            className="mt-3 flex gap-2.5 rounded-[12px] border border-line p-3.5 text-sm leading-relaxed text-ink-2 [&_svg]:size-5"
           >
             <InfoIcon className="mt-px shrink-0 text-ink-3" />
             <span>{n}</span>
@@ -486,7 +486,7 @@ export default function Correct({ report, onRestart }: { report: Report; onResta
                 type="button"
                 aria-pressed={part === k}
                 onClick={() => choose(part === k ? null : k, filter)}
-                className="flex h-full w-full cursor-pointer flex-col gap-3 rounded-tile border border-line bg-surface p-3.5 text-left shadow-(--shadow-elev-1) transition-[border-color,box-shadow] duration-200 ease-out-soft hover:border-ink-3/50 hover:shadow-(--shadow-elev-2) aria-pressed:border-maroon aria-pressed:shadow-(--shadow-elev-2) aria-pressed:ring-1 aria-pressed:ring-maroon"
+                className="flex h-full w-full cursor-pointer flex-col gap-3 rounded-[14px] border border-line bg-surface p-3.5 text-left shadow-(--shadow-elev-1) transition-[border-color,box-shadow] duration-200 ease-out-soft hover:border-ink-3/50 hover:shadow-(--shadow-elev-2) aria-pressed:border-maroon aria-pressed:shadow-(--shadow-elev-2) aria-pressed:ring-1 aria-pressed:ring-maroon"
               >
                 <span className="flex items-baseline gap-2">
                   <span

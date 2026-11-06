@@ -154,7 +154,7 @@ export default function Prepare({
                   download={f.save}
                   className="group flex items-center gap-4 rounded-card border border-line bg-surface p-4 shadow-(--shadow-elev-1) transition-[box-shadow,border-color] hover:border-ink-3/40 hover:shadow-(--shadow-elev-2) sm:p-5"
                 >
-                  <span className="grid size-12 shrink-0 place-items-center rounded-field bg-maroon-soft text-maroon [&_svg]:size-6">
+                  <span className="grid size-12 shrink-0 place-items-center rounded-[12px] bg-maroon-soft text-maroon [&_svg]:size-6">
                     <f.icon />
                   </span>
                   <span className="min-w-0 flex-1">

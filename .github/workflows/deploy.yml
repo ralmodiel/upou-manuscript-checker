@@ -26,11 +26,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      # (onnxruntime-node's install script would fetch CUDA binaries, outside the lockfile, that
-      # the browser build never uses)
       - run: npm ci
-        env:
-          ONNXRUNTIME_NODE_INSTALL: skip
 
       - id: pages
         uses: actions/configure-pages@v6

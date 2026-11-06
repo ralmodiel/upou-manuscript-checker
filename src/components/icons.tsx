@@ -127,34 +127,6 @@ export const SunIcon = (props: IconProps) => (
   </Icon>
 )
 
-export const CopyIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <rect x="9" y="9" width="11" height="11" rx="2" />
-    <path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" />
-  </Icon>
-)
-
-export const PlusIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <path d="M12 5.5v13M5.5 12h13" />
-  </Icon>
-)
-
-/** A suggestion from the model: a four-point spark. */
-export const SparkIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <path d="M12 3.5c.6 4.6 3.9 7.9 8.5 8.5-4.6.6-7.9 3.9-8.5 8.5-.6-4.6-3.9-7.9-8.5-8.5 4.6-.6 7.9-3.9 8.5-8.5Z" />
-  </Icon>
-)
-
-/** The topic planner: a compass. */
-export const CompassIcon = (props: IconProps) => (
-  <Icon {...props}>
-    <circle cx="12" cy="12" r="9" />
-    <path d="m15.5 8.5-2 5-5 2 2-5z" />
-  </Icon>
-)
-
 export const MoonIcon = (props: IconProps) => (
   <Icon {...props}>
     <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />

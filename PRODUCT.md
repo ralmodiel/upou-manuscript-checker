@@ -43,16 +43,6 @@ writing advice.
   or needs a human look), or not applicable.
 - Outputs: the results on the page (the whole checklist, passed items in green), a formatting
   comments report as Word .docx and as PDF, and a print view.
-- Topic planner (a second tab): shapes a systematic or scoping review question from its parts
-  (PICO, PICo, PEO, PCC), the criteria, the search string (plain, and in PubMed's, Scopus's and
-  Web of Science's syntax), a log of what each source found (the UPOU Repository and IJODeL
-  first, on their concept sites for now), the PRISMA 2020 flow and a verdict on the topic's size
-  with the hours of work it holds;
-  points to where published reviews are listed; shows the PRISMA 2020 checklists in their
-  published words (Page et al., 2021, CC BY 4.0, always credited); writes the plan as a Word file;
-  keeps up to three candidate topics in the browser only, each savable as a file. Optional suggestions from a small language model run in the
-  browser (WebGPU), fetched from Hugging Face only when the student turns it on; it never sends
-  what they type anywhere.
 - Page-level items (hanging lines, blank pages, page numbers as printed) are exact in a PDF;
   styles and spacing are exact in a Word file. An old .doc is checked for text and page numbering only.
 - Never say "upload": the file is read in the browser.

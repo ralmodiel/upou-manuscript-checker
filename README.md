@@ -8,22 +8,7 @@ program's review emails.
 
 - **Nothing leaves the device.** The manuscript is read and checked by the page itself, on the
   visitor's desktop, laptop or phone. There is no backend, no database and no API, and the page's
-  security policy lets its scripts reach only the site itself and Hugging Face, where the Topic
-  planner's optional model is fetched from once the visitor turns it on.
-- **A Topic planner for systematic reviews.** A second tab shapes a review question from its parts
-  (PICO, PICo, PEO or PCC), points to where published reviews are listed, builds the search string
-  (in PubMed's, Scopus's and Web of Science's own syntax too), logs what each source found (the
-  UPOU Repository and IJODeL first, on their concept sites while those are built), draws the
-  PRISMA 2020 flow from the screening numbers and says
-  whether the topic is the right size and how many hours of work it holds, then fills the PRISMA
-  2020 checklists (Page et al., 2021, reproduced under CC BY 4.0) and writes the plan as a Word
-  file. Up to three candidate topics can be kept and compared side by side; a plan can be saved as
-  a file and opened on another device. An optional small language model (Qwen2.5-0.5B-Instruct,
-  about 790 MB, run in the browser with transformers.js on WebGPU, fetched at a fixed revision of
-  its files) reads the parts of the question from a sentence and suggests other words for the
-  search, and can be turned off again. The planner carries the statement PRISMA asks its endorsers
-  to carry (complete the checklist and include a flow diagram when reporting a systematic review)
-  and links the PRISMA website for the templates and extensions.
+  security policy (`connect-src 'none'`) blocks the page's scripts from making network requests.
 - **Every checklist item, every time.** All 38 items in 9 parts, each marked _Needs update_,
   _To review_, _Passed_ or _Not applicable_, plus three things reviewers often point out: template
   text left in, blank pages and coloured text.
@@ -113,11 +98,8 @@ builds its own small Word file.
 ## Security and privacy
 
 - Production builds carry a strict Content Security Policy as a `<meta>` tag: scripts, styles,
-  fonts and the workers come only from the site, and `connect-src 'self' https://huggingface.co
-https://*.hf.co` limits the page's scripts (fetch, XHR, WebSocket, beacons) to the site itself and
-  to Hugging Face, which the Topic planner's model is fetched from only after the visitor turns it
-  on; `'wasm-unsafe-eval'` lets ONNX Runtime compile that model's WebAssembly (served by the site
-  under `ort/`), not JavaScript. A `<meta>` policy does not reach the
+  fonts and the pdf.js worker come only from the site, and `connect-src 'none'` stops the page's scripts from
+  making network requests (fetch, XHR, WebSocket, beacons). A `<meta>` policy does not reach the
   pdf.js worker (GitHub Pages sends no policy header), but pdf.js only reads the file it is given
   and makes no requests. The theme and the browser check run from `public/theme-boot.js` and
   `public/browser-check.js`, so no inline script is needed.
