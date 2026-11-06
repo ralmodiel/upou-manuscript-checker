@@ -16,7 +16,11 @@ it('moves the planner’s saved data to the new site’s keys and forwards #topi
   }
   let to = ''
   const location = { hash: '#topic', replace: (u: string) => void (to = u) }
-  new Function('localStorage', 'location', forward)(localStorage, location)
+  new Function('localStorage', 'location', 'addEventListener', forward)(
+    localStorage,
+    location,
+    () => {},
+  )
   expect(Object.fromEntries(store)).toEqual({
     'topic-plans': 'plans',
     'topic-ai': '1',
@@ -24,5 +28,20 @@ it('moves the planner’s saved data to the new site’s keys and forwards #topi
     'upou-topic-plan': 'old',
     'topic-plan': 'kept',
   })
+  expect(to).toBe('https://ralmodiel.github.io/concept-topic-planner/')
+})
+
+it('forwards when #topic is put on a page already open', () => {
+  let to = ''
+  let onHash = () => {}
+  const location = { hash: '#faq', replace: (u: string) => void (to = u) }
+  new Function('localStorage', 'location', 'addEventListener', forward)(
+    { getItem: () => null },
+    location,
+    (_: string, f: () => void) => (onHash = f),
+  )
+  expect(to).toBe('')
+  location.hash = '#topic'
+  onHash()
   expect(to).toBe('https://ralmodiel.github.io/concept-topic-planner/')
 })

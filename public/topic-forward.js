@@ -20,6 +20,11 @@
   } catch {
     // No storage, or no room: the old keys stay for the next visit.
   }
-  if (location.hash === '#topic')
-    location.replace('https://ralmodiel.github.io/concept-topic-planner/')
+  // (also when #topic is put on a page already open: the address bar, or a link in the same tab)
+  var go = function () {
+    if (location.hash === '#topic')
+      location.replace('https://ralmodiel.github.io/concept-topic-planner/')
+  }
+  go()
+  addEventListener('hashchange', go)
 })()
